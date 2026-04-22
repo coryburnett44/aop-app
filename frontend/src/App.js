@@ -17,6 +17,11 @@ import Directory from "./pages/Directory";
 import Profile from "./pages/Profile";
 import CmsPage from "./pages/CmsPage";
 import Admin from "./pages/Admin";
+import Photos from "./pages/Photos";
+import Documents from "./pages/Documents";
+import Hours from "./pages/Hours";
+import Awards from "./pages/Awards";
+import Chapters from "./pages/Chapters";
 
 function App() {
     return (
@@ -34,6 +39,18 @@ function App() {
                             <Route path="/news" element={<News />} />
                             <Route path="/news/:id" element={<NewsDetail />} />
                             <Route path="/directory" element={<Directory />} />
+                            <Route path="/chapters" element={<Chapters />} />
+                            <Route path="/photos" element={<Photos />} />
+                            <Route path="/documents" element={<Documents />} />
+                            <Route path="/awards" element={<Awards />} />
+                            <Route
+                                path="/hours"
+                                element={
+                                    <ProtectedRoute>
+                                        <Hours />
+                                    </ProtectedRoute>
+                                }
+                            />
                             <Route path="/page/:slug" element={<CmsPage />} />
                             <Route
                                 path="/profile"

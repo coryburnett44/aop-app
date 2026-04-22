@@ -16,9 +16,11 @@ import { useState } from "react";
 const LINKS = [
     { to: "/events", label: "Events" },
     { to: "/directory", label: "Members" },
+    { to: "/chapters", label: "Chapters" },
+    { to: "/photos", label: "Photos" },
+    { to: "/documents", label: "Docs" },
+    { to: "/awards", label: "Awards" },
     { to: "/news", label: "News" },
-    { to: "/page/about", label: "About" },
-    { to: "/page/contact", label: "Contact" },
 ];
 
 export default function Navbar() {
@@ -99,6 +101,9 @@ export default function Navbar() {
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => navigate("/profile?tab=events")} data-testid="menu-my-events">
                                     My Events
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => navigate("/hours")} data-testid="menu-hours">
+                                    Volunteer hours
                                 </DropdownMenuItem>
                                 {user.role === "admin" && (
                                     <>

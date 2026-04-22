@@ -7,12 +7,14 @@ import os
 import uuid
 import logging
 import secrets
+import requests
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, status, UploadFile, File, Form, Header, Query
+from fastapi.responses import Response as FastResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
@@ -21,6 +23,10 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 60 * 24  # 1 day (simpler UX for demo)
 REFRESH_TOKEN_DAYS = 7
+GRACE_PERIOD_DAYS = 30
+APP_NAME = "clubhaven"
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+_storage_key: Optional[str] = None
 
 mongo_url = os.environ["MONGO_URL"]
 db_name = os.environ["DB_NAME"]
@@ -78,6 +84,14 @@ def clear_auth_cookies(response: Response):
     response.delete_cookie("refresh_token", path="/")
 
 def public_user(u: dict) -> dict:
+    exp = u.get("membership_expires_at")
+    try:
+        exp_dt = datetime.fromisoformat(exp) if exp else None
+    except Exception:
+        exp_dt = None
+    now = now_utc()
+    is_expired = bool(exp_dt and exp_dt < now)
+    within_grace = bool(is_expired and exp_dt and (now - exp_dt).days <= GRACE_PERIOD_DAYS)
     return {
         "id": u["id"],
         "email": u["email"],
@@ -88,9 +102,70 @@ def public_user(u: dict) -> dict:
         "interests": u.get("interests", []),
         "avatar_url": u.get("avatar_url", ""),
         "membership_tier": u.get("membership_tier", "standard"),
+        "tier_id": u.get("tier_id"),
+        "chapter_id": u.get("chapter_id"),
         "membership_expires_at": u.get("membership_expires_at"),
+        "is_expired": is_expired,
+        "within_grace": within_grace,
+        "email_verified": u.get("email_verified", False),
         "created_at": u.get("created_at"),
     }
+
+# ---------- Object Storage ----------
+def init_storage() -> Optional[str]:
+    global _storage_key
+    if _storage_key:
+        return _storage_key
+    try:
+        resp = requests.post(
+            f"{STORAGE_URL}/init",
+            json={"emergent_key": os.environ.get("EMERGENT_LLM_KEY")},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        _storage_key = resp.json().get("storage_key")
+        return _storage_key
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
+        return None
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=503, detail="Storage not available")
+    resp = requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data,
+        timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def get_object(path: str) -> tuple:
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=503, detail="Storage not available")
+    resp = requests.get(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+IMAGE_EXT = {"jpg", "jpeg", "png", "gif", "webp"}
+DOC_EXT = {"pdf", "doc", "docx", "txt", "csv", "xlsx", "pptx"}
+
+MIME_BY_EXT = {
+    "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+    "gif": "image/gif", "webp": "image/webp", "pdf": "application/pdf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "txt": "text/plain", "csv": "text/csv",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
 
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
@@ -205,6 +280,76 @@ class VerifyEmailIn(BaseModel):
 
 class RoleUpdateIn(BaseModel):
     role: Literal["member", "admin"]
+
+class ChapterIn(BaseModel):
+    name: str
+    school: str = ""
+    city: str = ""
+    founded_year: Optional[int] = None
+    description: str = ""
+
+class ChapterUpdateIn(BaseModel):
+    name: Optional[str] = None
+    school: Optional[str] = None
+    city: Optional[str] = None
+    founded_year: Optional[int] = None
+    description: Optional[str] = None
+
+class TierIn(BaseModel):
+    name: str
+    order: int = 0
+    color: str = "#E86A58"
+    annual_dues: float = 60.0
+    description: str = ""
+
+class TierUpdateIn(BaseModel):
+    name: Optional[str] = None
+    order: Optional[int] = None
+    color: Optional[str] = None
+    annual_dues: Optional[float] = None
+    description: Optional[str] = None
+
+class AwardIn(BaseModel):
+    name: str
+    description: str = ""
+    icon: str = "trophy"   # lucide-react icon name
+    color: str = "#F9D466"
+
+class AwardUpdateIn(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+
+class AwardGrantIn(BaseModel):
+    user_id: str
+    reason: str = ""
+
+class HoursLogIn(BaseModel):
+    hours: float = Field(gt=0, le=1000)
+    description: str = Field(min_length=2)
+    date: datetime
+    event_id: Optional[str] = None
+
+class HoursReviewIn(BaseModel):
+    status: Literal["approved", "rejected"]
+    note: Optional[str] = ""
+
+class AssignChapterIn(BaseModel):
+    chapter_id: Optional[str] = None
+
+class AssignTierIn(BaseModel):
+    tier_id: Optional[str] = None
+    extend_days: Optional[int] = None  # optional: also push out expiry
+
+class PhotoMetaIn(BaseModel):
+    title: Optional[str] = ""
+    album: Optional[str] = "general"
+
+class DocumentMetaIn(BaseModel):
+    title: Optional[str] = ""
+    category: Optional[str] = "general"
+    description: Optional[str] = ""
 
 # ---------- Auth Routes ----------
 @api.post("/auth/register")
@@ -338,6 +483,7 @@ async def renew_membership(user: dict = Depends(get_current_user)):
         base = datetime.fromisoformat(current) if current else now_utc()
     except Exception:
         base = now_utc()
+    # Grace period: if expired within grace window, renew from now (don't stack past grace)
     if base < now_utc():
         base = now_utc()
     new_exp = base + timedelta(days=365)
@@ -580,6 +726,467 @@ async def ai_draft_email(body: AIEmailReq, admin: dict = Depends(require_admin))
         logger.exception("AI email draft failed")
         raise HTTPException(status_code=502, detail=f"AI error: {e}")
 
+# ---------- Chapters ----------
+def chapter_out(c: dict) -> dict:
+    return {
+        "id": c["id"],
+        "name": c["name"],
+        "school": c.get("school", ""),
+        "city": c.get("city", ""),
+        "founded_year": c.get("founded_year"),
+        "description": c.get("description", ""),
+        "member_count": c.get("member_count", 0),
+    }
+
+async def with_chapter_counts(chapters):
+    out = []
+    for c in chapters:
+        c["member_count"] = await db.users.count_documents({"chapter_id": c["id"]})
+        out.append(chapter_out(c))
+    return out
+
+@api.get("/chapters")
+async def list_chapters():
+    items = await db.chapters.find({}, {"_id": 0}).sort("name", 1).to_list(200)
+    return await with_chapter_counts(items)
+
+@api.post("/chapters")
+async def create_chapter(body: ChapterIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = iso(now_utc())
+    await db.chapters.insert_one(doc)
+    doc["member_count"] = 0
+    return chapter_out(doc)
+
+@api.put("/chapters/{chapter_id}")
+async def update_chapter(chapter_id: str, body: ChapterUpdateIn, _: dict = Depends(require_admin)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.chapters.update_one({"id": chapter_id}, {"$set": updates})
+    c = await db.chapters.find_one({"id": chapter_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    c["member_count"] = await db.users.count_documents({"chapter_id": chapter_id})
+    return chapter_out(c)
+
+@api.delete("/chapters/{chapter_id}")
+async def delete_chapter(chapter_id: str, _: dict = Depends(require_admin)):
+    await db.chapters.delete_one({"id": chapter_id})
+    await db.users.update_many({"chapter_id": chapter_id}, {"$unset": {"chapter_id": ""}})
+    return {"ok": True}
+
+# ---------- Membership Tiers ----------
+def tier_out(t: dict) -> dict:
+    return {
+        "id": t["id"],
+        "name": t["name"],
+        "order": t.get("order", 0),
+        "color": t.get("color", "#E86A58"),
+        "annual_dues": t.get("annual_dues", 60.0),
+        "description": t.get("description", ""),
+        "member_count": t.get("member_count", 0),
+    }
+
+@api.get("/tiers")
+async def list_tiers():
+    items = await db.tiers.find({}, {"_id": 0}).sort("order", 1).to_list(50)
+    for t in items:
+        t["member_count"] = await db.users.count_documents({"tier_id": t["id"]})
+    return [tier_out(t) for t in items]
+
+@api.post("/tiers")
+async def create_tier(body: TierIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    await db.tiers.insert_one(doc)
+    doc["member_count"] = 0
+    return tier_out(doc)
+
+@api.put("/tiers/{tier_id}")
+async def update_tier(tier_id: str, body: TierUpdateIn, _: dict = Depends(require_admin)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.tiers.update_one({"id": tier_id}, {"$set": updates})
+    t = await db.tiers.find_one({"id": tier_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Tier not found")
+    t["member_count"] = await db.users.count_documents({"tier_id": tier_id})
+    return tier_out(t)
+
+@api.delete("/tiers/{tier_id}")
+async def delete_tier(tier_id: str, _: dict = Depends(require_admin)):
+    await db.tiers.delete_one({"id": tier_id})
+    await db.users.update_many({"tier_id": tier_id}, {"$unset": {"tier_id": ""}})
+    return {"ok": True}
+
+# ---------- Member admin operations ----------
+@api.put("/members/{user_id}/role")
+async def update_member_role(user_id: str, body: RoleUpdateIn, _: dict = Depends(require_admin)):
+    await db.users.update_one({"id": user_id}, {"$set": {"role": body.role}})
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return public_user(u)
+
+@api.put("/members/{user_id}/chapter")
+async def assign_chapter(user_id: str, body: AssignChapterIn, _: dict = Depends(require_admin)):
+    update = {"chapter_id": body.chapter_id} if body.chapter_id else {"chapter_id": None}
+    await db.users.update_one({"id": user_id}, {"$set": update})
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return public_user(u)
+
+@api.put("/members/{user_id}/tier")
+async def assign_tier(user_id: str, body: AssignTierIn, _: dict = Depends(require_admin)):
+    updates = {"tier_id": body.tier_id}
+    if body.tier_id:
+        tier = await db.tiers.find_one({"id": body.tier_id}, {"_id": 0})
+        if tier:
+            updates["membership_tier"] = tier.get("name", "standard")
+    if body.extend_days:
+        u = await db.users.find_one({"id": user_id})
+        if u:
+            cur = u.get("membership_expires_at")
+            try:
+                base = datetime.fromisoformat(cur) if cur else now_utc()
+            except Exception:
+                base = now_utc()
+            if base < now_utc():
+                base = now_utc()
+            updates["membership_expires_at"] = iso(base + timedelta(days=body.extend_days))
+    await db.users.update_one({"id": user_id}, {"$set": updates})
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return public_user(u)
+
+# ---------- Awards ----------
+def award_out(a: dict) -> dict:
+    return {
+        "id": a["id"],
+        "name": a["name"],
+        "description": a.get("description", ""),
+        "icon": a.get("icon", "trophy"),
+        "color": a.get("color", "#F9D466"),
+        "granted_count": a.get("granted_count", 0),
+    }
+
+@api.get("/awards")
+async def list_awards():
+    items = await db.awards.find({}, {"_id": 0}).to_list(200)
+    for a in items:
+        a["granted_count"] = await db.award_grants.count_documents({"award_id": a["id"]})
+    return [award_out(a) for a in items]
+
+@api.post("/awards")
+async def create_award(body: AwardIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = iso(now_utc())
+    await db.awards.insert_one(doc)
+    return award_out(doc)
+
+@api.put("/awards/{award_id}")
+async def update_award(award_id: str, body: AwardUpdateIn, _: dict = Depends(require_admin)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.awards.update_one({"id": award_id}, {"$set": updates})
+    a = await db.awards.find_one({"id": award_id}, {"_id": 0})
+    if not a:
+        raise HTTPException(status_code=404, detail="Award not found")
+    return award_out(a)
+
+@api.delete("/awards/{award_id}")
+async def delete_award(award_id: str, _: dict = Depends(require_admin)):
+    await db.awards.delete_one({"id": award_id})
+    await db.award_grants.delete_many({"award_id": award_id})
+    return {"ok": True}
+
+@api.post("/awards/{award_id}/grant")
+async def grant_award(award_id: str, body: AwardGrantIn, admin: dict = Depends(require_admin)):
+    award = await db.awards.find_one({"id": award_id}, {"_id": 0})
+    if not award:
+        raise HTTPException(status_code=404, detail="Award not found")
+    user = await db.users.find_one({"id": body.user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    existing = await db.award_grants.find_one({"award_id": award_id, "user_id": body.user_id})
+    if existing:
+        raise HTTPException(status_code=400, detail="User already has this award")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "award_id": award_id,
+        "award_name": award["name"],
+        "award_icon": award.get("icon", "trophy"),
+        "award_color": award.get("color", "#F9D466"),
+        "user_id": body.user_id,
+        "user_name": user.get("name", ""),
+        "reason": body.reason,
+        "granted_by": admin["id"],
+        "granted_by_name": admin.get("name", "Admin"),
+        "granted_at": iso(now_utc()),
+    }
+    await db.award_grants.insert_one(doc)
+    out = dict(doc)
+    out.pop("_id", None)
+    return out
+
+@api.delete("/awards/grants/{grant_id}")
+async def revoke_award(grant_id: str, _: dict = Depends(require_admin)):
+    res = await db.award_grants.delete_one({"id": grant_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Grant not found")
+    return {"ok": True}
+
+@api.get("/members/{user_id}/awards")
+async def member_awards(user_id: str):
+    cursor = db.award_grants.find({"user_id": user_id}, {"_id": 0}).sort("granted_at", -1)
+    return await cursor.to_list(100)
+
+@api.get("/me/awards")
+async def my_awards(user: dict = Depends(get_current_user)):
+    cursor = db.award_grants.find({"user_id": user["id"]}, {"_id": 0}).sort("granted_at", -1)
+    return await cursor.to_list(100)
+
+# ---------- Volunteer Hours ----------
+def hours_out(h: dict) -> dict:
+    return {
+        "id": h["id"],
+        "user_id": h["user_id"],
+        "user_name": h.get("user_name", ""),
+        "hours": h["hours"],
+        "description": h.get("description", ""),
+        "date": h.get("date"),
+        "event_id": h.get("event_id"),
+        "status": h.get("status", "pending"),
+        "reviewed_by": h.get("reviewed_by"),
+        "reviewed_by_name": h.get("reviewed_by_name"),
+        "reviewed_at": h.get("reviewed_at"),
+        "note": h.get("note", ""),
+        "created_at": h.get("created_at"),
+    }
+
+@api.post("/hours")
+async def log_hours(body: HoursLogIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user.get("name", ""),
+        "hours": body.hours,
+        "description": body.description,
+        "date": iso(body.date),
+        "event_id": body.event_id,
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    }
+    await db.volunteer_hours.insert_one(doc)
+    return hours_out(doc)
+
+@api.get("/hours")
+async def list_hours(status_filter: Optional[str] = None, _: dict = Depends(require_admin)):
+    query = {}
+    if status_filter:
+        query["status"] = status_filter
+    cursor = db.volunteer_hours.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
+    items = await cursor.to_list(500)
+    return [hours_out(h) for h in items]
+
+@api.get("/me/hours")
+async def my_hours(user: dict = Depends(get_current_user)):
+    cursor = db.volunteer_hours.find({"user_id": user["id"]}, {"_id": 0}).sort("date", -1)
+    items = await cursor.to_list(500)
+    return [hours_out(h) for h in items]
+
+@api.put("/hours/{hours_id}/review")
+async def review_hours(hours_id: str, body: HoursReviewIn, admin: dict = Depends(require_admin)):
+    await db.volunteer_hours.update_one(
+        {"id": hours_id},
+        {"$set": {
+            "status": body.status,
+            "note": body.note or "",
+            "reviewed_by": admin["id"],
+            "reviewed_by_name": admin.get("name", "Admin"),
+            "reviewed_at": iso(now_utc()),
+        }},
+    )
+    h = await db.volunteer_hours.find_one({"id": hours_id}, {"_id": 0})
+    if not h:
+        raise HTTPException(status_code=404, detail="Hours entry not found")
+    return hours_out(h)
+
+@api.delete("/hours/{hours_id}")
+async def delete_hours(hours_id: str, user: dict = Depends(get_current_user)):
+    h = await db.volunteer_hours.find_one({"id": hours_id})
+    if not h:
+        raise HTTPException(status_code=404, detail="Not found")
+    if h["user_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.volunteer_hours.delete_one({"id": hours_id})
+    return {"ok": True}
+
+# ---------- Photos ----------
+def photo_out(p: dict) -> dict:
+    return {
+        "id": p["id"],
+        "title": p.get("title", ""),
+        "album": p.get("album", "general"),
+        "storage_path": p["storage_path"],
+        "url": f"/api/files/{p['storage_path']}",
+        "uploaded_by": p.get("uploaded_by"),
+        "uploaded_by_name": p.get("uploaded_by_name", ""),
+        "created_at": p.get("created_at"),
+    }
+
+@api.get("/photos")
+async def list_photos(album: Optional[str] = None):
+    query = {"is_deleted": {"$ne": True}}
+    if album:
+        query["album"] = album
+    cursor = db.photos.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
+    items = await cursor.to_list(500)
+    return [photo_out(p) for p in items]
+
+@api.get("/photos/albums")
+async def list_photo_albums():
+    pipeline = [
+        {"$match": {"is_deleted": {"$ne": True}}},
+        {"$group": {"_id": "$album", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    out = []
+    async for d in db.photos.aggregate(pipeline):
+        out.append({"album": d["_id"] or "general", "count": d["count"]})
+    return out
+
+@api.post("/photos")
+async def upload_photo(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    album: str = Form("general"),
+    user: dict = Depends(get_current_user),
+):
+    ext = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "bin").lower()
+    if ext not in IMAGE_EXT:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type: {ext}")
+    content_type = file.content_type or MIME_BY_EXT.get(ext, "application/octet-stream")
+    path = f"{APP_NAME}/photos/{user['id']}/{uuid.uuid4()}.{ext}"
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    result = put_object(path, data, content_type)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "title": title,
+        "album": album or "general",
+        "storage_path": result["path"],
+        "original_filename": file.filename,
+        "content_type": content_type,
+        "size": result.get("size", len(data)),
+        "uploaded_by": user["id"],
+        "uploaded_by_name": user.get("name", ""),
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.photos.insert_one(doc)
+    return photo_out(doc)
+
+@api.delete("/photos/{photo_id}")
+async def delete_photo(photo_id: str, user: dict = Depends(get_current_user)):
+    p = await db.photos.find_one({"id": photo_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Not found")
+    if p.get("uploaded_by") != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.photos.update_one({"id": photo_id}, {"$set": {"is_deleted": True}})
+    return {"ok": True}
+
+# ---------- Documents ----------
+def document_out(d: dict) -> dict:
+    return {
+        "id": d["id"],
+        "title": d.get("title", d.get("original_filename", "")),
+        "category": d.get("category", "general"),
+        "description": d.get("description", ""),
+        "storage_path": d["storage_path"],
+        "url": f"/api/files/{d['storage_path']}",
+        "original_filename": d.get("original_filename", ""),
+        "content_type": d.get("content_type", ""),
+        "size": d.get("size", 0),
+        "uploaded_by": d.get("uploaded_by"),
+        "uploaded_by_name": d.get("uploaded_by_name", ""),
+        "created_at": d.get("created_at"),
+    }
+
+@api.get("/documents")
+async def list_documents(category: Optional[str] = None):
+    query = {"is_deleted": {"$ne": True}}
+    if category:
+        query["category"] = category
+    cursor = db.documents.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
+    items = await cursor.to_list(500)
+    return [document_out(d) for d in items]
+
+@api.post("/documents")
+async def upload_document(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    category: str = Form("general"),
+    description: str = Form(""),
+    user: dict = Depends(get_current_user),
+):
+    ext = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "bin").lower()
+    if ext not in DOC_EXT and ext not in IMAGE_EXT:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+    content_type = file.content_type or MIME_BY_EXT.get(ext, "application/octet-stream")
+    path = f"{APP_NAME}/documents/{user['id']}/{uuid.uuid4()}.{ext}"
+    data = await file.read()
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 25MB)")
+    result = put_object(path, data, content_type)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "title": title or file.filename,
+        "category": category or "general",
+        "description": description,
+        "storage_path": result["path"],
+        "original_filename": file.filename,
+        "content_type": content_type,
+        "size": result.get("size", len(data)),
+        "uploaded_by": user["id"],
+        "uploaded_by_name": user.get("name", ""),
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.documents.insert_one(doc)
+    return document_out(doc)
+
+@api.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
+    d = await db.documents.find_one({"id": doc_id})
+    if not d:
+        raise HTTPException(status_code=404, detail="Not found")
+    if d.get("uploaded_by") != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.documents.update_one({"id": doc_id}, {"$set": {"is_deleted": True}})
+    return {"ok": True}
+
+# ---------- File proxy (serves both photos and documents) ----------
+@api.get("/files/{storage_path:path}")
+async def download_file(storage_path: str):
+    # Check DB for existence + soft-delete flag
+    rec = await db.photos.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
+    if not rec:
+        rec = await db.documents.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
+    if not rec:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        data, content_type = get_object(storage_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found in storage")
+    return FastResponse(content=data, media_type=rec.get("content_type", content_type))
+
 # ---------- Admin Dashboard Stats ----------
 ANNUAL_DUES_USD = 60.0
 
@@ -651,6 +1258,28 @@ async def admin_stats(_: dict = Depends(require_admin)):
         "tier": u.get("membership_tier"),
     } async for u in exp_cursor]
 
+    # Fraternity-specific counters
+    total_chapters = await db.chapters.count_documents({})
+    total_tiers = await db.tiers.count_documents({})
+    total_awards = await db.awards.count_documents({})
+    total_grants = await db.award_grants.count_documents({})
+    pending_hours = await db.volunteer_hours.count_documents({"status": "pending"})
+    approved_hours_agg = db.volunteer_hours.aggregate([
+        {"$match": {"status": "approved"}},
+        {"$group": {"_id": None, "total": {"$sum": "$hours"}}},
+    ])
+    approved_hours_total = 0
+    async for d in approved_hours_agg:
+        approved_hours_total = round(d.get("total", 0), 1)
+    total_photos = await db.photos.count_documents({"is_deleted": {"$ne": True}})
+    total_documents = await db.documents.count_documents({"is_deleted": {"$ne": True}})
+
+    # Chapter roster
+    chapter_rows = []
+    async for c in db.chapters.find({}, {"_id": 0}).sort("name", 1):
+        count = await db.users.count_documents({"chapter_id": c["id"]})
+        chapter_rows.append({"id": c["id"], "name": c["name"], "school": c.get("school", ""), "member_count": count})
+
     return {
         "members": {
             "total": total_members,
@@ -670,7 +1299,16 @@ async def admin_stats(_: dict = Depends(require_admin)):
             "top_by_rsvp": top_events,
             "next_up": next_events,
         },
-        "content": {"news": total_news, "pages": total_pages},
+        "content": {"news": total_news, "pages": total_pages, "photos": total_photos, "documents": total_documents},
+        "fraternity": {
+            "chapters": total_chapters,
+            "chapter_roster": chapter_rows,
+            "tiers": total_tiers,
+            "awards": total_awards,
+            "awards_granted": total_grants,
+            "hours_pending": pending_hours,
+            "hours_approved_total": approved_hours_total,
+        },
         "dues": {
             "annual_fee": ANNUAL_DUES_USD,
             "active_revenue_estimate": active_revenue,
@@ -695,6 +1333,20 @@ async def startup():
     await db.pages.create_index("slug", unique=True)
     await db.rsvps.create_index([("event_id", 1), ("user_id", 1)], unique=True)
     await db.login_attempts.create_index("identifier")
+    await db.chapters.create_index("id", unique=True)
+    await db.tiers.create_index("id", unique=True)
+    await db.awards.create_index("id", unique=True)
+    await db.award_grants.create_index([("award_id", 1), ("user_id", 1)], unique=True)
+    await db.volunteer_hours.create_index("user_id")
+    await db.volunteer_hours.create_index("status")
+    await db.photos.create_index("id", unique=True)
+    await db.documents.create_index("id", unique=True)
+    # initialize object storage (non-blocking)
+    try:
+        init_storage()
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.warning(f"Object storage init skipped: {e}")
     await seed_data()
 
 async def seed_data():
@@ -823,6 +1475,77 @@ async def seed_data():
             "title": "Contact",
             "body": "Questions, ideas, or want to host an event? Email hello@clubhaven.app or drop by the clubhouse Tuesdays 6–8pm.",
             "updated_at": now})
+
+    # Default chapters
+    if await db.chapters.count_documents({}) == 0:
+        seeds = [
+            {"name": "Alpha Beta", "school": "University of Oregon", "city": "Eugene", "founded_year": 1912,
+             "description": "Founding chapter — keepers of the gavel."},
+            {"name": "Gamma Delta", "school": "University of Washington", "city": "Seattle", "founded_year": 1925,
+             "description": "Pacific Northwest chapter, known for community service."},
+            {"name": "Epsilon Theta", "school": "UC Berkeley", "city": "Berkeley", "founded_year": 1948,
+             "description": "West coast chapter with strong alumni network."},
+        ]
+        for s in seeds:
+            s["id"] = str(uuid.uuid4())
+            s["created_at"] = iso(now_utc())
+            await db.chapters.insert_one(s)
+
+    # Default membership tiers
+    if await db.tiers.count_documents({}) == 0:
+        tiers = [
+            {"name": "Pledge", "order": 1, "color": "#A5C4B4", "annual_dues": 30.0,
+             "description": "New initiate — working toward active status."},
+            {"name": "Active", "order": 2, "color": "#E86A58", "annual_dues": 60.0,
+             "description": "Full member in good standing."},
+            {"name": "Alumni", "order": 3, "color": "#F9D466", "annual_dues": 40.0,
+             "description": "Graduated members staying connected."},
+            {"name": "Lifetime", "order": 4, "color": "#8B9DC3", "annual_dues": 0.0,
+             "description": "Paid-in-full lifetime membership."},
+            {"name": "Honorary", "order": 5, "color": "#D4A574", "annual_dues": 0.0,
+             "description": "Honorary distinction — no dues required."},
+        ]
+        for t in tiers:
+            t["id"] = str(uuid.uuid4())
+            await db.tiers.insert_one(t)
+
+    # Default awards
+    if await db.awards.count_documents({}) == 0:
+        awards = [
+            {"name": "Founder's Medal", "description": "For extraordinary service to the chapter.",
+             "icon": "medal", "color": "#E86A58"},
+            {"name": "Service Star", "description": "50+ volunteer hours in one year.",
+             "icon": "star", "color": "#F9D466"},
+            {"name": "Brotherhood Award", "description": "Embodies the spirit of the fraternity.",
+             "icon": "heart", "color": "#A5C4B4"},
+            {"name": "Scholar", "description": "Academic excellence.",
+             "icon": "graduation-cap", "color": "#8B9DC3"},
+            {"name": "Rookie of the Year", "description": "Outstanding new member.",
+             "icon": "sparkles", "color": "#D4A574"},
+        ]
+        for a in awards:
+            a["id"] = str(uuid.uuid4())
+            a["created_at"] = iso(now_utc())
+            await db.awards.insert_one(a)
+
+    # Assign default chapter + tier to existing members that don't have them
+    first_chapter = await db.chapters.find_one({}, {"_id": 0, "id": 1})
+    active_tier = await db.tiers.find_one({"name": "Active"}, {"_id": 0, "id": 1, "name": 1})
+    lifetime_tier = await db.tiers.find_one({"name": "Lifetime"}, {"_id": 0, "id": 1, "name": 1})
+    if first_chapter and active_tier:
+        await db.users.update_many(
+            {"chapter_id": {"$in": [None, ""]}},
+            {"$set": {"chapter_id": first_chapter["id"]}},
+        )
+        await db.users.update_many(
+            {"$and": [{"tier_id": {"$in": [None, ""]}}, {"role": {"$ne": "admin"}}]},
+            {"$set": {"tier_id": active_tier["id"], "membership_tier": active_tier["name"]}},
+        )
+        if lifetime_tier:
+            await db.users.update_many(
+                {"$and": [{"tier_id": {"$in": [None, ""]}}, {"role": "admin"}]},
+                {"$set": {"tier_id": lifetime_tier["id"], "membership_tier": lifetime_tier["name"]}},
+            )
 
 # ---------- Mount ----------
 app.include_router(api)

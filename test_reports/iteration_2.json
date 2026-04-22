@@ -1,0 +1,51 @@
+{
+  "summary": "Backend testing for the fraternity extension (chapters, tiers, awards, hours, photos, documents, file proxy, admin stats, public_user fraternity fields). 18 new pytest tests in test_fraternity.py — all pass after fixing one upload bug. Combined with existing suite: 41/41 backend tests pass. Object storage (emergent objstore) initialized successfully and round-trip upload/download/delete all work for PNG, plain text, and PDF.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/photos, POST /api/documents",
+        "issue": "Bug discovered & fixed: form fields title/album/category/description were declared as plain str defaults instead of Form(...). FastAPI treated them as query parameters, so multipart values were silently ignored — every photo got album='general', every document got category='general'. Fixed by importing Form and switching to Form('') / Form('general'). All upload tests now pass."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fraternity.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/fraternity_results.xml",
+    "/app/test_reports/pytest/all_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional enhancement: GET /api/files/{path} currently has no auth — anyone with the storage path can fetch the file. If documents are meant to be members-only, gate this behind get_current_user.",
+    "Optional: list endpoints (chapters, tiers, awards, news, members, events) are public — confirm intentional, otherwise gate behind auth."
+  ],
+  "critical_code_review_comments": [
+    "Upload bug (already fixed): without Form(...), FastAPI silently ignored multipart text fields. Same pattern should be audited for any other multipart endpoint added later.",
+    "GET /api/files/{storage_path} is unauthenticated — any logged-out visitor can pull a member document or photo by guessing/observing the storage path. If access control matters for documents, require auth and check ownership/role.",
+    "init_storage() result is cached in a module global (_storage_key) without a lock; not a problem under uvicorn's single event loop but worth noting for future workers.",
+    "Hours date validation: HoursLogIn.date is datetime but no upper-bound check (members could log future-dated hours). Consider rejecting future dates.",
+    "AssignTierIn.extend_days has no upper bound; admin could push membership_expires_at thousands of years out by typo.",
+    "/api/admin/stats fraternity.chapter_roster is computed by N+1 queries (one count_documents per chapter). Fine for <50 chapters; refactor to an aggregation if scale grows.",
+    "@app.on_event startup/shutdown still used (deprecated in modern FastAPI). Migrate to lifespan handler.",
+    "server.py is 1565 lines — split into routers (auth, members, events, fraternity, files) for maintainability."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (Form import + Form(...) on /photos and /documents)",
+    "/app/backend/tests/test_fraternity.py (new file)"
+  ],
+  "success_rate": {
+    "backend": "100% (41/41 — including 18/18 new fraternity tests)",
+    "frontend": "not tested (skipped per request)"
+  },
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123! — verified working",
+  "seed_data_creation": "Relied on backend seed_data(): 3 chapters (Alpha Beta, Gamma Delta, Epsilon Theta), 5 tiers (Pledge/Active/Alumni/Lifetime/Honorary, sorted by order), 5 awards (Founder's Medal, Service Star, Brotherhood Award, Scholar, Rookie of the Year). All TEST_-prefixed data created during tests is deleted in the same test (chapters, tiers, awards, grants, hours, photos, documents).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All fraternity endpoints work as specified in the review_request. Object storage is healthy in this environment (init succeeded, upload/download round-trips work). The upload form-fields bug is fixed. Full regression suite pytest backend/tests/ passes 41/41. If frontend testing is requested next, focus on: chapter/tier/award admin pages, hours self-log + admin review queue, photo album upload UI, document upload UI, member assignment dialogs.",
+  "rca of the issue": "Upload form-field bug RCA: in FastAPI, parameters following an UploadFile parameter that are declared with a plain default (e.g. `title: str = ''`) are interpreted as QUERY parameters, NOT multipart form fields. Multipart text fields must be declared with `= Form(...)`. The frontend was sending album/category in form-data, but the backend silently used the defaults. Fix: `from fastapi import Form` and `title: str = Form('')`, `album: str = Form('general')`, etc. Verified by retesting test_photo_upload_list_delete and test_document_upload_list_delete_and_file_proxy — both pass after fix."
+}

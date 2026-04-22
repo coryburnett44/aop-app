@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { Users, Calendar, DollarSign, TrendingUp, AlertCircle, Newspaper, FileText, Sparkles } from "lucide-react";
+import { Users, Calendar, DollarSign, TrendingUp, AlertCircle, Newspaper, FileText, Sparkles, Clock, Trophy, Image as ImageIcon } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import {
     ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip,
@@ -26,7 +26,7 @@ export default function AdminDashboard() {
             </div>
         );
 
-    const { members, events, content, dues } = stats;
+    const { members, events, content, dues, fraternity } = stats;
 
     return (
         <div className="space-y-6" data-testid="admin-dashboard">
@@ -36,7 +36,7 @@ export default function AdminDashboard() {
                     icon={<Users className="h-5 w-5" />}
                     label="Total members"
                     value={members.total}
-                    sub={`${members.new_this_month} new this month`}
+                    sub={`${members.new_this_month} new this month · ${fraternity?.chapters || 0} chapters`}
                     tint="bg-primary/15 text-primary"
                     testid="kpi-members"
                 />
@@ -65,6 +65,16 @@ export default function AdminDashboard() {
                     testid="kpi-expiring"
                 />
             </div>
+
+            {/* Fraternity KPIs */}
+            {fraternity && (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <MiniCard icon={<Clock className="h-5 w-5" />} label="Hours pending" value={fraternity.hours_pending} />
+                    <MiniCard icon={<Clock className="h-5 w-5" />} label="Hours approved" value={`${fraternity.hours_approved_total}h`} />
+                    <MiniCard icon={<Trophy className="h-5 w-5" />} label="Awards granted" value={fraternity.awards_granted} />
+                    <MiniCard icon={<ImageIcon className="h-5 w-5" />} label="Photos · Docs" value={`${content.photos} · ${content.documents}`} />
+                </div>
+            )}
 
             {/* Charts */}
             <div className="grid lg:grid-cols-3 gap-6">

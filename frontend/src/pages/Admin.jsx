@@ -6,7 +6,8 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import AdminDashboard from "./AdminDashboard";
@@ -19,7 +20,7 @@ export default function Admin() {
             <div className="flex items-end justify-between mb-8">
                 <div>
                     <h1 className="font-heading text-4xl font-bold tracking-tight">Admin console</h1>
-                    <p className="text-muted-foreground mt-2">Dashboard, members, events, news, and pages.</p>
+                    <p className="text-muted-foreground mt-2">Members, chapters, tiers, events, hours, awards, and content.</p>
                 </div>
                 <div className="inline-flex items-center gap-2 bg-secondary/30 rounded-full px-4 py-1.5 text-xs font-semibold">
                     <Sparkles className="h-4 w-4" /> AI tools available
@@ -27,19 +28,27 @@ export default function Admin() {
             </div>
 
             <Tabs value={tab} onValueChange={setTab}>
-                <TabsList className="rounded-full bg-muted p-1 flex-wrap">
+                <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
                     <TabsTrigger value="dashboard" className="rounded-full" data-testid="admin-tab-dashboard"><LayoutDashboard className="h-4 w-4 mr-1.5" />Dashboard</TabsTrigger>
+                    <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>
+                    <TabsTrigger value="chapters" className="rounded-full" data-testid="admin-tab-chapters"><Building2 className="h-4 w-4 mr-1.5" />Chapters</TabsTrigger>
+                    <TabsTrigger value="tiers" className="rounded-full" data-testid="admin-tab-tiers"><Layers className="h-4 w-4 mr-1.5" />Tiers</TabsTrigger>
                     <TabsTrigger value="events" className="rounded-full" data-testid="admin-tab-events"><Calendar className="h-4 w-4 mr-1.5" />Events</TabsTrigger>
+                    <TabsTrigger value="hours" className="rounded-full" data-testid="admin-tab-hours"><Clock className="h-4 w-4 mr-1.5" />Hours</TabsTrigger>
+                    <TabsTrigger value="awards" className="rounded-full" data-testid="admin-tab-awards"><Trophy className="h-4 w-4 mr-1.5" />Awards</TabsTrigger>
                     <TabsTrigger value="news" className="rounded-full" data-testid="admin-tab-news"><Newspaper className="h-4 w-4 mr-1.5" />News</TabsTrigger>
                     <TabsTrigger value="pages" className="rounded-full" data-testid="admin-tab-pages"><FileText className="h-4 w-4 mr-1.5" />Pages</TabsTrigger>
-                    <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="dashboard" className="mt-6"><AdminDashboard /></TabsContent>
+                <TabsContent value="members" className="mt-6"><MembersAdmin /></TabsContent>
+                <TabsContent value="chapters" className="mt-6"><ChaptersAdmin /></TabsContent>
+                <TabsContent value="tiers" className="mt-6"><TiersAdmin /></TabsContent>
                 <TabsContent value="events" className="mt-6"><EventsAdmin /></TabsContent>
+                <TabsContent value="hours" className="mt-6"><HoursAdmin /></TabsContent>
+                <TabsContent value="awards" className="mt-6"><AwardsAdmin /></TabsContent>
                 <TabsContent value="news" className="mt-6"><NewsAdmin /></TabsContent>
                 <TabsContent value="pages" className="mt-6"><PagesAdmin /></TabsContent>
-                <TabsContent value="members" className="mt-6"><MembersAdmin /></TabsContent>
             </Tabs>
         </div>
     );
@@ -322,34 +331,437 @@ function PageDialog({ page, onSaved, trigger }) {
     );
 }
 
-/* -------- Members (read-only for V1) -------- */
+/* -------- Members admin: with role toggle, chapter/tier assignment -------- */
 function MembersAdmin() {
     const [members, setMembers] = useState([]);
-    useEffect(() => { api.get("/members").then(({ data }) => setMembers(data)); }, []);
+    const [chapters, setChapters] = useState([]);
+    const [tiers, setTiers] = useState([]);
+    const [q, setQ] = useState("");
+
+    const load = async () => {
+        const [m, c, t] = await Promise.all([
+            api.get("/members", { params: q ? { q } : {} }),
+            api.get("/chapters"),
+            api.get("/tiers"),
+        ]);
+        setMembers(m.data);
+        setChapters(c.data);
+        setTiers(t.data);
+    };
+
+    useEffect(() => { const id = setTimeout(load, 200); return () => clearTimeout(id); }, [q]);
+
+    async function toggleRole(m) {
+        const newRole = m.role === "admin" ? "member" : "admin";
+        if (!confirm(`Change ${m.name} to ${newRole}?`)) return;
+        await api.put(`/members/${m.id}/role`, { role: newRole });
+        toast.success(`Role updated to ${newRole}`);
+        load();
+    }
+    async function setChapter(m, chapter_id) {
+        await api.put(`/members/${m.id}/chapter`, { chapter_id: chapter_id || null });
+        toast.success("Chapter assigned");
+        load();
+    }
+    async function setTier(m, tier_id) {
+        await api.put(`/members/${m.id}/tier`, { tier_id: tier_id || null });
+        toast.success("Tier updated");
+        load();
+    }
+    async function extendMembership(m, days) {
+        await api.put(`/members/${m.id}/tier`, { tier_id: m.tier_id, extend_days: days });
+        toast.success(`Extended by ${days} days`);
+        load();
+    }
+
+    const chapterName = (id) => chapters.find((c) => c.id === id)?.name || "—";
+    const tierName = (id) => tiers.find((t) => t.id === id)?.name || "—";
+
     return (
-        <div className="bg-card rounded-2xl border border-border overflow-hidden">
-            <table className="w-full text-sm">
-                <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-                    <tr>
-                        <th className="text-left px-5 py-3">Name</th>
-                        <th className="text-left px-5 py-3">Email</th>
-                        <th className="text-left px-5 py-3">City</th>
-                        <th className="text-left px-5 py-3">Tier</th>
-                        <th className="text-left px-5 py-3">Expires</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {members.map((m) => (
-                        <tr key={m.id} className="border-t border-border hover:bg-muted/30">
-                            <td className="px-5 py-3 font-medium">{m.name}</td>
-                            <td className="px-5 py-3 text-muted-foreground">{m.email}</td>
-                            <td className="px-5 py-3">{m.city || "—"}</td>
-                            <td className="px-5 py-3 capitalize">{m.membership_tier}</td>
-                            <td className="px-5 py-3 text-muted-foreground">{m.membership_expires_at ? format(parseISO(m.membership_expires_at), "MMM d, yyyy") : "—"}</td>
+        <div>
+            <div className="mb-4">
+                <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
+            </div>
+            <div className="bg-card rounded-2xl border border-border overflow-x-auto shadow-warm">
+                <table className="w-full text-sm min-w-[900px]">
+                    <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                            <th className="text-left px-4 py-3">Name</th>
+                            <th className="text-left px-4 py-3">Role</th>
+                            <th className="text-left px-4 py-3">Chapter</th>
+                            <th className="text-left px-4 py-3">Tier</th>
+                            <th className="text-left px-4 py-3">Expires</th>
+                            <th className="text-right px-4 py-3">Actions</th>
                         </tr>
-                    ))}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {members.map((m) => (
+                            <tr key={m.id} className="border-t border-border hover:bg-muted/30" data-testid={`admin-member-${m.id}`}>
+                                <td className="px-4 py-3">
+                                    <div className="font-medium">{m.name}</div>
+                                    <div className="text-xs text-muted-foreground">{m.email}</div>
+                                </td>
+                                <td className="px-4 py-3">
+                                    <span className={`text-[10px] uppercase tracking-wider font-semibold rounded-full px-2 py-0.5 ${m.role === "admin" ? "bg-primary/15 text-primary" : "bg-muted"}`}>
+                                        {m.role}
+                                    </span>
+                                </td>
+                                <td className="px-4 py-3">
+                                    <Select value={m.chapter_id || ""} onValueChange={(v) => setChapter(m, v)}>
+                                        <SelectTrigger className="h-8 rounded-full text-xs w-40" data-testid={`member-${m.id}-chapter`}>
+                                            <SelectValue placeholder={chapterName(m.chapter_id)} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </td>
+                                <td className="px-4 py-3">
+                                    <Select value={m.tier_id || ""} onValueChange={(v) => setTier(m, v)}>
+                                        <SelectTrigger className="h-8 rounded-full text-xs w-32" data-testid={`member-${m.id}-tier`}>
+                                            <SelectValue placeholder={tierName(m.tier_id)} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {tiers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </td>
+                                <td className="px-4 py-3 text-muted-foreground text-xs">
+                                    {m.membership_expires_at ? format(parseISO(m.membership_expires_at), "MMM d, yyyy") : "—"}
+                                    {m.within_grace && <span className="ml-2 text-[10px] bg-destructive/15 text-destructive rounded-full px-2 py-0.5">grace</span>}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                    <Button size="sm" variant="outline" className="rounded-full h-7 text-xs mr-1" onClick={() => extendMembership(m, 365)} data-testid={`extend-${m.id}`}>+1yr</Button>
+                                    <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" onClick={() => toggleRole(m)} data-testid={`toggle-role-${m.id}`}>
+                                        {m.role === "admin" ? "Demote" : "Promote"}
+                                    </Button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
+    );
+}
+
+/* -------- Chapters -------- */
+function ChaptersAdmin() {
+    const [items, setItems] = useState([]);
+    const load = () => api.get("/chapters").then(({ data }) => setItems(data));
+    useEffect(() => { load(); }, []);
+    async function del(id) {
+        if (!confirm("Delete chapter? Members will be unassigned.")) return;
+        await api.delete(`/chapters/${id}`);
+        toast.success("Deleted");
+        load();
+    }
+    return (
+        <div>
+            <div className="flex justify-end mb-4">
+                <ChapterDialog onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-chapter-btn"><Plus className="h-4 w-4 mr-1" />New chapter</Button>} />
+            </div>
+            <div className="grid md:grid-cols-2 gap-4">
+                {items.map((c) => (
+                    <div key={c.id} className="bg-card border border-border rounded-2xl p-5" data-testid={`admin-chapter-${c.id}`}>
+                        <div className="flex items-start justify-between">
+                            <div>
+                                <div className="font-heading font-semibold text-lg">{c.name}</div>
+                                <div className="text-sm text-muted-foreground">{c.school} · {c.city}</div>
+                                <div className="text-xs text-muted-foreground mt-1">Founded {c.founded_year || "—"} · {c.member_count} members</div>
+                            </div>
+                            <div className="flex gap-1">
+                                <ChapterDialog chapter={c} onSaved={load} trigger={<Button variant="outline" size="sm" className="rounded-full">Edit</Button>} />
+                                <Button variant="ghost" size="icon" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </div>
+                        </div>
+                        {c.description && <p className="text-sm mt-3 text-muted-foreground">{c.description}</p>}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function ChapterDialog({ chapter, onSaved, trigger }) {
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({
+        name: chapter?.name || "",
+        school: chapter?.school || "",
+        city: chapter?.city || "",
+        founded_year: chapter?.founded_year || "",
+        description: chapter?.description || "",
+    });
+    async function save() {
+        try {
+            const payload = { ...form, founded_year: form.founded_year ? Number(form.founded_year) : null };
+            if (chapter) await api.put(`/chapters/${chapter.id}`, payload);
+            else await api.post("/chapters", payload);
+            toast.success("Saved");
+            setOpen(false);
+            onSaved();
+        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    }
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>{trigger}</DialogTrigger>
+            <DialogContent className="max-w-lg">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">{chapter ? "Edit chapter" : "New chapter"}</DialogTitle></DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-xl mt-1.5" data-testid="chapter-name-input" /></div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>School</Label><Input value={form.school} onChange={(e) => setForm({ ...form, school: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>City</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div><Label>Founded year</Label><Input type="number" value={form.founded_year} onChange={(e) => setForm({ ...form, founded_year: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                </div>
+                <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="chapter-save-btn">Save</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+/* -------- Tiers -------- */
+function TiersAdmin() {
+    const [items, setItems] = useState([]);
+    const load = () => api.get("/tiers").then(({ data }) => setItems(data));
+    useEffect(() => { load(); }, []);
+    async function del(id) { if (!confirm("Delete this tier?")) return; await api.delete(`/tiers/${id}`); load(); }
+    return (
+        <div>
+            <div className="flex justify-end mb-4">
+                <TierDialog onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-tier-btn"><Plus className="h-4 w-4 mr-1" />New tier</Button>} />
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {items.map((t) => (
+                    <div key={t.id} className="bg-card border border-border rounded-2xl p-5" data-testid={`admin-tier-${t.id}`}>
+                        <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="w-3 h-12 rounded-full" style={{ backgroundColor: t.color }} />
+                                <div>
+                                    <div className="font-heading font-semibold">{t.name}</div>
+                                    <div className="text-xs text-muted-foreground">${t.annual_dues}/year · {t.member_count} members</div>
+                                </div>
+                            </div>
+                            <div className="flex gap-1">
+                                <TierDialog tier={t} onSaved={load} trigger={<Button variant="outline" size="sm" className="rounded-full">Edit</Button>} />
+                                <Button variant="ghost" size="icon" onClick={() => del(t.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </div>
+                        </div>
+                        {t.description && <p className="text-sm mt-3 text-muted-foreground leading-relaxed">{t.description}</p>}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function TierDialog({ tier, onSaved, trigger }) {
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({
+        name: tier?.name || "",
+        order: tier?.order || 0,
+        color: tier?.color || "#E86A58",
+        annual_dues: tier?.annual_dues ?? 60,
+        description: tier?.description || "",
+    });
+    async function save() {
+        try {
+            const payload = { ...form, order: Number(form.order), annual_dues: Number(form.annual_dues) };
+            if (tier) await api.put(`/tiers/${tier.id}`, payload);
+            else await api.post("/tiers", payload);
+            toast.success("Saved");
+            setOpen(false);
+            onSaved();
+        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    }
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>{trigger}</DialogTrigger>
+            <DialogContent className="max-w-md">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">{tier ? "Edit tier" : "New tier"}</DialogTitle></DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-xl mt-1.5" data-testid="tier-name-input" /></div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div><Label>Order</Label><Input type="number" value={form.order} onChange={(e) => setForm({ ...form, order: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>Dues ($)</Label><Input type="number" value={form.annual_dues} onChange={(e) => setForm({ ...form, annual_dues: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>Color</Label><Input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="rounded-xl mt-1.5 h-10" /></div>
+                    </div>
+                    <div><Label>Description</Label><Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                </div>
+                <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="tier-save-btn">Save</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+/* -------- Hours queue (admin review) -------- */
+function HoursAdmin() {
+    const [items, setItems] = useState([]);
+    const [filter, setFilter] = useState("pending");
+    const load = () => api.get(`/hours${filter !== "all" ? `?status_filter=${filter}` : ""}`).then(({ data }) => setItems(data));
+    useEffect(() => { load(); }, [filter]);
+    async function review(id, status) { await api.put(`/hours/${id}/review`, { status, note: "" }); toast.success(status); load(); }
+    return (
+        <div>
+            <div className="flex gap-2 mb-4">
+                {["pending", "approved", "rejected", "all"].map((s) => (
+                    <button key={s} onClick={() => setFilter(s)} className={`rounded-full px-4 py-1.5 text-sm font-medium capitalize ${filter === s ? "bg-primary text-primary-foreground shadow-warm" : "bg-muted hover:bg-muted/70"}`} data-testid={`admin-hours-filter-${s}`}>{s}</button>
+                ))}
+            </div>
+            {items.length === 0 ? <div className="text-muted-foreground">Empty.</div> : (
+                <div className="space-y-3">
+                    {items.map((h) => (
+                        <div key={h.id} className="bg-card border border-border rounded-2xl p-5 flex items-start gap-4" data-testid={`admin-hours-${h.id}`}>
+                            <div className="w-12 h-12 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold">{h.hours}</div>
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium">{h.user_name}</div>
+                                <div className="text-sm leading-relaxed text-muted-foreground">{h.description}</div>
+                                <div className="text-xs text-muted-foreground mt-1">{h.date && format(parseISO(h.date), "MMM d, yyyy")} · status: {h.status}</div>
+                            </div>
+                            {h.status === "pending" && (
+                                <div className="flex gap-2">
+                                    <Button size="sm" onClick={() => review(h.id, "approved")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`admin-approve-${h.id}`}>Approve</Button>
+                                    <Button size="sm" variant="outline" onClick={() => review(h.id, "rejected")} className="rounded-full">Reject</Button>
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+/* -------- Awards admin -------- */
+function AwardsAdmin() {
+    const [awards, setAwards] = useState([]);
+    const [members, setMembers] = useState([]);
+
+    const load = async () => {
+        const [a, m] = await Promise.all([api.get("/awards"), api.get("/members")]);
+        setAwards(a.data);
+        setMembers(m.data);
+    };
+    useEffect(() => { load(); }, []);
+
+    async function del(id) { if (!confirm("Delete this award?")) return; await api.delete(`/awards/${id}`); load(); }
+
+    return (
+        <div>
+            <div className="flex justify-end mb-4">
+                <AwardDialog onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-award-btn"><Plus className="h-4 w-4 mr-1" />New award</Button>} />
+            </div>
+            <div className="grid md:grid-cols-2 gap-4">
+                {awards.map((a) => (
+                    <div key={a.id} className="bg-card border border-border rounded-2xl p-5" data-testid={`admin-award-${a.id}`}>
+                        <div className="flex items-start justify-between">
+                            <div>
+                                <div className="font-heading font-semibold text-lg flex items-center gap-2">
+                                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: a.color }} /> {a.name}
+                                </div>
+                                <div className="text-sm text-muted-foreground mt-1">{a.description}</div>
+                                <div className="text-xs text-muted-foreground mt-2">Granted {a.granted_count}× · icon: {a.icon}</div>
+                            </div>
+                            <div className="flex gap-1">
+                                <GrantAwardDialog award={a} members={members} onSaved={load} />
+                                <AwardDialog award={a} onSaved={load} trigger={<Button variant="outline" size="sm" className="rounded-full">Edit</Button>} />
+                                <Button variant="ghost" size="icon" onClick={() => del(a.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function AwardDialog({ award, onSaved, trigger }) {
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({
+        name: award?.name || "",
+        description: award?.description || "",
+        icon: award?.icon || "trophy",
+        color: award?.color || "#F9D466",
+    });
+    async function save() {
+        try {
+            if (award) await api.put(`/awards/${award.id}`, form);
+            else await api.post("/awards", form);
+            toast.success("Saved");
+            setOpen(false);
+            onSaved();
+        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    }
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>{trigger}</DialogTrigger>
+            <DialogContent className="max-w-md">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">{award ? "Edit award" : "New award"}</DialogTitle></DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-xl mt-1.5" data-testid="award-name-input" /></div>
+                    <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <Label>Icon</Label>
+                            <Select value={form.icon} onValueChange={(v) => setForm({ ...form, icon: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="award-icon-select"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="trophy">Trophy</SelectItem>
+                                    <SelectItem value="medal">Medal</SelectItem>
+                                    <SelectItem value="star">Star</SelectItem>
+                                    <SelectItem value="heart">Heart</SelectItem>
+                                    <SelectItem value="graduation-cap">Graduation</SelectItem>
+                                    <SelectItem value="sparkles">Sparkles</SelectItem>
+                                    <SelectItem value="award">Award</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div><Label>Color</Label><Input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="rounded-xl mt-1.5 h-10" /></div>
+                    </div>
+                </div>
+                <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="award-save-btn">Save</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function GrantAwardDialog({ award, members, onSaved }) {
+    const [open, setOpen] = useState(false);
+    const [userId, setUserId] = useState("");
+    const [reason, setReason] = useState("");
+    async function grant() {
+        if (!userId) { toast.error("Pick a member"); return; }
+        try {
+            await api.post(`/awards/${award.id}/grant`, { user_id: userId, reason });
+            toast.success(`${award.name} granted`);
+            setOpen(false);
+            setUserId(""); setReason("");
+            onSaved();
+        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    }
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button size="sm" className="rounded-full bg-primary/10 text-primary hover:bg-primary/20" data-testid={`grant-btn-${award.id}`}>Grant</Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">Grant "{award.name}"</DialogTitle></DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div>
+                        <Label>Member</Label>
+                        <Select value={userId} onValueChange={setUserId}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="grant-member-select"><SelectValue placeholder="Choose a member…" /></SelectTrigger>
+                            <SelectContent className="max-h-72">
+                                {members.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} — {m.email}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div><Label>Reason (optional)</Label><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="rounded-xl mt-1.5" /></div>
+                </div>
+                <DialogFooter><Button onClick={grant} className="rounded-full bg-primary hover:bg-primary/90" data-testid="grant-confirm-btn">Grant award</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }
