@@ -6,19 +6,20 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
+import AdminDashboard from "./AdminDashboard";
 
 export default function Admin() {
-    const [tab, setTab] = useState("events");
+    const [tab, setTab] = useState("dashboard");
 
     return (
         <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10">
             <div className="flex items-end justify-between mb-8">
                 <div>
                     <h1 className="font-heading text-4xl font-bold tracking-tight">Admin console</h1>
-                    <p className="text-muted-foreground mt-2">Manage members, events, news, and pages.</p>
+                    <p className="text-muted-foreground mt-2">Dashboard, members, events, news, and pages.</p>
                 </div>
                 <div className="inline-flex items-center gap-2 bg-secondary/30 rounded-full px-4 py-1.5 text-xs font-semibold">
                     <Sparkles className="h-4 w-4" /> AI tools available
@@ -27,12 +28,14 @@ export default function Admin() {
 
             <Tabs value={tab} onValueChange={setTab}>
                 <TabsList className="rounded-full bg-muted p-1 flex-wrap">
+                    <TabsTrigger value="dashboard" className="rounded-full" data-testid="admin-tab-dashboard"><LayoutDashboard className="h-4 w-4 mr-1.5" />Dashboard</TabsTrigger>
                     <TabsTrigger value="events" className="rounded-full" data-testid="admin-tab-events"><Calendar className="h-4 w-4 mr-1.5" />Events</TabsTrigger>
                     <TabsTrigger value="news" className="rounded-full" data-testid="admin-tab-news"><Newspaper className="h-4 w-4 mr-1.5" />News</TabsTrigger>
                     <TabsTrigger value="pages" className="rounded-full" data-testid="admin-tab-pages"><FileText className="h-4 w-4 mr-1.5" />Pages</TabsTrigger>
                     <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>
                 </TabsList>
 
+                <TabsContent value="dashboard" className="mt-6"><AdminDashboard /></TabsContent>
                 <TabsContent value="events" className="mt-6"><EventsAdmin /></TabsContent>
                 <TabsContent value="news" className="mt-6"><NewsAdmin /></TabsContent>
                 <TabsContent value="pages" className="mt-6"><PagesAdmin /></TabsContent>

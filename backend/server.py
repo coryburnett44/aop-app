@@ -580,6 +580,105 @@ async def ai_draft_email(body: AIEmailReq, admin: dict = Depends(require_admin))
         logger.exception("AI email draft failed")
         raise HTTPException(status_code=502, detail=f"AI error: {e}")
 
+# ---------- Admin Dashboard Stats ----------
+ANNUAL_DUES_USD = 60.0
+
+@api.get("/admin/stats")
+async def admin_stats(_: dict = Depends(require_admin)):
+    now = now_utc()
+    now_iso = iso(now)
+    thirty_days_iso = iso(now + timedelta(days=30))
+    month_start_iso = iso(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+
+    # Members
+    total_members = await db.users.count_documents({})
+    new_this_month = await db.users.count_documents({"created_at": {"$gte": month_start_iso}})
+    expiring_soon = await db.users.count_documents({
+        "membership_expires_at": {"$gte": now_iso, "$lte": thirty_days_iso}
+    })
+    expired = await db.users.count_documents({"membership_expires_at": {"$lt": now_iso}})
+    active_members = total_members - expired
+
+    tier_cursor = db.users.aggregate([{"$group": {"_id": "$membership_tier", "count": {"$sum": 1}}}])
+    by_tier = [{"tier": (d["_id"] or "standard"), "count": d["count"]} async for d in tier_cursor]
+
+    # Member growth — last 6 calendar months
+    growth = []
+    current_first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    for i in range(5, -1, -1):
+        y = current_first.year
+        m = current_first.month - i
+        while m <= 0:
+            m += 12
+            y -= 1
+        m_start = current_first.replace(year=y, month=m)
+        next_m = (m_start + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        c = await db.users.count_documents({
+            "created_at": {"$gte": iso(m_start), "$lt": iso(next_m)}
+        })
+        growth.append({"month": m_start.strftime("%b"), "members": c})
+
+    # Events
+    total_events = await db.events.count_documents({})
+    upcoming_events = await db.events.count_documents({"start_at": {"$gte": now_iso}})
+    past_events = total_events - upcoming_events
+    total_rsvps = await db.rsvps.count_documents({})
+
+    top_cursor = db.events.find({}, {"_id": 0}).sort("rsvp_count", -1).limit(5)
+    top_events = [event_out(e) async for e in top_cursor]
+
+    upcoming_cursor = db.events.find({"start_at": {"$gte": now_iso}}, {"_id": 0}).sort("start_at", 1).limit(5)
+    next_events = [event_out(e) async for e in upcoming_cursor]
+
+    # News / pages
+    total_news = await db.news.count_documents({})
+    total_pages = await db.pages.count_documents({})
+
+    # Dues (no Stripe yet — estimate)
+    active_revenue = round(active_members * ANNUAL_DUES_USD, 2)
+    renewals_this_month = await db.users.count_documents({
+        "membership_expires_at": {"$gte": iso(now + timedelta(days=360)), "$lte": iso(now + timedelta(days=370))}
+    })
+
+    # Expiring memberships list
+    exp_cursor = db.users.find(
+        {"membership_expires_at": {"$gte": now_iso, "$lte": thirty_days_iso}},
+        {"_id": 0, "password_hash": 0}
+    ).sort("membership_expires_at", 1).limit(10)
+    expiring_list = [{
+        "id": u["id"], "name": u.get("name"), "email": u.get("email"),
+        "expires_at": u.get("membership_expires_at"),
+        "tier": u.get("membership_tier"),
+    } async for u in exp_cursor]
+
+    return {
+        "members": {
+            "total": total_members,
+            "active": active_members,
+            "new_this_month": new_this_month,
+            "expiring_soon": expiring_soon,
+            "expired": expired,
+            "by_tier": by_tier,
+            "growth": growth,
+            "expiring_list": expiring_list,
+        },
+        "events": {
+            "total": total_events,
+            "upcoming": upcoming_events,
+            "past": past_events,
+            "total_rsvps": total_rsvps,
+            "top_by_rsvp": top_events,
+            "next_up": next_events,
+        },
+        "content": {"news": total_news, "pages": total_pages},
+        "dues": {
+            "annual_fee": ANNUAL_DUES_USD,
+            "active_revenue_estimate": active_revenue,
+            "renewals_this_month": renewals_this_month,
+            "potential_expiring_revenue": round(expiring_soon * ANNUAL_DUES_USD, 2),
+        },
+    }
+
 # ---------- Health ----------
 @api.get("/")
 async def root():
