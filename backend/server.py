@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / ".env")
 import os
 import uuid
 import logging
+import secrets
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
@@ -192,6 +193,19 @@ class AIEmailReq(BaseModel):
     goal: str
     tone: str = "warm"
 
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    new_password: str = Field(min_length=6)
+
+class VerifyEmailIn(BaseModel):
+    token: str
+
+class RoleUpdateIn(BaseModel):
+    role: Literal["member", "admin"]
+
 # ---------- Auth Routes ----------
 @api.post("/auth/register")
 async def register(body: RegisterIn, response: Response):
@@ -201,6 +215,7 @@ async def register(body: RegisterIn, response: Response):
         raise HTTPException(status_code=400, detail="Email already registered")
     uid = str(uuid.uuid4())
     created = now_utc()
+    verify_token = secrets.token_urlsafe(32)
     doc = {
         "id": uid,
         "email": email,
@@ -213,13 +228,24 @@ async def register(body: RegisterIn, response: Response):
         "avatar_url": "",
         "membership_tier": "standard",
         "membership_expires_at": iso(created + timedelta(days=365)),
+        "email_verified": False,
         "created_at": iso(created),
     }
     await db.users.insert_one(doc)
+    await db.email_verification_tokens.insert_one({
+        "token": verify_token,
+        "user_id": uid,
+        "expires_at": iso(created + timedelta(days=7)),
+    })
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    verify_link = f"{frontend}/verify-email?token={verify_token}"
+    logger.info(f"[email-verify] Link for {email}: {verify_link}")
     at = create_access_token(uid, email, "member")
     rt = create_refresh_token(uid)
     set_auth_cookies(response, at, rt)
-    return public_user(doc)
+    out = public_user(doc)
+    out["verify_link"] = verify_link  # dev: returned so UI can surface; replace with email provider later
+    return out
 
 @api.post("/auth/login")
 async def login(body: LoginIn, request: Request, response: Response):
