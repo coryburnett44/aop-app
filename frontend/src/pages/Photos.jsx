@@ -9,8 +9,6 @@ import { Upload, Image as ImageIcon, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 
-const BACKEND = process.env.REACT_APP_BACKEND_URL;
-
 export default function Photos() {
     const { user } = useAuth();
     const [photos, setPhotos] = useState([]);
@@ -65,26 +63,56 @@ export default function Photos() {
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                     {photos.map((p) => (
-                        <div key={p.id} className="group relative aspect-square rounded-2xl overflow-hidden bg-muted border border-border shadow-warm" data-testid={`photo-${p.id}`}>
-                            <img src={`${BACKEND}${p.url}`} alt={p.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                                <div className="text-xs font-semibold truncate">{p.title || "Untitled"}</div>
-                                <div className="text-[10px] opacity-80">
-                                    by {p.uploaded_by_name} · {p.created_at && format(parseISO(p.created_at), "MMM d")}
-                                </div>
-                            </div>
-                            {user && (user.role === "admin" || user.id === p.uploaded_by) && (
-                                <button
-                                    onClick={() => remove(p.id)}
-                                    className="absolute top-2 right-2 rounded-full bg-white/90 hover:bg-white p-1.5 shadow opacity-0 group-hover:opacity-100 transition-opacity"
-                                    data-testid={`delete-photo-${p.id}`}
-                                >
-                                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                                </button>
-                            )}
-                        </div>
+                        <PhotoTile key={p.id} photo={p} currentUser={user} onDelete={remove} />
                     ))}
                 </div>
+            )}
+        </div>
+    );
+}
+
+function PhotoTile({ photo, currentUser, onDelete }) {
+    const [src, setSrc] = useState("");
+
+    useEffect(() => {
+        let revoked = null;
+        (async () => {
+            try {
+                const path = photo.url.startsWith("/api") ? photo.url.slice(4) : photo.url;
+                const { data } = await api.get(path, { responseType: "blob" });
+                const url = URL.createObjectURL(data);
+                revoked = url;
+                setSrc(url);
+            } catch {
+                /* ignore */
+            }
+        })();
+        return () => { if (revoked) URL.revokeObjectURL(revoked); };
+    }, [photo.url]);
+
+    const canDelete = currentUser && (currentUser.role === "admin" || currentUser.id === photo.uploaded_by);
+
+    return (
+        <div className="group relative aspect-square rounded-2xl overflow-hidden bg-muted border border-border shadow-warm" data-testid={`photo-${photo.id}`}>
+            {src ? (
+                <img src={src} alt={photo.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+            ) : (
+                <div className="w-full h-full animate-pulse bg-muted" />
+            )}
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="text-xs font-semibold truncate">{photo.title || "Untitled"}</div>
+                <div className="text-[10px] opacity-80">
+                    by {photo.uploaded_by_name} · {photo.created_at && format(parseISO(photo.created_at), "MMM d")}
+                </div>
+            </div>
+            {canDelete && (
+                <button
+                    onClick={() => onDelete(photo.id)}
+                    className="absolute top-2 right-2 rounded-full bg-white/90 hover:bg-white p-1.5 shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                    data-testid={`delete-photo-${photo.id}`}
+                >
+                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                </button>
             )}
         </div>
     );

@@ -60,3 +60,24 @@ Build an app that mirrors Club Express. User wants the same capabilities — a f
 
 ## Credentials
 See `/app/memory/test_credentials.md`.
+
+## Fraternity Extension (2026-02)
+Added: Chapters (one per member), custom membership Tiers, Awards (admin grant), Volunteer Hours (member self-log + admin approval), Photo gallery (albums), Documents library (category filters), 30-day grace period, file uploads via Emergent object storage, auth-gated /api/files proxy.
+
+### New Endpoints (all admin-only except where noted)
+- Chapters: CRUD `/api/chapters`
+- Tiers: CRUD `/api/tiers`
+- Awards: CRUD `/api/awards` + `POST /api/awards/{id}/grant` + `DELETE /api/awards/grants/{grant_id}` + `GET /api/members/{id}/awards` + `GET /api/me/awards`
+- Hours: `POST /api/hours` (member), `GET /api/me/hours` (member), `GET /api/hours` (admin), `PUT /api/hours/{id}/review`, `DELETE /api/hours/{id}` (owner/admin)
+- Member admin: `PUT /api/members/{id}/role`, `/chapter`, `/tier`
+- Photos: `POST /api/photos` (multipart), `GET /api/photos`, `GET /api/photos/albums`, `DELETE /api/photos/{id}`
+- Documents: `POST /api/documents`, `GET /api/documents`, `DELETE /api/documents/{id}`
+- Files: `GET /api/files/{storage_path}` (auth-gated proxy)
+
+### Frontend
+- New pages: `/chapters`, `/photos`, `/documents`, `/awards`, `/hours`
+- Profile: awards/hours tabs, grace-period badge, chapter+tier display
+- Admin console: 9 tabs (Dashboard, Members, Chapters, Tiers, Events, Hours, Awards, News, Pages) — Members tab now has role toggle, chapter/tier select, +1yr extend
+
+### Seeds
+- 3 chapters, 5 tiers (Pledge/Active/Alumni/Lifetime/Honorary), 5 awards (Founder's Medal, Service Star, Brotherhood, Scholar, Rookie)

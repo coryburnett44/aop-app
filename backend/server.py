@@ -1174,7 +1174,7 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
 
 # ---------- File proxy (serves both photos and documents) ----------
 @api.get("/files/{storage_path:path}")
-async def download_file(storage_path: str):
+async def download_file(storage_path: str, _: dict = Depends(get_current_user)):
     # Check DB for existence + soft-delete flag
     rec = await db.photos.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
     if not rec:

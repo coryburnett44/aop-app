@@ -10,8 +10,6 @@ import { FileText, Upload, Download, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 
-const BACKEND = process.env.REACT_APP_BACKEND_URL;
-
 function humanSize(n) {
     if (!n) return "—";
     if (n < 1024) return `${n} B`;
@@ -107,16 +105,7 @@ export default function Documents() {
                                     <td className="px-5 py-3 hidden sm:table-cell text-muted-foreground">{d.uploaded_by_name}</td>
                                     <td className="px-5 py-3 hidden md:table-cell text-muted-foreground">{humanSize(d.size)}</td>
                                     <td className="px-5 py-3 text-right">
-                                        <a
-                                            href={`${BACKEND}${d.url}`}
-                                            download={d.original_filename}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm"
-                                            data-testid={`download-doc-${d.id}`}
-                                        >
-                                            <Download className="h-4 w-4" /> Open
-                                        </a>
+                                        <DocDownloadLink doc={d} />
                                         {user && (user.role === "admin" || user.id === d.uploaded_by) && (
                                             <button onClick={() => remove(d.id)} className="ml-3 text-muted-foreground hover:text-destructive" data-testid={`delete-doc-${d.id}`}>
                                                 <Trash2 className="h-4 w-4" />
@@ -130,6 +119,38 @@ export default function Documents() {
                 </div>
             )}
         </div>
+    );
+}
+
+function DocDownloadLink({ doc }) {
+    const [busy, setBusy] = useState(false);
+    async function open() {
+        setBusy(true);
+        try {
+            const path = doc.url.startsWith("/api") ? doc.url.slice(4) : doc.url;
+            const { data } = await api.get(path, { responseType: "blob" });
+            const url = URL.createObjectURL(data);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = doc.original_filename || doc.title || "download";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        } catch {
+            toast.error("Failed to download");
+        }
+        setBusy(false);
+    }
+    return (
+        <button
+            onClick={open}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm"
+            data-testid={`download-doc-${doc.id}`}
+        >
+            <Download className="h-4 w-4" /> {busy ? "Loading…" : "Open"}
+        </button>
     );
 }
 
