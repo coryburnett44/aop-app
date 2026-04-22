@@ -728,13 +728,14 @@ async def seed_data():
 # ---------- Mount ----------
 app.include_router(api)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_origins_raw = os.environ.get("CORS_ORIGINS", "*").strip()
+_cors_kwargs = {"allow_credentials": True, "allow_methods": ["*"], "allow_headers": ["*"]}
+if _cors_origins_raw == "*":
+    _cors_kwargs["allow_origin_regex"] = ".*"
+else:
+    _cors_kwargs["allow_origins"] = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 @app.on_event("shutdown")
 async def shutdown():
