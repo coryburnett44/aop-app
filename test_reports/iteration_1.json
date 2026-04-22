@@ -1,0 +1,45 @@
+{
+  "summary": "Comprehensive backend API testing for ClubHaven (Club Express clone). 22/23 pytest tests pass. Auth (register/login/me/logout/refresh), Members directory + profile update + renew, Events CRUD + RSVP toggle + my-events, News CRUD, CMS Pages CRUD, Admin-only enforcement (403 for member), and AI endpoints (Claude Sonnet 4.5 via emergentintegrations) all pass. Only brute-force lockout test failed because the rate-limit identifier uses request.client.host, which is not stable behind the k8s ingress.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/auth/login",
+        "issue": "Brute-force lockout keyed on request.client.host + email never reaches 5 increments behind the ingress proxy because client.host can vary per hop. Test made 7 invalid attempts and never received 429. Use X-Forwarded-For (first IP) or key purely on email to make lockout reliable in production."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix brute-force lockout to use X-Forwarded-For (or just email) as identifier so the 5-fail/15-min lockout actually triggers in the deployed environment."
+  ],
+  "critical_code_review_comments": [
+    "set_auth_cookies hardcodes secure=True and samesite='none' which only works on HTTPS; fine for the preview/prod URL but local http dev will break logins.",
+    "CORS allow_origins is restricted to FRONTEND_URL env only; CORS_ORIGINS env var in .env is unused — consider supporting comma-separated list.",
+    "Login attempts identifier (ip:email) is unreliable behind reverse proxy; will silently disable brute-force defense in production.",
+    "PUT /api/pages/{slug} updates updated_at even when slug doesn't exist (no-op update + 404), which is harmless but consider checking existence first.",
+    "GET /api/members exposes membership_expires_at and email of all users publicly without auth — confirm this is intentional for the directory.",
+    "@app.on_event('startup'/'shutdown') is deprecated in modern FastAPI; recommend lifespan handler."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {
+    "backend": "95.6% (22/23)",
+    "frontend": "not tested (skipped per request)"
+  },
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123! — verified working",
+  "seed_data_creation": "None - relied on backend seed_data() (admin, demo member, 4 demo members, 3 events, 2 news articles, 2 pages all present and idempotent).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All endpoints in the review_request work as specified. AI endpoints actually returned 200 from Claude (not 502). Reusable pytest at /app/backend/tests/backend_test.py covers full surface. Only outstanding bug is brute-force lockout key (see action_items). Frontend was intentionally skipped.",
+  "rca of the issue": "Brute-force lockout failure RCA: server.py line ~227 uses `ip = request.client.host`. Behind the kubernetes ingress, each request can be terminated by a different upstream proxy IP, so `identifier = f'{ip}:{email}'` is not stable. Each failed attempt creates/increments a different document, so count never reaches 5 for a single key and the 429 branch is never hit. Fix: parse X-Forwarded-For (use the first IP) and fall back to client.host, OR drop IP entirely and key on email only."
+}
