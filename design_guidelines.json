@@ -1,0 +1,132 @@
+{
+  "theme": "LIGHT",
+  "archetype": "Archetype 6 (Vibrant Play) + Archetype 1 (Organic & Earthy)",
+  "vibe": "Warm, social, inclusive, neighborhood/hobbyist/alumni vibe. Not corporate.",
+  "colors": {
+    "primary": "#E86A58",
+    "secondary": "#F9D466",
+    "accent": "#A5C4B4",
+    "background": "#FDFBF7",
+    "foreground": "#2D2A26",
+    "css_variables": {
+      "light": {
+        "--background": "40 33% 98%",
+        "--foreground": "34 8% 16%",
+        "--card": "0 0% 100%",
+        "--card-foreground": "34 8% 16%",
+        "--popover": "0 0% 100%",
+        "--popover-foreground": "34 8% 16%",
+        "--primary": "11 74% 63%",
+        "--primary-foreground": "0 0% 100%",
+        "--secondary": "45 92% 69%",
+        "--secondary-foreground": "34 8% 16%",
+        "--muted": "40 25% 93%",
+        "--muted-foreground": "34 5% 45%",
+        "--accent": "149 22% 71%",
+        "--accent-foreground": "34 8% 16%",
+        "--destructive": "0 84.2% 60.2%",
+        "--destructive-foreground": "0 0% 98%",
+        "--border": "40 20% 88%",
+        "--input": "40 20% 88%",
+        "--ring": "11 74% 63%",
+        "--radius": "1rem"
+      },
+      "dark": {
+        "--background": "34 8% 16%",
+        "--foreground": "40 33% 98%",
+        "--card": "34 8% 14%",
+        "--card-foreground": "40 33% 98%",
+        "--popover": "34 8% 14%",
+        "--popover-foreground": "40 33% 98%",
+        "--primary": "11 74% 63%",
+        "--primary-foreground": "0 0% 100%",
+        "--secondary": "45 92% 69%",
+        "--secondary-foreground": "34 8% 16%",
+        "--muted": "34 8% 25%",
+        "--muted-foreground": "40 10% 70%",
+        "--accent": "149 22% 51%",
+        "--accent-foreground": "0 0% 100%",
+        "--destructive": "0 62.8% 30.6%",
+        "--destructive-foreground": "0 0% 98%",
+        "--border": "34 8% 25%",
+        "--input": "34 8% 25%",
+        "--ring": "11 74% 63%"
+      }
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Outfit",
+      "body": "Work Sans"
+    },
+    "rules": [
+      "Avoid Inter and Space Grotesk completely.",
+      "H1-H2 must have tracking-tight (-0.02em) to tracking-tighter.",
+      "Body must have leading-relaxed (1.625) for high readability.",
+      "No generic bold for headings; prefer font-medium or font-black to create tension."
+    ],
+    "hierarchy": {
+      "H1": "text-4xl sm:text-5xl lg:text-6xl",
+      "H2": "text-2xl sm:text-3xl lg:text-4xl",
+      "H3": "text-xl sm:text-2xl",
+      "Body": "text-base sm:text-lg",
+      "Small": "text-sm"
+    }
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "Use generous spacing. p-6, p-8, p-12. Avoid cramped layouts.",
+    "border_radius": "rounded-2xl or rounded-full for friendly vibe. Forms can use rounded-xl.",
+    "rules": [
+      "Asymmetry creates tension. Use organic flows and friendly bento grids.",
+      "Grid items must be direct children of the grid container.",
+      "Max image height 80vh on mobile to prevent blocking."
+    ]
+  },
+  "components": {
+    "navbar": "Glassmorphism but warm (bg-white/70 backdrop-blur-xl border-b border-orange-900/10). Sticky top.",
+    "hero": "Soft background, high contrast text, organic rounded shapes or bento grid with warm colors. Image overlay should not exceed bg-black/30 or use a warm gradient overlay.",
+    "event_cards": "Solid background (white) with subtle warm shadow (shadow-[0_8px_30px_rgb(232,106,88,0.1)]). Generous internal padding (p-6). Large rounded corners (rounded-2xl).",
+    "member_cards": "Tactile variant of Neumorphism. Off-white background matching parent (bg-muted/50), 1px border-black/5, soft shadow. Circular avatars.",
+    "calendar_grid": "Clean grid, border-collapse, subtle border-orange-900/10. Highlight today with the primary color (Warm Coral).",
+    "news_articles": "Editorial style. Large images, prominent headings, generous white space. Work Sans for high readability body copy.",
+    "admin_dashboard": "Clean, flat cards, border-border. Dense but friendly. Use Phosphor Icons. Sidebar for navigation. Avoid cold 'corporate SaaS' gray borders.",
+    "forms": "Large, accessible inputs. rounded-xl. focus:ring-primary focus:ring-offset-2. Friendly labels with slight muted color.",
+    "ai_writer_tool": "Use an inline playful UI. Pastel yellow background (bg-secondary/20), sparkling icon (lucide-react 'Sparkles' in Coral), rounded-2xl to feel approachable, not scary."
+  },
+  "media": {
+    "hero_backgrounds": [
+      "https://images.unsplash.com/photo-1758272133693-d2124dbe00de?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwzfHxkaXZlcnNlJTIwY29tbXVuaXR5JTIwZ2F0aGVyaW5nJTIwZXZlbnR8ZW58MHx8fHwxNzc2ODIwNjAwfDA&ixlib=rb-4.1.0&q=85",
+      "https://images.unsplash.com/photo-1767274101063-a735a6849afc?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwxfHxkaXZlcnNlJTIwY29tbXVuaXR5JTIwZ2F0aGVyaW5nJTIwZXZlbnR8ZW58MHx8fHwxNzc2ODIwNjAwfDA&ixlib=rb-4.1.0&q=85"
+    ],
+    "member_portraits": [
+      "https://images.unsplash.com/photo-1760574740271-55e6683afe76?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjd8MHwxfHNlYXJjaHw0fHxmcmllbmRseSUyMHNtaWxpbmclMjBkaXZlcnNlJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzc2ODIwNjAwfDA&ixlib=rb-4.1.0&q=85",
+      "https://images.unsplash.com/photo-1772723246506-6fd0892fbb9a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjd8MHwxfHNlYXJjaHwxfHxmcmllbmRseSUyMHNtaWxpbmclMjBkaXZlcnNlJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzc2ODIwNjAwfDA&ixlib=rb-4.1.0&q=85",
+      "https://images.pexels.com/photos/8555016/pexels-photo-8555016.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "https://images.pexels.com/photos/9969335/pexels-photo-9969335.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    ],
+    "events": [
+      "https://images.unsplash.com/photo-1767274083868-d74fb3123d97?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHw0fHxkaXZlcnNlJTIwY29tbXVuaXR5JTIwZ2F0aGVyaW5nJTIwZXZlbnR8ZW58MHx8fHwxNzc2ODIwNjAwfDA&ixlib=rb-4.1.0&q=85",
+      "https://images.unsplash.com/photo-1758272133542-b3107b947fc2?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwyfHxkaXZlcnNlJTIwY29tbXVuaXR5JTIwZ2F0aGVyaW5nJTIwZXZlbnR8ZW58MHx8fHwxNzc2ODIwNjAwfDA&ixlib=rb-4.1.0&q=85"
+    ]
+  },
+  "animation_and_interactions": {
+    "hover": "All interactive elements must have clear hover states (e.g., hover:-translate-y-1 hover:shadow-lg). Ensure focus states are high contrast.",
+    "transitions": "Use specific properties: transition: transform 0.2s ease, box-shadow 0.2s ease.",
+    "loading": "Use pulsing elements matching the brand primary or secondary colors, not generic gray spinners."
+  },
+  "accessibility": {
+    "rules": [
+      "Ensure 4.5:1 contrast for normal text.",
+      "All interactive elements MUST include data-testid attribute in kebab-case (e.g., data-testid='rsvp-button').",
+      "Images must have descriptive alt text."
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Install Google Fonts 'Outfit' and 'Work Sans'. Setup in tailwind.config.js.",
+    "Install @phosphor-icons/react for friendly, rounded iconography (or use lucide-react if already installed).",
+    "Replace default Tailwind CSS variables in index.css with the ones provided in this JSON.",
+    "Do NOT use Space Grotesk or Inter.",
+    "Ensure the hero section highlights the vibrant community gathering image provided. Apply a very light overlay so the subjects remain visible.",
+    "Build the components emphasizing warmth: generous padding, large rounded corners, and soft, colored shadows."
+  ]
+}
