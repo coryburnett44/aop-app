@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { Users, Calendar, DollarSign, TrendingUp, AlertCircle, Newspaper, FileText, Sparkles, Clock, Trophy, Image as ImageIcon } from "lucide-react";
+import { Users, Calendar, DollarSign, TrendingUp, AlertCircle, Newspaper, FileText, Sparkles, Clock, Trophy, Image as ImageIcon, Inbox, Check, X, UserPlus, AlertTriangle } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { toast } from "sonner";
 import {
     ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip,
     PieChart, Pie, Cell, Legend
@@ -14,9 +15,8 @@ export default function AdminDashboard() {
     const [stats, setStats] = useState(null);
     const [err, setErr] = useState("");
 
-    useEffect(() => {
-        api.get("/admin/stats").then(({ data }) => setStats(data)).catch((e) => setErr(e.message));
-    }, []);
+    const load = () => api.get("/admin/stats").then(({ data }) => setStats(data)).catch((e) => setErr(e.message));
+    useEffect(() => { load(); }, []);
 
     if (err) return <div className="text-destructive" data-testid="dashboard-error">{err}</div>;
     if (!stats)
@@ -26,7 +26,7 @@ export default function AdminDashboard() {
             </div>
         );
 
-    const { members, events, content, dues, fraternity } = stats;
+    const { members, events, content, dues, fraternity, inbox } = stats;
 
     return (
         <div className="space-y-6" data-testid="admin-dashboard">
@@ -75,6 +75,9 @@ export default function AdminDashboard() {
                     <MiniCard icon={<ImageIcon className="h-5 w-5" />} label="Photos · Docs" value={`${content.photos} · ${content.documents}`} />
                 </div>
             )}
+
+            {/* Pending items inbox */}
+            {inbox && inbox.total > 0 && <InboxPanel inbox={inbox} onAction={load} />}
 
             {/* Charts */}
             <div className="grid lg:grid-cols-3 gap-6">
@@ -254,6 +257,160 @@ function Kpi({ icon, label, value, sub, tint, testid }) {
             <div className="mt-4 text-xs uppercase tracking-wider text-muted-foreground font-semibold">{label}</div>
             <div className="font-heading text-3xl font-black mt-1 tracking-tight">{value}</div>
             <div className="text-xs text-muted-foreground mt-1">{sub}</div>
+        </div>
+    );
+}
+
+function InboxPanel({ inbox, onAction }) {
+    const [tab, setTab] = useState(inbox.hours_to_review.length > 0 ? "hours" : inbox.in_grace.length > 0 ? "grace" : "new");
+
+    async function approveHours(id) {
+        try {
+            await api.put(`/hours/${id}/review`, { status: "approved", note: "" });
+            toast.success("Approved ✓");
+            onAction();
+        } catch { toast.error("Failed"); }
+    }
+    async function rejectHours(id) {
+        try {
+            await api.put(`/hours/${id}/review`, { status: "rejected", note: "" });
+            toast.success("Rejected");
+            onAction();
+        } catch { toast.error("Failed"); }
+    }
+    async function extendMember(uid) {
+        try {
+            await api.put(`/members/${uid}/tier`, { tier_id: null, extend_days: 365 });
+            toast.success("Extended by 1 year");
+            onAction();
+        } catch { toast.error("Failed"); }
+    }
+
+    const tabs = [
+        { key: "hours", label: "Hours to review", count: inbox.hours_to_review.length, icon: Clock },
+        { key: "grace", label: "In grace", count: inbox.in_grace.length, icon: AlertTriangle },
+        { key: "new", label: "New members (7d)", count: inbox.new_members.length, icon: UserPlus },
+    ];
+
+    return (
+        <div className="bg-card rounded-2xl border border-border shadow-warm overflow-hidden" data-testid="admin-inbox">
+            <div className="bg-gradient-to-r from-primary/10 via-secondary/15 to-accent/10 px-6 py-4 flex items-center justify-between border-b border-border">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground grid place-items-center shadow-warm">
+                        <Inbox className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <div className="font-heading text-lg font-bold tracking-tight">Your inbox</div>
+                        <div className="text-xs text-muted-foreground">{inbox.total} item{inbox.total !== 1 ? "s" : ""} need your attention</div>
+                    </div>
+                </div>
+            </div>
+            <div className="px-6 pt-4 border-b border-border flex gap-2 overflow-x-auto">
+                {tabs.map((t) => {
+                    const Icon = t.icon;
+                    return (
+                        <button
+                            key={t.key}
+                            onClick={() => setTab(t.key)}
+                            className={`rounded-t-xl px-4 py-2 text-sm font-medium inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                            data-testid={`inbox-tab-${t.key}`}
+                        >
+                            <Icon className="h-4 w-4" /> {t.label}
+                            {t.count > 0 && (
+                                <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${tab === t.key ? "bg-primary text-primary-foreground" : "bg-muted"}`}>{t.count}</span>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+            <div className="p-6">
+                {tab === "hours" && (
+                    inbox.hours_to_review.length === 0 ? (
+                        <EmptyInbox icon={<Clock className="h-8 w-8" />} message="All caught up on hours review." />
+                    ) : (
+                        <div className="space-y-2">
+                            {inbox.hours_to_review.map((h) => (
+                                <div key={h.id} className="flex items-start gap-3 p-3 rounded-xl hover:bg-muted/50" data-testid={`inbox-hours-${h.id}`}>
+                                    <div className="w-11 h-11 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold text-sm shrink-0">{h.hours}h</div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-medium">{h.user_name}</div>
+                                        <div className="text-sm text-muted-foreground truncate">{h.description}</div>
+                                        <div className="text-xs text-muted-foreground mt-0.5">{h.date && format(parseISO(h.date), "MMM d, yyyy")}</div>
+                                    </div>
+                                    <div className="flex gap-1.5 shrink-0">
+                                        <button onClick={() => approveHours(h.id)} className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90 p-2" data-testid={`inbox-approve-${h.id}`} title="Approve">
+                                            <Check className="h-4 w-4" />
+                                        </button>
+                                        <button onClick={() => rejectHours(h.id)} className="rounded-full bg-muted hover:bg-muted/70 p-2" data-testid={`inbox-reject-${h.id}`} title="Reject">
+                                            <X className="h-4 w-4" />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )
+                )}
+
+                {tab === "grace" && (
+                    inbox.in_grace.length === 0 ? (
+                        <EmptyInbox icon={<AlertTriangle className="h-8 w-8" />} message="Nobody in grace period. Nice." />
+                    ) : (
+                        <div className="space-y-2">
+                            {inbox.in_grace.map((m) => (
+                                <div key={m.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-muted/50" data-testid={`inbox-grace-${m.id}`}>
+                                    <div className="w-11 h-11 rounded-full bg-destructive/15 text-destructive grid place-items-center shrink-0">
+                                        <AlertTriangle className="h-5 w-5" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-medium">{m.name}</div>
+                                        <div className="text-xs text-muted-foreground">{m.email}</div>
+                                        <div className="text-xs text-destructive mt-0.5">
+                                            Expired {m.expires_at && format(parseISO(m.expires_at), "MMM d, yyyy")} · {m.tier}
+                                        </div>
+                                    </div>
+                                    <button onClick={() => extendMember(m.id)} className="rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-xs font-medium px-3 py-1.5 shrink-0" data-testid={`inbox-extend-${m.id}`}>
+                                        +1 year
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )
+                )}
+
+                {tab === "new" && (
+                    inbox.new_members.length === 0 ? (
+                        <EmptyInbox icon={<UserPlus className="h-8 w-8" />} message="No new members in the last 7 days." />
+                    ) : (
+                        <div className="space-y-2">
+                            {inbox.new_members.map((m) => {
+                                const initials = (m.name || "M").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+                                return (
+                                    <div key={m.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-muted/50" data-testid={`inbox-new-${m.id}`}>
+                                        <div className="w-11 h-11 rounded-full bg-accent/40 text-[hsl(34_8%_16%)] grid place-items-center font-heading font-bold text-sm shrink-0">{initials}</div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-medium">{m.name}</div>
+                                            <div className="text-xs text-muted-foreground">{m.email}</div>
+                                            <div className="text-xs text-muted-foreground mt-0.5">
+                                                Joined {m.created_at && format(parseISO(m.created_at), "MMM d")} · {m.tier}
+                                            </div>
+                                        </div>
+                                        <span className="text-[10px] uppercase tracking-wider font-semibold bg-accent/40 rounded-full px-2 py-0.5 shrink-0">new</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )
+                )}
+            </div>
+        </div>
+    );
+}
+
+function EmptyInbox({ icon, message }) {
+    return (
+        <div className="text-center py-8 text-muted-foreground">
+            <div className="inline-flex w-14 h-14 rounded-full bg-muted items-center justify-center text-muted-foreground/60">{icon}</div>
+            <div className="text-sm mt-3">{message}</div>
         </div>
     );
 }

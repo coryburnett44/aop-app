@@ -1280,6 +1280,39 @@ async def admin_stats(_: dict = Depends(require_admin)):
         count = await db.users.count_documents({"chapter_id": c["id"]})
         chapter_rows.append({"id": c["id"], "name": c["name"], "school": c.get("school", ""), "member_count": count})
 
+    # Pending admin inbox
+    seven_days_ago_iso = iso(now - timedelta(days=7))
+    grace_cutoff_iso = iso(now - timedelta(days=GRACE_PERIOD_DAYS))
+    hours_queue_cursor = db.volunteer_hours.find(
+        {"status": "pending"}, {"_id": 0}
+    ).sort("created_at", 1).limit(10)
+    hours_to_review = [hours_out(h) async for h in hours_queue_cursor]
+    grace_cursor = db.users.find(
+        {"membership_expires_at": {"$gte": grace_cutoff_iso, "$lt": now_iso}},
+        {"_id": 0, "password_hash": 0},
+    ).sort("membership_expires_at", 1).limit(10)
+    in_grace = [{
+        "id": u["id"], "name": u.get("name"), "email": u.get("email"),
+        "expires_at": u.get("membership_expires_at"),
+        "tier": u.get("membership_tier"),
+    } async for u in grace_cursor]
+    new_cursor = db.users.find(
+        {"created_at": {"$gte": seven_days_ago_iso}},
+        {"_id": 0, "password_hash": 0},
+    ).sort("created_at", -1).limit(10)
+    new_members = [{
+        "id": u["id"], "name": u.get("name"), "email": u.get("email"),
+        "created_at": u.get("created_at"),
+        "tier": u.get("membership_tier"),
+    } async for u in new_cursor]
+
+    inbox = {
+        "hours_to_review": hours_to_review,
+        "in_grace": in_grace,
+        "new_members": new_members,
+        "total": len(hours_to_review) + len(in_grace) + len(new_members),
+    }
+
     return {
         "members": {
             "total": total_members,
@@ -1315,6 +1348,7 @@ async def admin_stats(_: dict = Depends(require_admin)):
             "renewals_this_month": renewals_this_month,
             "potential_expiring_revenue": round(expiring_soon * ANNUAL_DUES_USD, 2),
         },
+        "inbox": inbox,
     }
 
 # ---------- Health ----------
