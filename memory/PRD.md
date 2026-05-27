@@ -45,28 +45,63 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
   - Award grant dialog includes Date-granted picker.
   - Home page: two columns rendered (logged-in users only) — New Members (last 30d) and Upcoming Birthdays (next 30d).
 
-### Test Status (iteration_3)
-- Backend: 100% on Phase A scope (9/9 in `tests/test_phase_a.py`); 48/50 overall (2 pre-existing file-proxy 401s out of Phase A scope).
-- Frontend: 100% on Phase A scope (all UI elements/integrations verified).
+### Phase B — Omega, Gear, Donations, Calendar, Check-In, Reports (2026-02-27)
+- **Omega Chapter** page (`/omega`): in-memoriam grid of members with `status=deceased`. Endpoint `GET /api/omega`.
+- **AOP Gear store** (`/gear`): public catalog. Admin CRUD via `GET/POST/PUT/DELETE /api/gear`. Detail dialog with sizes/colors/quantity.
+- **Donations & Causes** (`/donations`): public listing of active causes with progress bars; admin CRUD via `/api/causes`; pledge endpoint `/api/causes/{id}/pledge`; aggregation helper `recompute_cause_totals()` runs on PayPal capture.
+- **Event Calendar** (`/calendar`): month-grid + agenda list, `GET /api/calendar/events?month=YYYY-MM` (route renamed from `/events/calendar` to avoid shadowing by `/events/{id}`).
+- **Event Check-In** on `/events/{id}` (admin only): ticket types (vip/general/guest/speaker/volunteer); endpoints `POST/GET/DELETE /api/events/{id}/check-ins`; duplicate prevention; guest walk-ins supported.
+- **Reporting** (Admin → Reports tab):
+  - `GET /api/reports/members` with filters status/chapter/tier/role + CSV export.
+  - `GET /api/reports/hours` with filters status/event_type/from_date/to_date + CSV export.
+  - `GET /api/reports/donations` with cause/status filters + CSV export.
+  - `GET /api/reports/personnel-brief/{user_id}` returns full dossier (identity, chapter/tier, awards, hours, events, check-ins, transactions, totals) — printable.
+- Seeded sample data: 4 gear items, 3 causes (idempotent).
+
+### Phase C — PayPal LIVE + Resend Email (2026-02-27)
+- **PayPal Orders API v2 (LIVE)** server-side checkout (`@paypal/react-paypal-js` on frontend, FastAPI REST via `httpx` on backend):
+  - `GET /api/payments/paypal/client-id` — public config.
+  - `POST /api/payments/paypal/orders` — create order (donation / gear / event / dues), persists pending transaction with `paypal_order_id`.
+  - `POST /api/payments/paypal/orders/{order_id}/capture` — capture & side-effects (donation: recompute cause totals; dues: extend membership +365d).
+  - Reusable `<PayPalCheckout />` component wired into Donations (causes), Gear (qty × price), and Profile (annual dues $60).
+  - Token caching with TTL.
+- **Resend email blasts**:
+  - Template CRUD: `GET/POST/PUT/DELETE /api/email/templates`.
+  - `POST /api/email/preview` — render with variable substitution + recipient count for chosen segment.
+  - `POST /api/email/blast` — send to segment (active/all/admins/tier/chapter/custom) with `test_only` flag; failures logged per-recipient.
+  - `GET /api/email/blasts` — history with sent/failed/opens counters.
+  - `POST /api/email/webhook` — increments opens/deliveries/bounces by `blast_id` tag.
+  - Variable substitution is HTML-escaped (XSS-safe).
+  - Frontend Admin → Email tab (Compose / Templates / History) with live preview pane.
+
+### Test Status (iteration_4 — post route fix)
+- Backend: 32/32 pytest in `/app/backend/tests/test_phase_bc.py`. Phase A regression endpoints still alive.
+- Frontend: all pages render; admin tabs Gear/Causes/Reports/Email functional; PayPal button iframe loads on Donations / Gear / Profile; Calendar shows month grid with events.
+
+### Known limitations / config items
+- **Resend free tier**: `RESEND_FROM=onboarding@resend.dev` only allows sending to the Resend account-owner email until a domain is verified at `resend.com/domains`. The blast endpoint logs the failure reason per recipient — UI shows sent/failed counts. **Action for user**: verify your domain at resend.com and update `RESEND_FROM` in `/app/backend/.env`.
+- **Resend webhook**: endpoint exists at `POST /api/email/webhook`. **Action for user**: configure this URL at resend.com/webhooks (use the deployed `*.emergent.host` URL, not preview). Signature verification not yet added.
+- **PayPal**: LIVE mode is active. Test orders persist in `transactions` collection as pending until a real buyer approves & capture is called. No real money moves until capture.
 
 ## Backlog
 
-### P0 — Phase B (next)
-- **Omega Chapter tab**: members with status=deceased — memorial wall with photos, branch, dates.
-- **Donations tab**: list active causes, donor history; admin can create causes.
-- **AOP Gear store**: admin-editable catalog (items + photos + sizes); member browse.
-- **Reporting**: filter members/hours/events/status/dues; export CSV; **Personnel Brief** printable per member.
-- **Event Calendar** (full month view) + **Event Check-In** (VIP / Gen Admin track).
+### P0 — Production polish
+- Resend domain verification + update `RESEND_FROM` env to verified address.
+- Register Resend webhook URL in dashboard.
+- Add Resend webhook signature verification (svix).
 
-### P1 — Phase C (integrations)
-- **Stripe + PayPal** payments (dues / events / gear / donations) — needs keys (USER-provided).
-- **Resend email blasts** — templates, segments, image embedding, open tracking — needs Resend API key.
-
-### P2 — Refactor & polish
-- Split `server.py` (~2000 lines) into `/backend/routes` + `/backend/models` + `/backend/services`.
+### P1 — Refactor & polish
+- Split `server.py` (~2900 lines) into `/backend/routes/` + `/backend/models/` + `/backend/services/`.
 - Replace native date inputs with shadcn DatePicker for consistency.
-- Validate birthdate format on backend (YYYY-MM-DD).
+- Email blast: batch with `asyncio.gather` (chunks of 25) once segments grow beyond 100.
+- Navbar grows crowded at 11 links — group less-used into a "More" dropdown on wide screens.
 - `/api/members-birthdays` aggregation pipeline (scale > 1000 members).
+
+### P2 — Future
+- Stripe integration (currently PayPal-only per user choice).
+- Member-facing transactions history page (lists past PayPal captures).
+- Personnel Brief PDF export (currently browser print).
+- Recurring monthly donations / membership auto-renewal.
 
 ## Credentials
 See `/app/memory/test_credentials.md`.

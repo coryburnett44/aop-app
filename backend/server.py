@@ -2270,7 +2270,7 @@ async def cause_donations(cause_id: str, _: dict = Depends(require_admin)):
 
 
 # ---------- Event Calendar & Check-In ----------
-@api.get("/events/calendar")
+@api.get("/calendar/events")
 async def events_calendar(month: Optional[str] = None):
     """Events for a given YYYY-MM month (defaults to current month)."""
     today = now_utc()
@@ -2769,7 +2769,9 @@ async def resolve_segment(body: EmailBlastIn) -> List[dict]:
 
 
 def render_template(body_html: str, recipient: dict) -> str:
-    """Replace simple variables: {{name}}, {{first_name}}, {{email}}, {{line_name}}."""
+    """Replace simple variables: {{name}}, {{first_name}}, {{email}}, {{line_name}}.
+    HTML-escapes values to prevent XSS via member names."""
+    import html as _html
     out = body_html
     for key, val in {
         "name": recipient.get("name", ""),
@@ -2778,7 +2780,7 @@ def render_template(body_html: str, recipient: dict) -> str:
         "line_name": recipient.get("line_name", ""),
         "email": recipient.get("email", ""),
     }.items():
-        out = out.replace("{{" + key + "}}", val or "")
+        out = out.replace("{{" + key + "}}", _html.escape(val or ""))
     return out
 
 

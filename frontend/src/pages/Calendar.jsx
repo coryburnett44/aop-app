@@ -17,7 +17,7 @@ export default function CalendarPage() {
     const [activeDay, setActiveDay] = useState(null);
 
     useEffect(() => {
-        api.get(`/events/calendar?month=${ymKey(cursor)}`)
+        api.get(`/calendar/events?month=${ymKey(cursor)}`)
             .then(({ data }) => setEvents(data))
             .catch(() => setEvents([]));
     }, [cursor]);

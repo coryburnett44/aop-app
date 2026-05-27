@@ -144,7 +144,7 @@ def test_pledge_anonymous_uses_anonymous_name(admin, member):
 def test_events_calendar_current_month(admin):
     today = datetime.now(timezone.utc)
     ym = f"{today.year:04d}-{today.month:02d}"
-    r = requests.get(f"{API}/events/calendar", params={"month": ym}, timeout=15)
+    r = requests.get(f"{API}/calendar/events", params={"month": ym}, timeout=15)
     assert r.status_code == 200
     data = r.json()
     assert isinstance(data, list)
@@ -155,7 +155,7 @@ def test_events_calendar_current_month(admin):
 
 
 def test_events_calendar_bad_month():
-    r = requests.get(f"{API}/events/calendar", params={"month": "bad"}, timeout=15)
+    r = requests.get(f"{API}/calendar/events", params={"month": "bad"}, timeout=15)
     assert r.status_code == 400
 
 
