@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -75,10 +75,7 @@ export default function Login() {
                     </Button>
                 </form>
                 <p className="mt-6 text-sm text-center text-muted-foreground">
-                    Not a member yet?{" "}
-                    <Link to="/register" className="text-primary font-medium hover:underline">
-                        Join the club
-                    </Link>
+                    Membership is invitation-only. Contact your chapter admin if you need access.
                 </p>
             </div>
         </div>

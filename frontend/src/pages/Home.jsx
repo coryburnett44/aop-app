@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogIn } from "lucide-react";
 import { format } from "date-fns";
+import Countdown from "../components/Countdown";
 
-const AOP_COVER = "https://alphaomegaphi.org/wp-content/uploads/2023/10/cover-AOP.jpg";
-const AOP_LOGO = "https://alphaomegaphi.org/wp-content/uploads/2022/08/AOP-LOGO-1.png";
-const AOP_TRI = "https://alphaomegaphi.org/wp-content/uploads/2022/12/Tri_South_03.png";
-const AOP_VA = "https://alphaomegaphi.org/wp-content/uploads/2022/08/virginia-chapterVA_-NC_-MD_-DC-AND-01-scaled.jpg";
+const HERO_BANNER = "https://images.clubexpress.com/211315/photos/original/Sheron_Tana_Banner_743849018.jpg";
+const SECONDARY_BANNER = "https://images.clubexpress.com/211315/photos/original/Kendra_Brandy_Banner_2074356465.jpg";
+const AOP_LOGO = "https://images.clubexpress.com/211315/graphics/AOP_2_281912154.png";
 
 const NAVY = "#0A2463";
-const RED = "#D62828";
+const RED = "#C8102E";
 
 export default function Home() {
+    const { user } = useAuth();
     const [events, setEvents] = useState([]);
     const [news, setNews] = useState([]);
 
@@ -23,135 +25,127 @@ export default function Home() {
 
     return (
         <div className="bg-white text-[#0A2463]" data-testid="home-aop">
-            {/* Hero */}
-            <section className="relative overflow-hidden bg-white">
+            {/* Hero with group photo */}
+            <section className="relative overflow-hidden">
                 {/* Patriotic stripe */}
-                <div className="absolute inset-x-0 top-0 h-1 flex">
+                <div className="absolute inset-x-0 top-0 h-1.5 z-10 flex">
                     <div className="flex-1" style={{ backgroundColor: RED }} />
                     <div className="flex-1 bg-white" />
                     <div className="flex-1" style={{ backgroundColor: NAVY }} />
                 </div>
 
-                <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-16 pb-20 grid lg:grid-cols-12 gap-10 items-center">
-                    <div className="lg:col-span-7 animate-float-in">
-                        <div
-                            className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wider mb-6 border-2"
-                            style={{ borderColor: RED, color: RED, backgroundColor: "#fff5f5" }}
-                            data-testid="hero-tag"
-                        >
-                            <Star className="h-3.5 w-3.5 fill-current" /> Honor · Service · Fellowship
-                        </div>
-                        <h1 className="font-heading font-black text-4xl sm:text-5xl lg:text-6xl leading-[1.02] tracking-tighter" style={{ color: NAVY }}>
-                            Alpha Omega Phi
-                            <span className="block mt-1" style={{ color: RED }}>Military Fraternity</span>
-                            <span className="block mt-1" style={{ color: NAVY }}>&amp; Sorority, Inc.</span>
-                        </h1>
-                        <p className="mt-6 text-base sm:text-lg leading-relaxed text-slate-600 max-w-xl">
-                            A co-ed family for U.S. Armed Forces members — past, present, and future. United across branches,
-                            grounded in service to our veterans and our communities.
-                        </p>
-                        <div className="mt-8 flex flex-wrap gap-3">
-                            <Link
-                                to="/register"
-                                className="inline-flex items-center gap-2 rounded-full px-6 py-3 font-bold text-white shadow-warm hover:-translate-y-0.5 hover:shadow-warm-lg transition-all"
-                                style={{ backgroundColor: RED }}
-                                data-testid="hero-cta-join"
-                            >
-                                Apply for membership <ArrowRight className="h-4 w-4" />
-                            </Link>
-                            <Link
-                                to="/events"
-                                className="inline-flex items-center gap-2 rounded-full px-6 py-3 font-bold border-2 hover:bg-slate-50 transition-colors"
-                                style={{ borderColor: NAVY, color: NAVY }}
-                                data-testid="hero-cta-events"
-                            >
-                                Upcoming events
-                            </Link>
-                        </div>
+                <div className="relative h-[640px] sm:h-[680px] w-full">
+                    <img
+                        src={HERO_BANNER}
+                        alt="Alpha Omega Phi members"
+                        className="absolute inset-0 w-full h-full object-cover"
+                        onError={(e) => { e.currentTarget.style.display = "none"; }}
+                    />
+                    <div
+                        className="absolute inset-0"
+                        style={{
+                            background: `linear-gradient(180deg, rgba(10,36,99,0.55) 0%, rgba(10,36,99,0.35) 40%, rgba(10,36,99,0.85) 100%)`,
+                        }}
+                    />
 
-                        <div className="mt-10 grid grid-cols-3 gap-6 max-w-md">
-                            <Stat icon={<Shield className="h-5 w-5" />} num="All" label="Branches" />
-                            <Stat icon={<Users className="h-5 w-5" />} num="Multi" label="Chapters" />
-                            <Stat icon={<HeartHandshake className="h-5 w-5" />} num="501(c)(3)" label="Nonprofit" />
-                        </div>
-                    </div>
-
-                    <div className="lg:col-span-5 relative">
-                        <div
-                            className="relative aspect-[4/5] rounded-[2rem] overflow-hidden shadow-warm-lg border-4"
-                            style={{ borderColor: NAVY }}
-                        >
-                            <img
-                                src={AOP_COVER}
-                                alt="Alpha Omega Phi members"
-                                className="w-full h-full object-cover"
-                                onError={(e) => { e.currentTarget.style.display = "none"; }}
-                            />
+                    <div className="relative h-full max-w-7xl mx-auto px-6 lg:px-10 flex items-center">
+                        <div className="text-white animate-float-in max-w-3xl">
                             <div
-                                className="absolute inset-0"
-                                style={{ background: `linear-gradient(135deg, ${NAVY}33 0%, transparent 40%, ${RED}33 100%)` }}
-                            />
-                        </div>
-                        <div
-                            className="absolute -bottom-6 -left-6 bg-white rounded-2xl p-4 shadow-warm-lg w-56 hidden sm:block border-2"
-                            style={{ borderColor: RED }}
-                        >
-                            <div className="text-[10px] uppercase tracking-wider font-bold" style={{ color: RED }}>Our motto</div>
-                            <div className="font-heading font-black mt-1 leading-tight" style={{ color: NAVY }}>
-                                One family. One mission.
+                                className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-[0.2em] mb-6 backdrop-blur-md"
+                                style={{ backgroundColor: "rgba(200,16,46,0.85)" }}
+                                data-testid="hero-tag"
+                            >
+                                <Star className="h-3.5 w-3.5 fill-current" /> Members Portal
+                            </div>
+                            <h1 className="font-heading font-black text-4xl sm:text-5xl lg:text-7xl leading-[0.95] tracking-tighter">
+                                Alpha Omega Phi
+                                <span className="block mt-2 text-3xl sm:text-4xl lg:text-5xl font-bold opacity-95">
+                                    Military Fraternity &amp; Sorority, Inc.
+                                </span>
+                            </h1>
+                            <p className="mt-6 text-base sm:text-xl leading-relaxed opacity-90 max-w-2xl">
+                                Welcome, Trendsetters. Your home for chapter events, members, awards, hours, and the work
+                                we do together for our veterans and communities.
+                            </p>
+                            <div className="mt-8 flex flex-wrap gap-3">
+                                {user ? (
+                                    <Link
+                                        to="/profile"
+                                        className="inline-flex items-center gap-2 rounded-full px-6 py-3 font-bold text-white shadow-warm-lg hover:-translate-y-0.5 transition-all"
+                                        style={{ backgroundColor: RED }}
+                                        data-testid="hero-cta-profile"
+                                    >
+                                        Go to my profile <ArrowRight className="h-4 w-4" />
+                                    </Link>
+                                ) : (
+                                    <Link
+                                        to="/login"
+                                        className="inline-flex items-center gap-2 rounded-full px-6 py-3 font-bold text-white shadow-warm-lg hover:-translate-y-0.5 transition-all"
+                                        style={{ backgroundColor: RED }}
+                                        data-testid="hero-cta-login"
+                                    >
+                                        <LogIn className="h-4 w-4" /> Member login
+                                    </Link>
+                                )}
+                                <Link
+                                    to="/events"
+                                    className="inline-flex items-center gap-2 rounded-full px-6 py-3 font-bold bg-white/10 border-2 border-white text-white backdrop-blur hover:bg-white hover:text-[#0A2463] transition-colors"
+                                    data-testid="hero-cta-events"
+                                >
+                                    See events
+                                </Link>
                             </div>
                         </div>
+
                         <img
                             src={AOP_LOGO}
                             alt="AOP crest"
-                            className="absolute -top-6 -right-6 w-24 h-24 hidden sm:block drop-shadow-lg"
+                            className="hidden lg:block absolute right-10 top-1/2 -translate-y-1/2 w-48 drop-shadow-2xl"
                             onError={(e) => { e.currentTarget.style.display = "none"; }}
                         />
                     </div>
                 </div>
             </section>
 
+            {/* 10-Year Anniversary Countdown */}
+            <Countdown />
+
             {/* Pillars */}
-            <section className="bg-white border-y-2" style={{ borderColor: NAVY }}>
-                <div className="max-w-7xl mx-auto px-6 lg:px-10 py-14 grid md:grid-cols-3 gap-6">
-                    <Pillar
-                        color={RED}
-                        title="Veteran Assistance"
-                        body="Connecting service members with the welfare, health, and benefits resources they earned."
-                        icon={<Shield className="h-6 w-6" />}
-                    />
-                    <Pillar
-                        color={NAVY}
-                        title="Community Service"
-                        body="Giving back in every chapter — food drives, mentorship, and outreach for local families."
-                        icon={<HeartHandshake className="h-6 w-6" />}
-                    />
-                    <Pillar
-                        color={RED}
-                        title="Fellowship"
-                        body="A cross-branch family — bridging Army, Navy, Air Force, Marines, Coast Guard, and Space Force."
-                        icon={<Users className="h-6 w-6" />}
-                    />
+            <section className="bg-white border-b-2" style={{ borderColor: NAVY }}>
+                <div className="max-w-7xl mx-auto px-6 lg:px-10 py-16">
+                    <div className="text-center mb-12">
+                        <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>What we stand for</div>
+                        <h2 className="font-heading text-3xl sm:text-4xl font-black tracking-tight" style={{ color: NAVY }}>
+                            Three pillars, one family
+                        </h2>
+                    </div>
+                    <div className="grid md:grid-cols-3 gap-6">
+                        <Pillar color={RED} title="Veteran Assistance" icon={<Shield className="h-6 w-6" />}
+                            body="Connecting service members with the welfare, health, and benefits resources they earned." />
+                        <Pillar color={NAVY} title="Community Service" icon={<HeartHandshake className="h-6 w-6" />}
+                            body="Giving back in every chapter — food drives, mentorship, and outreach for local families." />
+                        <Pillar color={RED} title="Fellowship" icon={<Users className="h-6 w-6" />}
+                            body="A cross-branch family — bridging Army, Navy, Air Force, Marines, Coast Guard, and Space Force." />
+                    </div>
                 </div>
             </section>
 
-            {/* Image strip */}
+            {/* Secondary banner photo */}
             <section className="max-w-7xl mx-auto px-6 lg:px-10 py-14">
-                <div className="grid sm:grid-cols-2 gap-6">
-                    <div className="relative aspect-[16/10] rounded-2xl overflow-hidden shadow-warm">
-                        <img src={AOP_TRI} alt="Chapter members" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
-                        <div className="absolute inset-0 bg-gradient-to-t from-[#0A2463]/80 to-transparent" />
-                        <div className="absolute bottom-4 left-4 text-white">
-                            <div className="text-[10px] uppercase tracking-wider font-bold opacity-90">Brotherhood</div>
-                            <div className="font-heading text-xl font-bold">Standing together, coast to coast</div>
-                        </div>
-                    </div>
-                    <div className="relative aspect-[16/10] rounded-2xl overflow-hidden shadow-warm">
-                        <img src={AOP_VA} alt="Chapter event" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
-                        <div className="absolute inset-0 bg-gradient-to-t from-[#D62828]/80 to-transparent" />
-                        <div className="absolute bottom-4 left-4 text-white">
-                            <div className="text-[10px] uppercase tracking-wider font-bold opacity-90">Chapters</div>
-                            <div className="font-heading text-xl font-bold">Regional families with a national mission</div>
+                <div className="relative aspect-[21/9] rounded-3xl overflow-hidden shadow-warm-lg border-4" style={{ borderColor: NAVY }}>
+                    <img
+                        src={SECONDARY_BANNER}
+                        alt="AOP members"
+                        className="w-full h-full object-cover"
+                        onError={(e) => { e.currentTarget.style.display = "none"; }}
+                    />
+                    <div className="absolute inset-0" style={{ background: `linear-gradient(90deg, rgba(10,36,99,0.7) 0%, transparent 50%, rgba(200,16,46,0.4) 100%)` }} />
+                    <div className="absolute inset-y-0 left-0 flex items-center px-6 sm:px-10 lg:px-16 text-white max-w-2xl">
+                        <div>
+                            <div className="text-xs uppercase tracking-[0.25em] font-bold opacity-90 mb-3">Trendsetters</div>
+                            <h3 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-black leading-tight">
+                                Setting the standard, every chapter, every day.
+                            </h3>
                         </div>
                     </div>
                 </div>
@@ -162,7 +156,7 @@ export default function Home() {
                 <div className="max-w-7xl mx-auto px-6 lg:px-10">
                     <div className="flex items-end justify-between mb-8">
                         <div>
-                            <div className="text-xs uppercase tracking-wider font-bold mb-2" style={{ color: RED }}>What's next</div>
+                            <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>What's next</div>
                             <h2 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight" style={{ color: NAVY }}>
                                 Upcoming events
                             </h2>
@@ -176,7 +170,7 @@ export default function Home() {
                             <Link
                                 key={e.id}
                                 to={`/events/${e.id}`}
-                                className="group bg-white rounded-2xl overflow-hidden shadow-warm border-2 border-transparent hover:-translate-y-1 hover:shadow-warm-lg hover:border-[#D62828] transition-all"
+                                className="group bg-white rounded-2xl overflow-hidden shadow-warm border-2 border-transparent hover:-translate-y-1 hover:shadow-warm-lg hover:border-[#C8102E] transition-all"
                                 data-testid={`home-event-${e.id}`}
                             >
                                 <div className="aspect-[16/10] overflow-hidden bg-slate-100">
@@ -206,7 +200,7 @@ export default function Home() {
             {/* News */}
             <section className="py-16 bg-white">
                 <div className="max-w-7xl mx-auto px-6 lg:px-10">
-                    <div className="text-xs uppercase tracking-wider font-bold mb-2" style={{ color: RED }}>From the chapter house</div>
+                    <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>From the chapter house</div>
                     <h2 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight mb-8" style={{ color: NAVY }}>
                         News &amp; stories
                     </h2>
@@ -235,47 +229,13 @@ export default function Home() {
                     </div>
                 </div>
             </section>
-
-            {/* Final CTA banner */}
-            <section className="relative overflow-hidden" style={{ backgroundColor: NAVY }}>
-                <div className="absolute inset-0 opacity-10" style={{
-                    backgroundImage: "repeating-linear-gradient(45deg, #fff 0 2px, transparent 2px 22px)",
-                }} />
-                <div className="relative max-w-5xl mx-auto px-6 lg:px-10 py-16 text-center text-white">
-                    <Star className="h-8 w-8 mx-auto mb-4 fill-current" style={{ color: RED }} />
-                    <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight">
-                        Ready to stand with us?
-                    </h2>
-                    <p className="mt-4 text-base sm:text-lg max-w-2xl mx-auto opacity-90">
-                        Whether you wore the uniform or you support those who did — there's a place for you in the AOP family.
-                    </p>
-                    <Link
-                        to="/register"
-                        className="inline-flex items-center gap-2 mt-8 rounded-full px-8 py-4 font-bold shadow-warm-lg hover:-translate-y-0.5 transition-transform text-white"
-                        style={{ backgroundColor: RED }}
-                        data-testid="footer-cta-join"
-                    >
-                        Apply for membership <ArrowRight className="h-5 w-5" />
-                    </Link>
-                </div>
-            </section>
-        </div>
-    );
-}
-
-function Stat({ icon, num, label }) {
-    return (
-        <div>
-            <div className="w-10 h-10 rounded-full bg-slate-100 grid place-items-center text-[#0A2463] mb-2">{icon}</div>
-            <div className="font-heading font-black text-lg leading-none" style={{ color: NAVY }}>{num}</div>
-            <div className="text-xs text-slate-500 mt-1">{label}</div>
         </div>
     );
 }
 
 function Pillar({ color, title, body, icon }) {
     return (
-        <div className="relative bg-white rounded-2xl p-6 border-2 border-slate-200 shadow-warm">
+        <div className="relative bg-white rounded-2xl p-7 border-2 border-slate-200 shadow-warm hover:-translate-y-1 transition-transform">
             <div
                 className="absolute top-0 left-6 -translate-y-1/2 w-12 h-12 rounded-2xl grid place-items-center text-white shadow-warm"
                 style={{ backgroundColor: color }}

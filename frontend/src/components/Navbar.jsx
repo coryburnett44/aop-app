@@ -127,23 +127,13 @@ export default function Navbar() {
                             </DropdownMenuContent>
                         </DropdownMenu>
                     ) : (
-                        <>
-                            <Button
-                                variant="ghost"
-                                className="rounded-full hidden sm:inline-flex"
-                                onClick={() => navigate("/login")}
-                                data-testid="nav-login-btn"
-                            >
-                                Log in
-                            </Button>
-                            <Button
-                                className="rounded-full bg-primary hover:bg-primary/90 shadow-warm"
-                                onClick={() => navigate("/register")}
-                                data-testid="nav-join-btn"
-                            >
-                                Join the club
-                            </Button>
-                        </>
+                        <Button
+                            className="rounded-full bg-primary hover:bg-primary/90 shadow-warm"
+                            onClick={() => navigate("/login")}
+                            data-testid="nav-login-btn"
+                        >
+                            Member login
+                        </Button>
                     )}
                     <button
                         className="md:hidden rounded-full p-2 hover:bg-muted"
