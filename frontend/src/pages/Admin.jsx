@@ -373,17 +373,26 @@ function MembersAdmin() {
         toast.success(`Extended by ${days} days`);
         load();
     }
+    async function deleteMember(m) {
+        if (!confirm(`Delete ${m.name}? This removes all of their data (RSVPs, hours, awards, transactions).`)) return;
+        try {
+            await api.delete(`/members/${m.id}`);
+            toast.success("Member removed");
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    }
 
     const chapterName = (id) => chapters.find((c) => c.id === id)?.name || "—";
     const tierName = (id) => tiers.find((t) => t.id === id)?.name || "—";
 
     return (
         <div>
-            <div className="mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
+                <NewMemberDialog chapters={chapters} tiers={tiers} onSaved={load} />
             </div>
             <div className="bg-card rounded-2xl border border-border overflow-x-auto shadow-warm">
-                <table className="w-full text-sm min-w-[900px]">
+                <table className="w-full text-sm min-w-[1000px]">
                     <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
                         <tr>
                             <th className="text-left px-4 py-3">Name</th>
@@ -398,7 +407,7 @@ function MembersAdmin() {
                         {members.map((m) => (
                             <tr key={m.id} className="border-t border-border hover:bg-muted/30" data-testid={`admin-member-${m.id}`}>
                                 <td className="px-4 py-3">
-                                    <div className="font-medium">{m.name}</div>
+                                    <div className="font-medium">{m.name}{m.line_name && <span className="text-xs ml-2 text-primary font-bold">"{m.line_name}"</span>}</div>
                                     <div className="text-xs text-muted-foreground">{m.email}</div>
                                 </td>
                                 <td className="px-4 py-3">
@@ -430,10 +439,14 @@ function MembersAdmin() {
                                     {m.membership_expires_at ? format(parseISO(m.membership_expires_at), "MMM d, yyyy") : "—"}
                                     {m.within_grace && <span className="ml-2 text-[10px] bg-destructive/15 text-destructive rounded-full px-2 py-0.5">grace</span>}
                                 </td>
-                                <td className="px-4 py-3 text-right">
+                                <td className="px-4 py-3 text-right whitespace-nowrap">
                                     <Button size="sm" variant="outline" className="rounded-full h-7 text-xs mr-1" onClick={() => extendMembership(m, 365)} data-testid={`extend-${m.id}`}>+1yr</Button>
-                                    <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" onClick={() => toggleRole(m)} data-testid={`toggle-role-${m.id}`}>
+                                    <EditMemberDialog member={m} chapters={chapters} tiers={tiers} onSaved={load} />
+                                    <Button size="sm" variant="outline" className="rounded-full h-7 text-xs ml-1" onClick={() => toggleRole(m)} data-testid={`toggle-role-${m.id}`}>
                                         {m.role === "admin" ? "Demote" : "Promote"}
+                                    </Button>
+                                    <Button size="sm" variant="ghost" className="rounded-full h-7 ml-1 text-destructive hover:bg-destructive/10" onClick={() => deleteMember(m)} data-testid={`delete-member-${m.id}`}>
+                                        <Trash2 className="h-3.5 w-3.5" />
                                     </Button>
                                 </td>
                             </tr>
@@ -442,6 +455,188 @@ function MembersAdmin() {
                 </table>
             </div>
         </div>
+    );
+}
+
+function NewMemberDialog({ chapters, tiers, onSaved }) {
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({
+        email: "", password: "", first_name: "", middle_name: "", last_name: "",
+        line_name: "", username: "", phone: "", city: "", role: "member",
+        chapter_id: "", tier_id: "",
+    });
+    const [busy, setBusy] = useState(false);
+    async function save() {
+        if (!form.email || !form.password) { toast.error("Email and password required"); return; }
+        setBusy(true);
+        try {
+            const payload = { ...form };
+            if (!payload.chapter_id) delete payload.chapter_id;
+            if (!payload.tier_id) delete payload.tier_id;
+            await api.post("/admin/members", payload);
+            toast.success("Member created");
+            setOpen(false);
+            setForm({ email: "", password: "", first_name: "", middle_name: "", last_name: "", line_name: "", username: "", phone: "", city: "", role: "member", chapter_id: "", tier_id: "" });
+            onSaved();
+        } catch (e) { toast.error(e.response?.data?.detail || "Create failed"); }
+        setBusy(false);
+    }
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-member-btn">
+                    <Plus className="h-4 w-4 mr-1" /> New member
+                </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">Add a new member</DialogTitle></DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Email *</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-email" /></div>
+                        <div><Label>Temporary password *</Label><Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-password" /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div><Label>First name</Label><Input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-first" /></div>
+                        <div><Label>Middle</Label><Input value={form.middle_name} onChange={(e) => setForm({ ...form, middle_name: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>Last name</Label><Input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-last" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Line name</Label><Input value={form.line_name} onChange={(e) => setForm({ ...form, line_name: e.target.value })} className="rounded-xl mt-1.5" placeholder="e.g. Patriot" data-testid="nm-line" /></div>
+                        <div><Label>Username</Label><Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>City</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div>
+                            <Label>Chapter</Label>
+                            <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="nm-chapter"><SelectValue placeholder="—" /></SelectTrigger>
+                                <SelectContent>{chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <Label>Tier</Label>
+                            <Select value={form.tier_id} onValueChange={(v) => setForm({ ...form, tier_id: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="nm-tier"><SelectValue placeholder="—" /></SelectTrigger>
+                                <SelectContent>{tiers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <Label>Role</Label>
+                            <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="member">Member</SelectItem>
+                                    <SelectItem value="admin">Admin</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                </div>
+                <DialogFooter><Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90" data-testid="nm-save-btn">{busy ? "Creating…" : "Create member"}</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function EditMemberDialog({ member, chapters, tiers, onSaved }) {
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({});
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        if (open) {
+            setForm({
+                email: member.email,
+                first_name: member.first_name || "",
+                middle_name: member.middle_name || "",
+                last_name: member.last_name || "",
+                line_name: member.line_name || "",
+                username: member.username || "",
+                phone: member.phone || "",
+                city: member.city || "",
+                bio: member.bio || "",
+                avatar_url: member.avatar_url || "",
+                chapter_id: member.chapter_id || "",
+                tier_id: member.tier_id || "",
+                role: member.role,
+                new_password: "",
+            });
+        }
+    }, [open, member]);
+
+    async function save() {
+        setBusy(true);
+        try {
+            const payload = Object.fromEntries(Object.entries(form).filter(([_, v]) => v !== "" && v !== null && v !== undefined));
+            if (!payload.new_password) delete payload.new_password;
+            await api.put(`/members/${member.id}`, payload);
+            toast.success("Saved");
+            setOpen(false);
+            onSaved();
+        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        setBusy(false);
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" data-testid={`edit-member-${member.id}`}>Edit</Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">Edit {member.name}</DialogTitle></DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Email</Label><Input value={form.email || ""} onChange={(e) => setForm({ ...form, email: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-email" /></div>
+                        <div><Label>Username</Label><Input value={form.username || ""} onChange={(e) => setForm({ ...form, username: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div><Label>First name</Label><Input value={form.first_name || ""} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-first" /></div>
+                        <div><Label>Middle</Label><Input value={form.middle_name || ""} onChange={(e) => setForm({ ...form, middle_name: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>Last name</Label><Input value={form.last_name || ""} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Line name</Label><Input value={form.line_name || ""} onChange={(e) => setForm({ ...form, line_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-line" /></div>
+                        <div><Label>Phone</Label><Input value={form.phone || ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>City</Label><Input value={form.city || ""} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>Avatar URL</Label><Input value={form.avatar_url || ""} onChange={(e) => setForm({ ...form, avatar_url: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div>
+                            <Label>Chapter</Label>
+                            <Select value={form.chapter_id || ""} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
+                                <SelectContent>{chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <Label>Tier</Label>
+                            <Select value={form.tier_id || ""} onValueChange={(v) => setForm({ ...form, tier_id: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
+                                <SelectContent>{tiers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <Label>Role</Label>
+                            <Select value={form.role || "member"} onValueChange={(v) => setForm({ ...form, role: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="member">Member</SelectItem>
+                                    <SelectItem value="admin">Admin</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                    <div><Label>Bio</Label><Textarea rows={3} value={form.bio || ""} onChange={(e) => setForm({ ...form, bio: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div><Label>Reset password (optional)</Label><Input type="password" value={form.new_password || ""} onChange={(e) => setForm({ ...form, new_password: e.target.value })} className="rounded-xl mt-1.5" placeholder="Leave blank to keep current" data-testid="em-new-password" /></div>
+                </div>
+                <DialogFooter><Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90" data-testid="em-save-btn">{busy ? "Saving…" : "Save changes"}</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }
 

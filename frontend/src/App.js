@@ -22,6 +22,7 @@ import Documents from "./pages/Documents";
 import Hours from "./pages/Hours";
 import Awards from "./pages/Awards";
 import Chapters from "./pages/Chapters";
+import Anniversary from "./pages/Anniversary";
 
 function App() {
     return (
@@ -43,6 +44,7 @@ function App() {
                             <Route path="/photos" element={<Photos />} />
                             <Route path="/documents" element={<Documents />} />
                             <Route path="/awards" element={<Awards />} />
+                            <Route path="/anniversary" element={<Anniversary />} />
                             <Route
                                 path="/hours"
                                 element={

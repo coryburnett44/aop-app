@@ -50,6 +50,17 @@ export default function Navbar() {
                     </span>
                 </Link>
 
+                <Link
+                    to="/anniversary"
+                    className="hidden md:inline-flex items-center gap-1.5 rounded-full px-3 py-1 ml-2 text-[10px] font-bold uppercase tracking-widest text-white shadow-warm hover:-translate-y-0.5 transition-transform"
+                    style={{ background: "linear-gradient(135deg, #C8102E 0%, #0A2463 100%)" }}
+                    data-testid="nav-anniversary-badge"
+                    title="10 Year Anniversary · July 27, 2027 · Atlanta, GA"
+                >
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse-flag" />
+                    10 Year Anniversary
+                </Link>
+
                 <nav className="hidden md:flex items-center gap-1">
                     {LINKS.map((l) => (
                         <NavLink

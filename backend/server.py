@@ -43,6 +43,9 @@ api = APIRouter(prefix="/api")
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
+def format_iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
 def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
@@ -92,13 +95,38 @@ def public_user(u: dict) -> dict:
     now = now_utc()
     is_expired = bool(exp_dt and exp_dt < now)
     within_grace = bool(is_expired and exp_dt and (now - exp_dt).days <= GRACE_PERIOD_DAYS)
+    # Computed status (manual override wins if set)
+    manual = u.get("status_override")
+    if manual in ("active", "inactive", "grace", "expired", "deceased"):
+        status = manual
+    elif u.get("deceased_at"):
+        status = "deceased"
+    elif is_expired and not within_grace:
+        status = "expired"
+    elif within_grace:
+        status = "grace"
+    else:
+        status = "active"
     return {
         "id": u["id"],
         "email": u["email"],
+        "username": u.get("username", ""),
         "name": u.get("name", ""),
+        "first_name": u.get("first_name", ""),
+        "middle_name": u.get("middle_name", ""),
+        "last_name": u.get("last_name", ""),
+        "line_name": u.get("line_name", ""),
         "role": u.get("role", "member"),
         "bio": u.get("bio", ""),
         "city": u.get("city", ""),
+        "phone": u.get("phone", ""),
+        "address": u.get("address", ""),
+        "birthdate": u.get("birthdate", ""),
+        "branch_of_service": u.get("branch_of_service", ""),
+        "join_date": u.get("join_date") or u.get("created_at"),
+        "deceased_at": u.get("deceased_at"),
+        "status": status,
+        "status_override": u.get("status_override"),
         "interests": u.get("interests", []),
         "avatar_url": u.get("avatar_url", ""),
         "membership_tier": u.get("membership_tier", "standard"),
@@ -207,10 +235,106 @@ class LoginIn(BaseModel):
 
 class ProfileUpdateIn(BaseModel):
     name: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    last_name: Optional[str] = None
+    line_name: Optional[str] = None
+    username: Optional[str] = None
     bio: Optional[str] = None
     city: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    birthdate: Optional[str] = None
+    branch_of_service: Optional[str] = None
     interests: Optional[List[str]] = None
     avatar_url: Optional[str] = None
+
+class StatusOverrideIn(BaseModel):
+    status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
+    deceased_at: Optional[str] = None
+
+class ChapterIn(BaseModel):
+    name: str
+    state: str = ""
+    region: str = ""
+    # legacy aliases
+    school: str = ""
+    city: str = ""
+    founded_year: Optional[int] = None
+    description: str = ""
+
+class ChapterUpdateIn(BaseModel):
+    name: Optional[str] = None
+    state: Optional[str] = None
+    region: Optional[str] = None
+    school: Optional[str] = None
+    city: Optional[str] = None
+    founded_year: Optional[int] = None
+    description: Optional[str] = None
+
+class HoursLogIn(BaseModel):
+    hours: float = Field(gt=0, le=1000)
+    activity: str = Field(min_length=2)
+    date: datetime
+    event_type: Literal["aop_related", "other"] = "other"
+    agency_name: str = ""
+    host_name: str = ""
+    host_email: str = ""
+    host_phone: str = ""
+    event_id: Optional[str] = None
+    # legacy
+    description: Optional[str] = None
+
+class AwardGrantIn(BaseModel):
+    user_id: str
+    reason: str = ""
+    granted_at: Optional[str] = None
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6)
+
+class AdminCreateMemberIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    first_name: str = ""
+    middle_name: str = ""
+    last_name: str = ""
+    name: Optional[str] = None
+    line_name: str = ""
+    username: str = ""
+    phone: str = ""
+    city: str = ""
+    role: Literal["member", "admin"] = "member"
+    chapter_id: Optional[str] = None
+    tier_id: Optional[str] = None
+
+class AdminUpdateMemberIn(BaseModel):
+    email: Optional[EmailStr] = None
+    name: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    last_name: Optional[str] = None
+    line_name: Optional[str] = None
+    username: Optional[str] = None
+    bio: Optional[str] = None
+    city: Optional[str] = None
+    phone: Optional[str] = None
+    interests: Optional[List[str]] = None
+    avatar_url: Optional[str] = None
+    role: Optional[Literal["member", "admin"]] = None
+    chapter_id: Optional[str] = None
+    tier_id: Optional[str] = None
+    membership_expires_at: Optional[datetime] = None
+    new_password: Optional[str] = None
+
+class TransactionIn(BaseModel):
+    user_id: str
+    type: Literal["renewal", "donation", "credit", "fee", "adjustment"]
+    amount: float
+    currency: str = "USD"
+    description: str = ""
+    status: Literal["completed", "pending", "refunded"] = "completed"
 
 class EventIn(BaseModel):
     title: str
@@ -281,20 +405,6 @@ class VerifyEmailIn(BaseModel):
 class RoleUpdateIn(BaseModel):
     role: Literal["member", "admin"]
 
-class ChapterIn(BaseModel):
-    name: str
-    school: str = ""
-    city: str = ""
-    founded_year: Optional[int] = None
-    description: str = ""
-
-class ChapterUpdateIn(BaseModel):
-    name: Optional[str] = None
-    school: Optional[str] = None
-    city: Optional[str] = None
-    founded_year: Optional[int] = None
-    description: Optional[str] = None
-
 class TierIn(BaseModel):
     name: str
     order: int = 0
@@ -320,16 +430,6 @@ class AwardUpdateIn(BaseModel):
     description: Optional[str] = None
     icon: Optional[str] = None
     color: Optional[str] = None
-
-class AwardGrantIn(BaseModel):
-    user_id: str
-    reason: str = ""
-
-class HoursLogIn(BaseModel):
-    hours: float = Field(gt=0, le=1000)
-    description: str = Field(min_length=2)
-    date: datetime
-    event_id: Optional[str] = None
 
 class HoursReviewIn(BaseModel):
     status: Literal["approved", "rejected"]
@@ -471,10 +571,33 @@ async def get_member(member_id: str):
 @api.put("/members/me")
 async def update_me(body: ProfileUpdateIn, user: dict = Depends(get_current_user)):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    # If username supplied, ensure uniqueness
+    if "username" in updates and updates["username"]:
+        existing = await db.users.find_one({"username": updates["username"], "id": {"$ne": user["id"]}})
+        if existing:
+            raise HTTPException(status_code=400, detail="Username already taken")
+    # If first/last names supplied without 'name', recompute display name
+    if "first_name" in updates or "last_name" in updates or "middle_name" in updates:
+        parts = [
+            updates.get("first_name", user.get("first_name", "")),
+            updates.get("middle_name", user.get("middle_name", "")),
+            updates.get("last_name", user.get("last_name", "")),
+        ]
+        composed = " ".join(p for p in parts if p).strip()
+        if composed and "name" not in updates:
+            updates["name"] = composed
     if updates:
         await db.users.update_one({"id": user["id"]}, {"$set": updates})
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
     return public_user(u)
+
+@api.post("/auth/change-password")
+async def change_password(body: ChangePasswordIn, user: dict = Depends(get_current_user)):
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not verify_password(body.current_password, full["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
+    return {"ok": True}
 
 @api.post("/members/me/renew")
 async def renew_membership(user: dict = Depends(get_current_user)):
@@ -488,6 +611,25 @@ async def renew_membership(user: dict = Depends(get_current_user)):
         base = now_utc()
     new_exp = base + timedelta(days=365)
     await db.users.update_one({"id": user["id"]}, {"$set": {"membership_expires_at": iso(new_exp)}})
+    # Determine dues amount based on tier
+    amount = ANNUAL_DUES_USD
+    if user.get("tier_id"):
+        tier = await db.tiers.find_one({"id": user["tier_id"]}, {"_id": 0})
+        if tier:
+            amount = float(tier.get("annual_dues", ANNUAL_DUES_USD))
+    await db.transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user.get("name", ""),
+        "type": "renewal",
+        "amount": amount,
+        "currency": "USD",
+        "description": f"Annual membership renewal · expires {format_iso(new_exp)}",
+        "status": "completed",
+        "recorded_by": user["id"],
+        "recorded_by_name": user.get("name", "Self"),
+        "created_at": iso(now_utc()),
+    })
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
     return public_user(u)
 
@@ -821,6 +963,99 @@ async def delete_tier(tier_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 # ---------- Member admin operations ----------
+@api.post("/admin/members")
+async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(require_admin)):
+    email = body.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if body.username and await db.users.find_one({"username": body.username}):
+        raise HTTPException(status_code=400, detail="Username already taken")
+    uid = str(uuid.uuid4())
+    created = now_utc()
+    composed_name = body.name or " ".join(p for p in [body.first_name, body.middle_name, body.last_name] if p).strip() or email.split("@")[0]
+    doc = {
+        "id": uid,
+        "email": email,
+        "username": body.username,
+        "password_hash": hash_password(body.password),
+        "name": composed_name,
+        "first_name": body.first_name,
+        "middle_name": body.middle_name,
+        "last_name": body.last_name,
+        "line_name": body.line_name,
+        "phone": body.phone,
+        "role": body.role,
+        "bio": "",
+        "city": body.city,
+        "interests": [],
+        "avatar_url": "",
+        "membership_tier": "standard",
+        "tier_id": body.tier_id,
+        "chapter_id": body.chapter_id,
+        "membership_expires_at": iso(created + timedelta(days=365)),
+        "email_verified": True,
+        "created_at": iso(created),
+    }
+    if body.tier_id:
+        tier = await db.tiers.find_one({"id": body.tier_id}, {"_id": 0})
+        if tier:
+            doc["membership_tier"] = tier.get("name", "standard")
+    await db.users.insert_one(doc)
+    return public_user(doc)
+
+@api.put("/members/{user_id}")
+async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, _: dict = Depends(require_admin)):
+    existing = await db.users.find_one({"id": user_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Member not found")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None and k != "new_password"}
+    # username uniqueness
+    if "username" in updates and updates["username"]:
+        clash = await db.users.find_one({"username": updates["username"], "id": {"$ne": user_id}})
+        if clash:
+            raise HTTPException(status_code=400, detail="Username already taken")
+    # email uniqueness
+    if "email" in updates and updates["email"]:
+        updates["email"] = updates["email"].lower()
+        clash = await db.users.find_one({"email": updates["email"], "id": {"$ne": user_id}})
+        if clash:
+            raise HTTPException(status_code=400, detail="Email already registered")
+    # If first/last names changed, recompute display name unless explicit
+    if any(k in updates for k in ("first_name", "middle_name", "last_name")) and "name" not in updates:
+        parts = [
+            updates.get("first_name", existing.get("first_name", "")),
+            updates.get("middle_name", existing.get("middle_name", "")),
+            updates.get("last_name", existing.get("last_name", "")),
+        ]
+        composed = " ".join(p for p in parts if p).strip()
+        if composed:
+            updates["name"] = composed
+    # Tier change -> sync display tier
+    if "tier_id" in updates and updates["tier_id"]:
+        tier = await db.tiers.find_one({"id": updates["tier_id"]}, {"_id": 0})
+        if tier:
+            updates["membership_tier"] = tier.get("name", "standard")
+    # Date field
+    if "membership_expires_at" in updates and isinstance(updates["membership_expires_at"], datetime):
+        updates["membership_expires_at"] = iso(updates["membership_expires_at"])
+    if body.new_password:
+        updates["password_hash"] = hash_password(body.new_password)
+    if updates:
+        await db.users.update_one({"id": user_id}, {"$set": updates})
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return public_user(u)
+
+@api.delete("/members/{user_id}")
+async def admin_delete_member(user_id: str, admin: dict = Depends(require_admin)):
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    await db.users.delete_one({"id": user_id})
+    await db.rsvps.delete_many({"user_id": user_id})
+    await db.volunteer_hours.delete_many({"user_id": user_id})
+    await db.award_grants.delete_many({"user_id": user_id})
+    await db.transactions.delete_many({"user_id": user_id})
+    return {"ok": True}
+
 @api.put("/members/{user_id}/role")
 async def update_member_role(user_id: str, body: RoleUpdateIn, _: dict = Depends(require_admin)):
     await db.users.update_one({"id": user_id}, {"$set": {"role": body.role}})
@@ -1187,6 +1422,106 @@ async def download_file(storage_path: str, _: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="File not found in storage")
     return FastResponse(content=data, media_type=rec.get("content_type", content_type))
 
+# ---------- Transactions / Payments / Donations ----------
+def tx_out(t: dict) -> dict:
+    return {
+        "id": t["id"],
+        "user_id": t["user_id"],
+        "user_name": t.get("user_name", ""),
+        "type": t.get("type", "fee"),
+        "amount": t.get("amount", 0.0),
+        "currency": t.get("currency", "USD"),
+        "description": t.get("description", ""),
+        "status": t.get("status", "completed"),
+        "recorded_by": t.get("recorded_by"),
+        "recorded_by_name": t.get("recorded_by_name", ""),
+        "created_at": t.get("created_at"),
+    }
+
+@api.post("/transactions")
+async def admin_create_transaction(body: TransactionIn, admin: dict = Depends(require_admin)):
+    user = await db.users.find_one({"id": body.user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found")
+    doc = body.model_dump()
+    doc.update({
+        "id": str(uuid.uuid4()),
+        "user_name": user.get("name", ""),
+        "recorded_by": admin["id"],
+        "recorded_by_name": admin.get("name", "Admin"),
+        "created_at": iso(now_utc()),
+    })
+    await db.transactions.insert_one(doc)
+    return tx_out(doc)
+
+@api.get("/transactions")
+async def admin_list_transactions(user_id: Optional[str] = None, type_filter: Optional[str] = None, _: dict = Depends(require_admin)):
+    query = {}
+    if user_id:
+        query["user_id"] = user_id
+    if type_filter:
+        query["type"] = type_filter
+    cursor = db.transactions.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
+    items = await cursor.to_list(500)
+    return [tx_out(t) for t in items]
+
+@api.delete("/transactions/{tx_id}")
+async def admin_delete_transaction(tx_id: str, _: dict = Depends(require_admin)):
+    res = await db.transactions.delete_one({"id": tx_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
+
+@api.get("/me/transactions")
+async def my_transactions(user: dict = Depends(get_current_user)):
+    cursor = db.transactions.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(500)
+    items = await cursor.to_list(500)
+    return [tx_out(t) for t in items]
+
+@api.get("/me/activity")
+async def my_activity(user: dict = Depends(get_current_user)):
+    """Unified timeline: transactions, RSVPs, volunteer hours, awards."""
+    activity = []
+    # Transactions
+    async for t in db.transactions.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1):
+        activity.append({
+            "kind": "transaction",
+            "subtype": t.get("type", "fee"),
+            "at": t.get("created_at"),
+            "title": t.get("description") or f"{t.get('type', 'fee').title()}",
+            "meta": {"amount": t.get("amount", 0), "currency": t.get("currency", "USD"), "status": t.get("status")},
+        })
+    # RSVPs (events attended)
+    async for r in db.rsvps.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1):
+        ev = await db.events.find_one({"id": r["event_id"]}, {"_id": 0})
+        activity.append({
+            "kind": "event",
+            "subtype": "rsvp",
+            "at": r.get("created_at"),
+            "title": f"RSVP — {ev['title'] if ev else 'Event'}",
+            "meta": {"event_id": r["event_id"], "event_date": ev.get("start_at") if ev else None},
+        })
+    # Volunteer hours
+    async for h in db.volunteer_hours.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1):
+        activity.append({
+            "kind": "hours",
+            "subtype": h.get("status", "pending"),
+            "at": h.get("created_at"),
+            "title": f"{h['hours']} hours · {h.get('description', '')}",
+            "meta": {"hours": h["hours"], "status": h.get("status"), "date": h.get("date")},
+        })
+    # Awards
+    async for g in db.award_grants.find({"user_id": user["id"]}, {"_id": 0}).sort("granted_at", -1):
+        activity.append({
+            "kind": "award",
+            "subtype": "granted",
+            "at": g.get("granted_at"),
+            "title": f"Earned: {g['award_name']}",
+            "meta": {"award_name": g.get("award_name"), "reason": g.get("reason"), "icon": g.get("award_icon"), "color": g.get("award_color")},
+        })
+    activity.sort(key=lambda x: x.get("at") or "", reverse=True)
+    return activity
+
 # ---------- Admin Dashboard Stats ----------
 ANNUAL_DUES_USD = 60.0
 
@@ -1361,6 +1696,8 @@ async def root():
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.users.create_index("id", unique=True)
+    await db.users.create_index("username", sparse=True)
+    await db.transactions.create_index("user_id")
     await db.events.create_index("id", unique=True)
     await db.events.create_index("start_at")
     await db.news.create_index("id", unique=True)
@@ -1509,6 +1846,38 @@ async def seed_data():
             "title": "Contact",
             "body": "Questions, ideas, or want to host an event? Email hello@clubhaven.app or drop by the clubhouse Tuesdays 6–8pm.",
             "updated_at": now})
+
+    # AOP page content
+    aop_about_body = (
+        "Alpha Omega Phi Military Fraternity & Sorority, Inc. is a 501(c)(3) co-ed Greek organization for "
+        "members of the U.S. Armed Forces — Army, Navy, Air Force, Marines, Coast Guard, and Space Force — "
+        "past, present, and future.\n\n"
+        "We are united across branches by three pillars: Veteran Assistance, Community Service, and Fellowship. "
+        "Chapters across the country host charity balls, fundraisers, food drives, and outreach events that put "
+        "service members and their families first.\n\n"
+        "This portal is a members-only space for Trendsetters to manage their membership, RSVP to chapter events, "
+        "log volunteer hours, view awards, browse the directory, and access fraternity documents and photos."
+    )
+    aop_contact_body = (
+        "National Office: (803) 679-2254\n"
+        "Fax: (803) 421-7820\n\n"
+        "For chapter or membership inquiries, contact your local chapter leadership. New member onboarding is "
+        "handled by chapter admins — outside applicants are directed to the public website at alphaomegaphi.org."
+    )
+    await db.pages.update_one(
+        {"slug": "about"},
+        {"$set": {"title": "About Alpha Omega Phi", "body": aop_about_body, "updated_at": iso(now_utc())}},
+        upsert=True,
+    )
+    if not await db.pages.find_one({"slug": "about", "id": {"$exists": True}}):
+        await db.pages.update_one({"slug": "about"}, {"$setOnInsert": {"id": str(uuid.uuid4())}}, upsert=True)
+    await db.pages.update_one(
+        {"slug": "contact"},
+        {"$set": {"title": "Contact", "body": aop_contact_body, "updated_at": iso(now_utc())}},
+        upsert=True,
+    )
+    if not await db.pages.find_one({"slug": "contact", "id": {"$exists": True}}):
+        await db.pages.update_one({"slug": "contact"}, {"$setOnInsert": {"id": str(uuid.uuid4())}}, upsert=True)
 
     # Default chapters
     if await db.chapters.count_documents({}) == 0:
