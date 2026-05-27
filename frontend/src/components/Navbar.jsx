@@ -42,11 +42,11 @@ export default function Navbar() {
         >
             <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between">
                 <Link to="/" className="flex items-center gap-2 group" data-testid="nav-logo">
-                    <div className="w-9 h-9 rounded-2xl bg-primary text-primary-foreground grid place-items-center font-heading font-black text-lg shadow-warm group-hover:rotate-6 transition-transform">
-                        C
+                    <div className="w-9 h-9 rounded-2xl bg-[#0A2463] text-white grid place-items-center font-heading font-black text-lg shadow-warm group-hover:rotate-6 transition-transform">
+                        A
                     </div>
-                    <span className="font-heading font-bold text-xl tracking-tight">
-                        Club<span className="text-primary">Haven</span>
+                    <span className="font-heading font-bold text-xl tracking-tight leading-tight">
+                        Alpha<span className="text-[#D62828]"> Omega Phi</span>
                     </span>
                 </Link>
 
