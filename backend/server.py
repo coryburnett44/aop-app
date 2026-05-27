@@ -1810,6 +1810,10 @@ async def startup():
     await db.volunteer_hours.create_index("status")
     await db.photos.create_index("id", unique=True)
     await db.documents.create_index("id", unique=True)
+    await db.gear.create_index("id", unique=True)
+    await db.causes.create_index("id", unique=True)
+    await db.checkins.create_index("id", unique=True)
+    await db.checkins.create_index([("event_id", 1), ("user_id", 1)])
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -1817,6 +1821,7 @@ async def startup():
     except Exception as e:
         logger.warning(f"Object storage init skipped: {e}")
     await seed_data()
+    await seed_phase_b()
 
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")
@@ -2047,6 +2052,833 @@ async def seed_data():
                 {"$and": [{"tier_id": {"$in": [None, ""]}}, {"role": "admin"}]},
                 {"$set": {"tier_id": lifetime_tier["id"], "membership_tier": lifetime_tier["name"]}},
             )
+
+# ============================================================
+# PHASE B — Omega Chapter, Gear store, Donations, Event Calendar, Check-ins, Reports
+# ============================================================
+
+# ---------- Omega Chapter (in memoriam) ----------
+@api.get("/omega")
+async def omega_chapter():
+    """Members who have passed away (status=deceased or status_override=deceased)."""
+    cursor = db.users.find(
+        {"$or": [{"status_override": "deceased"}, {"deceased_at": {"$nin": [None, ""]}}]},
+        {"_id": 0, "password_hash": 0},
+    ).sort("deceased_at", -1)
+    items = await cursor.to_list(500)
+    return [public_user(u) for u in items]
+
+
+# ---------- AOP Gear (catalog) ----------
+class GearItemIn(BaseModel):
+    name: str
+    description: str = ""
+    price: float = 0.0
+    sizes: List[str] = []
+    colors: List[str] = []
+    cover_image: str = ""
+    images: List[str] = []
+    category: str = "apparel"
+    in_stock: bool = True
+    sku: str = ""
+
+class GearItemUpdateIn(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[float] = None
+    sizes: Optional[List[str]] = None
+    colors: Optional[List[str]] = None
+    cover_image: Optional[str] = None
+    images: Optional[List[str]] = None
+    category: Optional[str] = None
+    in_stock: Optional[bool] = None
+    sku: Optional[str] = None
+
+def gear_out(g: dict) -> dict:
+    return {
+        "id": g["id"],
+        "name": g["name"],
+        "description": g.get("description", ""),
+        "price": g.get("price", 0.0),
+        "sizes": g.get("sizes", []),
+        "colors": g.get("colors", []),
+        "cover_image": g.get("cover_image", ""),
+        "images": g.get("images", []),
+        "category": g.get("category", "apparel"),
+        "in_stock": g.get("in_stock", True),
+        "sku": g.get("sku", ""),
+        "created_at": g.get("created_at"),
+    }
+
+@api.get("/gear")
+async def list_gear(category: Optional[str] = None):
+    q = {}
+    if category:
+        q["category"] = category
+    items = await db.gear.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [gear_out(g) for g in items]
+
+@api.get("/gear/{item_id}")
+async def get_gear(item_id: str):
+    g = await db.gear.find_one({"id": item_id}, {"_id": 0})
+    if not g:
+        raise HTTPException(status_code=404, detail="Gear item not found")
+    return gear_out(g)
+
+@api.post("/gear")
+async def create_gear(body: GearItemIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = iso(now_utc())
+    await db.gear.insert_one(doc)
+    return gear_out(doc)
+
+@api.put("/gear/{item_id}")
+async def update_gear(item_id: str, body: GearItemUpdateIn, _: dict = Depends(require_admin)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.gear.update_one({"id": item_id}, {"$set": updates})
+    g = await db.gear.find_one({"id": item_id}, {"_id": 0})
+    if not g:
+        raise HTTPException(status_code=404, detail="Gear item not found")
+    return gear_out(g)
+
+@api.delete("/gear/{item_id}")
+async def delete_gear(item_id: str, _: dict = Depends(require_admin)):
+    await db.gear.delete_one({"id": item_id})
+    return {"ok": True}
+
+
+# ---------- Donations / Causes ----------
+class CauseIn(BaseModel):
+    title: str
+    description: str = ""
+    goal_amount: float = 0.0
+    cover_image: str = ""
+    is_active: bool = True
+    deadline: Optional[str] = None
+    category: str = "general"
+
+class CauseUpdateIn(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    goal_amount: Optional[float] = None
+    cover_image: Optional[str] = None
+    is_active: Optional[bool] = None
+    deadline: Optional[str] = None
+    category: Optional[str] = None
+
+class PledgeIn(BaseModel):
+    amount: float = Field(gt=0)
+    anonymous: bool = False
+    note: str = ""
+
+def cause_out(c: dict) -> dict:
+    return {
+        "id": c["id"],
+        "title": c["title"],
+        "description": c.get("description", ""),
+        "goal_amount": c.get("goal_amount", 0.0),
+        "raised_amount": c.get("raised_amount", 0.0),
+        "donor_count": c.get("donor_count", 0),
+        "cover_image": c.get("cover_image", ""),
+        "is_active": c.get("is_active", True),
+        "deadline": c.get("deadline"),
+        "category": c.get("category", "general"),
+        "created_at": c.get("created_at"),
+    }
+
+async def recompute_cause_totals(cause_id: str):
+    """Sum completed donations against this cause."""
+    agg = await db.transactions.aggregate([
+        {"$match": {"cause_id": cause_id, "status": "completed", "type": "donation"}},
+        {"$group": {"_id": "$cause_id", "raised": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+    ]).to_list(1)
+    raised = agg[0]["raised"] if agg else 0.0
+    count = agg[0]["count"] if agg else 0
+    await db.causes.update_one({"id": cause_id}, {"$set": {"raised_amount": raised, "donor_count": count}})
+
+@api.get("/causes")
+async def list_causes(active_only: bool = False):
+    q = {"is_active": True} if active_only else {}
+    items = await db.causes.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return [cause_out(c) for c in items]
+
+@api.get("/causes/{cause_id}")
+async def get_cause(cause_id: str):
+    c = await db.causes.find_one({"id": cause_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cause not found")
+    return cause_out(c)
+
+@api.post("/causes")
+async def create_cause(body: CauseIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["raised_amount"] = 0.0
+    doc["donor_count"] = 0
+    doc["created_at"] = iso(now_utc())
+    await db.causes.insert_one(doc)
+    return cause_out(doc)
+
+@api.put("/causes/{cause_id}")
+async def update_cause(cause_id: str, body: CauseUpdateIn, _: dict = Depends(require_admin)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.causes.update_one({"id": cause_id}, {"$set": updates})
+    c = await db.causes.find_one({"id": cause_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cause not found")
+    return cause_out(c)
+
+@api.delete("/causes/{cause_id}")
+async def delete_cause(cause_id: str, _: dict = Depends(require_admin)):
+    await db.causes.delete_one({"id": cause_id})
+    return {"ok": True}
+
+@api.post("/causes/{cause_id}/pledge")
+async def pledge_donation(cause_id: str, body: PledgeIn, user: dict = Depends(get_current_user)):
+    """Record a pledge — used when user submits via manual / non-Stripe path.
+    For PayPal-captured donations, the capture endpoint also writes the transaction."""
+    cause = await db.causes.find_one({"id": cause_id}, {"_id": 0})
+    if not cause:
+        raise HTTPException(status_code=404, detail="Cause not found")
+    tx = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": "Anonymous" if body.anonymous else user.get("name", ""),
+        "type": "donation",
+        "amount": body.amount,
+        "currency": "USD",
+        "description": f"Donation to {cause['title']}" + (f": {body.note}" if body.note else ""),
+        "status": "pending",
+        "cause_id": cause_id,
+        "anonymous": body.anonymous,
+        "method": "pledge",
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(tx)
+    return {"transaction_id": tx["id"], "status": "pending"}
+
+@api.get("/causes/{cause_id}/donations")
+async def cause_donations(cause_id: str, _: dict = Depends(require_admin)):
+    items = await db.transactions.find(
+        {"cause_id": cause_id, "type": "donation"},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(500)
+    return items
+
+
+# ---------- Event Calendar & Check-In ----------
+@api.get("/events/calendar")
+async def events_calendar(month: Optional[str] = None):
+    """Events for a given YYYY-MM month (defaults to current month)."""
+    today = now_utc()
+    if month:
+        try:
+            year, mo = month.split("-")
+            year, mo = int(year), int(mo)
+        except Exception:
+            raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+    else:
+        year, mo = today.year, today.month
+    start = datetime(year, mo, 1, tzinfo=timezone.utc)
+    if mo == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(year, mo + 1, 1, tzinfo=timezone.utc)
+    cursor = db.events.find(
+        {"start_at": {"$gte": iso(start), "$lt": iso(end)}},
+        {"_id": 0},
+    ).sort("start_at", 1)
+    items = await cursor.to_list(500)
+    for e in items:
+        e["rsvp_count"] = await db.rsvps.count_documents({"event_id": e["id"]})
+        e["checkin_count"] = await db.checkins.count_documents({"event_id": e["id"]})
+    return items
+
+class CheckInIn(BaseModel):
+    user_id: Optional[str] = None
+    guest_name: Optional[str] = None  # for walk-in non-members
+    ticket_type: Literal["vip", "general", "guest", "speaker", "volunteer"] = "general"
+    note: str = ""
+
+@api.post("/events/{event_id}/check-in")
+async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(require_admin)):
+    event = await db.events.find_one({"id": event_id})
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if not body.user_id and not body.guest_name:
+        raise HTTPException(status_code=400, detail="Provide user_id or guest_name")
+    if body.user_id:
+        existing = await db.checkins.find_one({"event_id": event_id, "user_id": body.user_id})
+        if existing:
+            raise HTTPException(status_code=400, detail="Already checked in")
+        u = await db.users.find_one({"id": body.user_id}, {"_id": 0, "password_hash": 0})
+        if not u:
+            raise HTTPException(status_code=404, detail="Member not found")
+        display = u.get("name", "")
+    else:
+        display = body.guest_name
+    doc = {
+        "id": str(uuid.uuid4()),
+        "event_id": event_id,
+        "event_title": event.get("title", ""),
+        "user_id": body.user_id,
+        "user_name": display,
+        "ticket_type": body.ticket_type,
+        "note": body.note,
+        "checked_in_by": admin["id"],
+        "checked_in_by_name": admin.get("name", "Admin"),
+        "checked_in_at": iso(now_utc()),
+    }
+    await db.checkins.insert_one(doc)
+    out = dict(doc)
+    out.pop("_id", None)
+    return out
+
+@api.get("/events/{event_id}/check-ins")
+async def list_checkins(event_id: str, _: dict = Depends(require_admin)):
+    items = await db.checkins.find({"event_id": event_id}, {"_id": 0}).sort("checked_in_at", -1).to_list(2000)
+    return items
+
+@api.delete("/events/{event_id}/check-ins/{checkin_id}")
+async def remove_checkin(event_id: str, checkin_id: str, _: dict = Depends(require_admin)):
+    await db.checkins.delete_one({"id": checkin_id, "event_id": event_id})
+    return {"ok": True}
+
+
+# ---------- Reporting & Personnel Brief ----------
+@api.get("/reports/members")
+async def report_members(
+    status_filter: Optional[str] = None,
+    chapter_id: Optional[str] = None,
+    tier_id: Optional[str] = None,
+    role: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: dict = {}
+    if chapter_id:
+        q["chapter_id"] = chapter_id
+    if tier_id:
+        q["tier_id"] = tier_id
+    if role:
+        q["role"] = role
+    cursor = db.users.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1)
+    users = await cursor.to_list(2000)
+    out = [public_user(u) for u in users]
+    if status_filter:
+        out = [u for u in out if u.get("status") == status_filter]
+    return out
+
+@api.get("/reports/hours")
+async def report_hours(
+    status_filter: Optional[str] = None,
+    user_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: dict = {}
+    if status_filter:
+        q["status"] = status_filter
+    if user_id:
+        q["user_id"] = user_id
+    if event_type:
+        q["event_type"] = event_type
+    if from_date or to_date:
+        q["date"] = {}
+        if from_date:
+            q["date"]["$gte"] = from_date
+        if to_date:
+            q["date"]["$lte"] = to_date
+    cursor = db.volunteer_hours.find(q, {"_id": 0}).sort("date", -1).limit(2000)
+    items = await cursor.to_list(2000)
+    return [hours_out(h) for h in items]
+
+@api.get("/reports/donations")
+async def report_donations(
+    cause_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: dict = {"type": "donation"}
+    if cause_id:
+        q["cause_id"] = cause_id
+    if status_filter:
+        q["status"] = status_filter
+    items = await db.transactions.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return items
+
+@api.get("/reports/personnel-brief/{user_id}")
+async def personnel_brief(user_id: str, _: dict = Depends(require_admin)):
+    """Compiles everything for a printable member brief."""
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Member not found")
+    member = public_user(u)
+
+    chapter = None
+    if u.get("chapter_id"):
+        cdoc = await db.chapters.find_one({"id": u["chapter_id"]}, {"_id": 0})
+        chapter = chapter_out(cdoc) if cdoc else None
+
+    tier = None
+    if u.get("tier_id"):
+        tdoc = await db.tiers.find_one({"id": u["tier_id"]}, {"_id": 0})
+        tier = tier_out(tdoc) if tdoc else None
+
+    grants = await db.award_grants.find({"user_id": user_id}, {"_id": 0}).sort("granted_at", -1).to_list(200)
+    hours_items = await db.volunteer_hours.find({"user_id": user_id}, {"_id": 0}).sort("date", -1).to_list(500)
+    hours_clean = [hours_out(h) for h in hours_items]
+    approved_hours = sum(h["hours"] for h in hours_clean if h["status"] == "approved")
+    pending_hours = sum(h["hours"] for h in hours_clean if h["status"] == "pending")
+
+    rsvps = await db.rsvps.find({"user_id": user_id}, {"_id": 0}).to_list(500)
+    event_ids = [r.get("event_id") for r in rsvps if r.get("event_id")]
+    events_attended = []
+    if event_ids:
+        events_attended = await db.events.find({"id": {"$in": event_ids}}, {"_id": 0}).sort("start_at", -1).to_list(500)
+
+    checkins = await db.checkins.find({"user_id": user_id}, {"_id": 0}).sort("checked_in_at", -1).to_list(500)
+
+    txs = await db.transactions.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    total_paid = sum(t.get("amount", 0.0) for t in txs if t.get("status") == "completed" and t.get("type") in ("renewal", "donation", "fee", "gear"))
+
+    return {
+        "member": member,
+        "chapter": chapter,
+        "tier": tier,
+        "awards": grants,
+        "awards_count": len(grants),
+        "hours": hours_clean,
+        "approved_hours": approved_hours,
+        "pending_hours": pending_hours,
+        "events": events_attended,
+        "events_count": len(events_attended),
+        "checkins": checkins,
+        "transactions": txs,
+        "total_paid": total_paid,
+        "generated_at": iso(now_utc()),
+    }
+
+
+# ---------- Seed Phase B sample data (idempotent) ----------
+async def seed_phase_b():
+    if await db.gear.count_documents({}) == 0:
+        sample_gear = [
+            {"name": "AOP Trendsetter Polo", "description": "Embroidered crest polo in navy. Officer-grade combed cotton.",
+             "price": 38.0, "sizes": ["S", "M", "L", "XL", "XXL"], "colors": ["Navy", "White"],
+             "cover_image": "https://images.unsplash.com/photo-1586790170083-2f9ceadc732d?w=800",
+             "category": "apparel", "in_stock": True, "sku": "AOP-POLO-01"},
+            {"name": "Commemorative 10-Year Tee", "description": "Limited edition anniversary t-shirt. 100% combed ringspun cotton.",
+             "price": 25.0, "sizes": ["S", "M", "L", "XL", "XXL"], "colors": ["Red", "Navy", "Black"],
+             "cover_image": "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800",
+             "category": "apparel", "in_stock": True, "sku": "AOP-TEE-10YR"},
+            {"name": "AOP Challenge Coin", "description": "Solid metal challenge coin with crest. A collector's piece.",
+             "price": 18.0, "sizes": ["One size"], "colors": ["Gold/Navy"],
+             "cover_image": "https://images.unsplash.com/photo-1592334873219-42ca023e48ce?w=800",
+             "category": "accessory", "in_stock": True, "sku": "AOP-COIN"},
+            {"name": "Trendsetters Hoodie", "description": "Heavyweight pullover hoodie with embroidered crest.",
+             "price": 55.0, "sizes": ["S", "M", "L", "XL", "XXL"], "colors": ["Navy", "Charcoal"],
+             "cover_image": "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=800",
+             "category": "apparel", "in_stock": True, "sku": "AOP-HOOD-01"},
+        ]
+        for g in sample_gear:
+            g["id"] = str(uuid.uuid4())
+            g["created_at"] = iso(now_utc())
+            g["images"] = []
+            await db.gear.insert_one(g)
+
+    if await db.causes.count_documents({}) == 0:
+        sample_causes = [
+            {"title": "Veteran Family Emergency Fund",
+             "description": "Direct grants to AOP brothers, sisters, and families facing crisis — rent, utilities, medical.",
+             "goal_amount": 25000.0,
+             "cover_image": "https://images.unsplash.com/photo-1532629345422-7515f3d16bb6?w=1200",
+             "category": "veteran", "is_active": True},
+            {"title": "Trendsetters Scholarship",
+             "description": "Yearly scholarship awarded to a high school senior of a service member family.",
+             "goal_amount": 10000.0,
+             "cover_image": "https://images.unsplash.com/photo-1523050854058-8df90110c9f1?w=1200",
+             "category": "education", "is_active": True},
+            {"title": "10-Year Anniversary Gala Fund",
+             "description": "Help underwrite the July 27, 2027 anniversary celebration in Atlanta.",
+             "goal_amount": 50000.0,
+             "cover_image": "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",
+             "category": "anniversary", "is_active": True},
+        ]
+        for c in sample_causes:
+            c["id"] = str(uuid.uuid4())
+            c["raised_amount"] = 0.0
+            c["donor_count"] = 0
+            c["created_at"] = iso(now_utc())
+            await db.causes.insert_one(c)
+
+
+# ============================================================
+# PHASE C — PayPal payments + Resend email blasts
+# ============================================================
+import httpx
+import asyncio
+import resend as resend_sdk
+
+PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox").lower()
+PAYPAL_BASE = "https://api-m.paypal.com" if PAYPAL_MODE == "live" else "https://api-m.sandbox.paypal.com"
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "")
+PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET", "")
+
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM = os.environ.get("RESEND_FROM", "Alpha Omega Phi <onboarding@resend.dev>")
+if RESEND_API_KEY:
+    resend_sdk.api_key = RESEND_API_KEY
+
+_paypal_token_cache = {"token": None, "expires_at": 0.0}
+
+async def paypal_access_token() -> str:
+    import time
+    now = time.time()
+    if _paypal_token_cache["token"] and _paypal_token_cache["expires_at"] > now + 30:
+        return _paypal_token_cache["token"]
+    if not PAYPAL_CLIENT_ID or not PAYPAL_SECRET:
+        raise HTTPException(status_code=503, detail="PayPal not configured")
+    async with httpx.AsyncClient(timeout=20) as cx:
+        r = await cx.post(
+            f"{PAYPAL_BASE}/v1/oauth2/token",
+            auth=(PAYPAL_CLIENT_ID, PAYPAL_SECRET),
+            data={"grant_type": "client_credentials"},
+            headers={"Accept": "application/json", "Accept-Language": "en_US"},
+        )
+        if r.status_code != 200:
+            logger.error(f"PayPal token error: {r.status_code} {r.text}")
+            raise HTTPException(status_code=502, detail="PayPal auth failed")
+        data = r.json()
+        _paypal_token_cache["token"] = data["access_token"]
+        _paypal_token_cache["expires_at"] = now + float(data.get("expires_in", 3000))
+        return data["access_token"]
+
+
+# ---------- PayPal — Public client config ----------
+@api.get("/payments/paypal/client-id")
+async def paypal_public_config():
+    return {
+        "client_id": PAYPAL_CLIENT_ID,
+        "mode": PAYPAL_MODE,
+        "enabled": bool(PAYPAL_CLIENT_ID and PAYPAL_SECRET),
+    }
+
+
+# ---------- PayPal — Create order ----------
+class PayPalOrderIn(BaseModel):
+    purpose: Literal["donation", "gear", "event", "dues"]
+    amount: float = Field(gt=0)
+    currency: str = "USD"
+    cause_id: Optional[str] = None
+    gear_id: Optional[str] = None
+    event_id: Optional[str] = None
+    quantity: int = 1
+    note: str = ""
+    anonymous: bool = False
+
+@api.post("/payments/paypal/orders")
+async def paypal_create_order(body: PayPalOrderIn, user: dict = Depends(get_current_user)):
+    desc = body.note or body.purpose
+    if body.purpose == "donation" and body.cause_id:
+        c = await db.causes.find_one({"id": body.cause_id}, {"_id": 0})
+        if c:
+            desc = f"Donation: {c['title']}"
+    if body.purpose == "gear" and body.gear_id:
+        g = await db.gear.find_one({"id": body.gear_id}, {"_id": 0})
+        if g:
+            desc = f"AOP Gear: {g['name']}" + (f" ×{body.quantity}" if body.quantity > 1 else "")
+    if body.purpose == "event" and body.event_id:
+        e = await db.events.find_one({"id": body.event_id}, {"_id": 0})
+        if e:
+            desc = f"Event: {e['title']}"
+
+    token = await paypal_access_token()
+    payload = {
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "reference_id": str(uuid.uuid4()),
+            "description": desc[:127],
+            "custom_id": f"{body.purpose}:{user['id']}",
+            "amount": {"currency_code": body.currency, "value": f"{body.amount:.2f}"},
+        }],
+        "application_context": {
+            "brand_name": "Alpha Omega Phi",
+            "shipping_preference": "NO_SHIPPING",
+            "user_action": "PAY_NOW",
+        },
+    }
+    async with httpx.AsyncClient(timeout=20) as cx:
+        r = await cx.post(
+            f"{PAYPAL_BASE}/v2/checkout/orders",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+        )
+        if r.status_code not in (200, 201):
+            logger.error(f"PayPal create-order failed: {r.status_code} {r.text}")
+            raise HTTPException(status_code=502, detail="PayPal order creation failed")
+        order = r.json()
+
+    # Persist a pending transaction now (we'll mark completed on capture)
+    tx_id = str(uuid.uuid4())
+    tx_type = {"donation": "donation", "gear": "gear", "event": "fee", "dues": "renewal"}.get(body.purpose, "fee")
+    tx = {
+        "id": tx_id,
+        "user_id": user["id"],
+        "user_name": "Anonymous" if body.anonymous else user.get("name", ""),
+        "type": tx_type,
+        "amount": float(body.amount),
+        "currency": body.currency,
+        "description": desc,
+        "status": "pending",
+        "method": "paypal",
+        "paypal_order_id": order["id"],
+        "purpose": body.purpose,
+        "cause_id": body.cause_id,
+        "gear_id": body.gear_id,
+        "event_id": body.event_id,
+        "quantity": body.quantity,
+        "anonymous": body.anonymous,
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(tx)
+    return {"order_id": order["id"], "transaction_id": tx_id, "status": order.get("status")}
+
+
+# ---------- PayPal — Capture order ----------
+@api.post("/payments/paypal/orders/{order_id}/capture")
+async def paypal_capture_order(order_id: str, user: dict = Depends(get_current_user)):
+    token = await paypal_access_token()
+    async with httpx.AsyncClient(timeout=20) as cx:
+        r = await cx.post(
+            f"{PAYPAL_BASE}/v2/checkout/orders/{order_id}/capture",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        if r.status_code not in (200, 201):
+            logger.error(f"PayPal capture failed: {r.status_code} {r.text}")
+            raise HTTPException(status_code=502, detail="PayPal capture failed")
+        cap = r.json()
+
+    status_ok = cap.get("status") == "COMPLETED"
+    tx = await db.transactions.find_one({"paypal_order_id": order_id, "user_id": user["id"]})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    new_status = "completed" if status_ok else "pending"
+    updates = {"status": new_status, "captured_at": iso(now_utc()), "paypal_capture": cap}
+    await db.transactions.update_one({"id": tx["id"]}, {"$set": updates})
+
+    if status_ok:
+        # Side-effects per purpose
+        if tx.get("purpose") == "donation" and tx.get("cause_id"):
+            await recompute_cause_totals(tx["cause_id"])
+        if tx.get("purpose") == "dues":
+            # extend membership by 365 days from current expiry (or now)
+            u = await db.users.find_one({"id": user["id"]})
+            cur = u.get("membership_expires_at") if u else None
+            try:
+                base = datetime.fromisoformat(cur) if cur else now_utc()
+            except Exception:
+                base = now_utc()
+            if base < now_utc():
+                base = now_utc()
+            await db.users.update_one({"id": user["id"]}, {"$set": {"membership_expires_at": iso(base + timedelta(days=365))}})
+    return {"transaction_id": tx["id"], "status": new_status, "paypal_status": cap.get("status")}
+
+
+# ---------- Email Blasts (Resend) ----------
+class EmailTemplateIn(BaseModel):
+    name: str
+    subject: str
+    body_html: str
+    description: str = ""
+
+class EmailTemplateUpdateIn(BaseModel):
+    name: Optional[str] = None
+    subject: Optional[str] = None
+    body_html: Optional[str] = None
+    description: Optional[str] = None
+
+class EmailBlastIn(BaseModel):
+    template_id: Optional[str] = None
+    subject: str
+    body_html: str
+    # Segment filters
+    segment: Literal["all", "active", "lifetime", "alumni", "admins", "tier", "chapter", "custom"] = "active"
+    tier_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    custom_user_ids: List[str] = []
+    test_only: bool = False  # if True, send only to admin
+
+def template_out(t: dict) -> dict:
+    return {
+        "id": t["id"],
+        "name": t["name"],
+        "subject": t["subject"],
+        "body_html": t["body_html"],
+        "description": t.get("description", ""),
+        "created_at": t.get("created_at"),
+    }
+
+@api.get("/email/templates")
+async def list_email_templates(_: dict = Depends(require_admin)):
+    items = await db.email_templates.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return [template_out(t) for t in items]
+
+@api.post("/email/templates")
+async def create_email_template(body: EmailTemplateIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = iso(now_utc())
+    await db.email_templates.insert_one(doc)
+    return template_out(doc)
+
+@api.put("/email/templates/{tid}")
+async def update_email_template(tid: str, body: EmailTemplateUpdateIn, _: dict = Depends(require_admin)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.email_templates.update_one({"id": tid}, {"$set": updates})
+    t = await db.email_templates.find_one({"id": tid}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template_out(t)
+
+@api.delete("/email/templates/{tid}")
+async def delete_email_template(tid: str, _: dict = Depends(require_admin)):
+    await db.email_templates.delete_one({"id": tid})
+    return {"ok": True}
+
+
+async def resolve_segment(body: EmailBlastIn) -> List[dict]:
+    q: dict = {}
+    if body.segment == "admins":
+        q["role"] = "admin"
+    elif body.segment == "tier" and body.tier_id:
+        q["tier_id"] = body.tier_id
+    elif body.segment == "chapter" and body.chapter_id:
+        q["chapter_id"] = body.chapter_id
+    elif body.segment == "custom" and body.custom_user_ids:
+        q["id"] = {"$in": body.custom_user_ids}
+    elif body.segment == "active":
+        q["status_override"] = {"$ne": "deceased"}
+    cursor = db.users.find(q, {"_id": 0, "password_hash": 0}).limit(2000)
+    return await cursor.to_list(2000)
+
+
+def render_template(body_html: str, recipient: dict) -> str:
+    """Replace simple variables: {{name}}, {{first_name}}, {{email}}, {{line_name}}."""
+    out = body_html
+    for key, val in {
+        "name": recipient.get("name", ""),
+        "first_name": recipient.get("first_name", ""),
+        "last_name": recipient.get("last_name", ""),
+        "line_name": recipient.get("line_name", ""),
+        "email": recipient.get("email", ""),
+    }.items():
+        out = out.replace("{{" + key + "}}", val or "")
+    return out
+
+
+@api.post("/email/preview")
+async def email_preview(body: EmailBlastIn, user: dict = Depends(require_admin)):
+    """Render the blast for the current admin user as preview (no send)."""
+    recipients = await resolve_segment(body)
+    sample = recipients[0] if recipients else user
+    html = render_template(body.body_html, sample)
+    return {
+        "subject": body.subject.replace("{{name}}", sample.get("name", "")),
+        "html": html,
+        "recipient_count": len(recipients),
+        "sample_recipient": {"name": sample.get("name", ""), "email": sample.get("email", "")},
+    }
+
+
+@api.post("/email/blast")
+async def send_email_blast(body: EmailBlastIn, user: dict = Depends(require_admin)):
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=503, detail="Email service not configured")
+    recipients = await resolve_segment(body)
+    if body.test_only:
+        recipients = [user]
+    if not recipients:
+        raise HTTPException(status_code=400, detail="Segment has no recipients")
+
+    blast_id = str(uuid.uuid4())
+    sent: List[dict] = []
+    failed: List[dict] = []
+
+    for r in recipients:
+        email = (r.get("email") or "").strip()
+        if not email:
+            failed.append({"user_id": r.get("id"), "reason": "no email"})
+            continue
+        try:
+            params = {
+                "from": RESEND_FROM,
+                "to": [email],
+                "subject": body.subject.replace("{{name}}", r.get("name", "")),
+                "html": render_template(body.body_html, r),
+                "tags": [{"name": "blast_id", "value": blast_id}],
+            }
+            res = await asyncio.to_thread(resend_sdk.Emails.send, params)
+            sent.append({"user_id": r.get("id"), "email": email, "resend_id": res.get("id")})
+        except Exception as e:
+            logger.error(f"Resend send failed for {email}: {e}")
+            failed.append({"user_id": r.get("id"), "email": email, "reason": str(e)[:200]})
+
+    log = {
+        "id": blast_id,
+        "subject": body.subject,
+        "segment": body.segment,
+        "tier_id": body.tier_id,
+        "chapter_id": body.chapter_id,
+        "test_only": body.test_only,
+        "sent_count": len(sent),
+        "failed_count": len(failed),
+        "sent_to": [s["email"] for s in sent[:100]],
+        "failed": failed[:50],
+        "sent_by": user["id"],
+        "sent_by_name": user.get("name", "Admin"),
+        "sent_at": iso(now_utc()),
+    }
+    await db.email_blasts.insert_one(log)
+    return {"blast_id": blast_id, "sent": len(sent), "failed": len(failed)}
+
+
+@api.get("/email/blasts")
+async def list_email_blasts(_: dict = Depends(require_admin)):
+    items = await db.email_blasts.find({}, {"_id": 0}).sort("sent_at", -1).limit(100).to_list(100)
+    return items
+
+
+@api.post("/email/webhook")
+async def resend_webhook(request: Request):
+    """Accept Resend webhook events for opens, deliveries, bounces."""
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Bad JSON")
+    event = payload.get("type", "")
+    data = payload.get("data", {})
+    tags = {t.get("name"): t.get("value") for t in (data.get("tags") or []) if t.get("name")}
+    blast_id = tags.get("blast_id")
+    if blast_id:
+        inc = {}
+        if "opened" in event:
+            inc["opens"] = 1
+        if "delivered" in event:
+            inc["deliveries"] = 1
+        if "bounced" in event:
+            inc["bounces"] = 1
+        if "complained" in event:
+            inc["complaints"] = 1
+        if inc:
+            await db.email_blasts.update_one({"id": blast_id}, {"$inc": inc})
+    return {"ok": True}
+
 
 # ---------- Mount ----------
 app.include_router(api)

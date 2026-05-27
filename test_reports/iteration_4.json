@@ -1,0 +1,47 @@
+{
+  "summary": "Phase B + C testing (Alpha Omega Phi). Backend: 30/32 pytest tests pass in /app/backend/tests/test_phase_bc.py. Phase A regression endpoints still alive. PayPal LIVE create-order works against api-m.paypal.com, returns CREATED order_id, persists pending transaction with paypal_order_id/method=paypal/purpose. Resend email blast (test_only) completes and writes a blast log; webhook synthetic payload increments opens on the matching blast_id. Frontend smoke: Navbar contains Calendar/Gear/Donate/Omega links; /omega renders heading; /gear lists 4 seeded items; /donations lists 3 seeded causes; /calendar grid renders. Admin page tabs contain Gear/Causes/Reports/Email. ONE CRITICAL BACKEND BUG: GET /api/events/calendar returns 404 due to route-ordering — the dynamic /api/events/{event_id} route is registered at server.py L734 (Phase A), BEFORE /api/events/calendar at L2273 (Phase B), so FastAPI matches /events/calendar as event_id='calendar' and 404s.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/events/calendar", "issue": "Route shadowed by /api/events/{event_id} (registered earlier in server.py at L734). FastAPI matches /events/calendar as event_id='calendar' and returns 404. Confirmed via curl: returns 404 for both ?month=YYYY-MM and missing param. Breaks the entire /calendar page event-loading flow.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Calendar page", "issue": "Calls /api/events/calendar?month=YYYY-MM which 404s due to backend route order bug above. Page degrades gracefully showing month grid + 'No events scheduled.' but never displays real events.", "affected_selectors": ["[data-testid='calendar-grid']", "[data-testid^='cal-event-']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_bc.py",
+    "/app/test_reports/pytest/phase_bc_results.xml"
+  ],
+  "action_items": [
+    "FIX: Reorder routes in server.py so /api/events/calendar (and /api/events/{event_id}/check-in, /api/events/{event_id}/check-ins) are declared BEFORE @api.get('/events/{event_id}') at L734. Simplest fix: move the Phase B /events/calendar endpoint definition above the Phase A dynamic-id GET — or rename the Phase B path to /events-calendar / /calendar/events. Check-in routes work because POST/DELETE methods don't collide with the GET /events/{event_id}, but GET /events/calendar definitely collides.",
+    "After fix: rerun /app/backend/tests/test_phase_bc.py — the 2 failing calendar tests will pass and frontend /calendar will show events."
+  ],
+  "critical_code_review_comments": [
+    "Route order bug as above is the only critical finding.",
+    "server.py is 2898 lines — should be split (Phase A / B / C modules) for maintainability per code-review guidelines (>700 line threshold).",
+    "paypal_access_token caches token but does not handle token revocation/refresh edge case (only TTL); acceptable for now.",
+    "email/blast does Resend SDK calls inside a for-loop with asyncio.to_thread — fine for small segments but will be slow + serial for large blasts. Consider asyncio.gather batching when segment >100.",
+    "email/webhook does NOT verify Resend signature (svix-signature). Phase C says webhook URL not registered yet — but before production, signature verification should be added or the endpoint can be spoofed to inflate metrics.",
+    "personnel_brief sums total_paid across types renewal/donation/fee/gear with status==completed but does NOT include declined refunds — currently correct.",
+    "resolve_segment for segment='all' applies no filter at all (q={}) and may include deceased users; only segment='active' excludes deceased. Worth documenting/expecting in UI.",
+    "Render template uses simple str.replace and does NOT HTML-escape recipient name — XSS risk if a member name contains <script>. Low risk (admin-only feature) but worth html-escaping render_template values."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_bc.py (new)"
+  ],
+  "success_rate": {
+    "backend": "94% (30/32) on Phase B+C; Phase A regression endpoints still 100% alive",
+    "frontend": "100% on smoke checks — all required pages render; Calendar visually OK despite backend 404"
+  },
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123! — verified working",
+  "seed_data_creation": "Tests create/cleanup TEST_-prefixed gear, causes, events, templates and one $1 PayPal-LIVE pending donation tx tagged note='TEST_pp_donation'. The $1 PayPal order is never captured (no buyer approval) so no real money is moved; it remains as a pending transaction in db.transactions and can be deleted by admin via /api/transactions/{tx_id} if desired.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase B+C are fully wired and tested except for the route order bug on /api/events/calendar. After main agent reorders the routes in server.py, rerun: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest /app/backend/tests/test_phase_bc.py -v. Reports.jsx is mounted inside Admin.jsx tabs (not a standalone /reports route). PayPal LIVE create-order works (don't run capture). Resend blast to admin@clubhaven.app fails with 'You can only send testing emails to your own email address' on free tier — that's expected and is correctly recorded in db.email_blasts.failed[].reason. Webhook is unsigned — fine for now but flag for prod.",
+  "rca of the issue": "Root cause of /api/events/calendar 404: In FastAPI, routes are matched in registration order. server.py defines GET /events/{event_id} at line 734 (Phase A block) which uses a path parameter that matches ANY string in that segment, including the literal 'calendar'. Phase B then defines GET /events/calendar at line 2273, but this is never reached because the Phase A dynamic route already matched and called get_event(event_id='calendar') which then 404s because no event has id='calendar'. Fix: Either (a) declare the static /events/calendar route BEFORE the dynamic /events/{event_id} route, or (b) rename to a non-conflicting prefix like /api/calendar/events or /api/events-calendar. Option (a) is the minimal change — move the @api.get('/events/calendar') function definition above line 725's @api.get('/events') section, OR re-register it on the router before the include_router() call by relocating the Phase B block."
+}

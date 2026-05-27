@@ -23,6 +23,10 @@ import Hours from "./pages/Hours";
 import Awards from "./pages/Awards";
 import Chapters from "./pages/Chapters";
 import Anniversary from "./pages/Anniversary";
+import Omega from "./pages/Omega";
+import Gear from "./pages/Gear";
+import Donations from "./pages/Donations";
+import CalendarPage from "./pages/Calendar";
 
 function App() {
     return (
@@ -45,6 +49,10 @@ function App() {
                             <Route path="/documents" element={<Documents />} />
                             <Route path="/awards" element={<Awards />} />
                             <Route path="/anniversary" element={<Anniversary />} />
+                            <Route path="/omega" element={<Omega />} />
+                            <Route path="/gear" element={<Gear />} />
+                            <Route path="/donations" element={<Donations />} />
+                            <Route path="/calendar" element={<CalendarPage />} />
                             <Route
                                 path="/hours"
                                 element={

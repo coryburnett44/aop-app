@@ -3,8 +3,12 @@ import { useParams, Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { format, parseISO } from "date-fns";
-import { MapPin, Users, Calendar, ArrowLeft } from "lucide-react";
+import { MapPin, Users, Calendar, ArrowLeft, UserCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function EventDetail() {
@@ -115,6 +119,159 @@ export default function EventDetail() {
                     )}
                 </aside>
             </div>
+
+            {user?.role === "admin" && <CheckInPanel eventId={id} eventTitle={event.title} />}
         </div>
+    );
+}
+
+function CheckInPanel({ eventId, eventTitle }) {
+    const [checkins, setCheckins] = useState([]);
+    const [members, setMembers] = useState([]);
+
+    const load = () => api.get(`/events/${eventId}/check-ins`).then(({ data }) => setCheckins(data));
+    useEffect(() => {
+        load().catch(() => {});
+        api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
+    }, [eventId]);
+
+    const checkedInIds = new Set(checkins.filter((c) => c.user_id).map((c) => c.user_id));
+    const totals = checkins.reduce((acc, c) => { acc[c.ticket_type] = (acc[c.ticket_type] || 0) + 1; return acc; }, {});
+
+    async function remove(id) {
+        if (!confirm("Remove this check-in?")) return;
+        await api.delete(`/events/${eventId}/check-ins/${id}`);
+        toast.success("Removed");
+        load();
+    }
+
+    return (
+        <section className="mt-12 bg-card rounded-3xl border-2 border-primary/20 p-6 shadow-warm" data-testid="checkin-panel">
+            <div className="flex items-end justify-between gap-3 flex-wrap mb-5">
+                <div>
+                    <div className="text-xs uppercase tracking-[0.25em] font-bold text-primary">Admin · Event Check-In</div>
+                    <h2 className="font-heading text-2xl font-black mt-1">{checkins.length} checked in</h2>
+                    <div className="text-xs text-muted-foreground mt-1">
+                        {["vip", "general", "guest", "speaker", "volunteer"].map((t) => totals[t] ? `${totals[t]} ${t}` : null).filter(Boolean).join(" · ") || "No check-ins yet"}
+                    </div>
+                </div>
+                <CheckInDialog eventId={eventId} eventTitle={eventTitle} members={members} checkedInIds={checkedInIds} onDone={load} />
+            </div>
+            {checkins.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-6 text-center">No check-ins yet. Add the first attendee.</div>
+            ) : (
+                <div className="space-y-2">
+                    {checkins.map((c) => (
+                        <div key={c.id} className="flex items-center gap-3 p-3 bg-muted/40 rounded-xl" data-testid={`checkin-${c.id}`}>
+                            <div className={`w-10 h-10 rounded-full grid place-items-center text-white font-bold text-sm shrink-0 ${c.ticket_type === "vip" ? "bg-yellow-600" : c.ticket_type === "guest" ? "bg-slate-500" : "bg-primary"}`}>
+                                {(c.user_name || "?")[0]?.toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-medium truncate">{c.user_name}</div>
+                                <div className="text-xs text-muted-foreground">{format(parseISO(c.checked_in_at), "MMM d · h:mm a")} · by {c.checked_in_by_name}</div>
+                            </div>
+                            <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2.5 py-1 bg-card border">
+                                {c.ticket_type}
+                            </span>
+                            <button onClick={() => remove(c.id)} className="text-muted-foreground hover:text-destructive" data-testid={`remove-checkin-${c.id}`}>
+                                <Trash2 className="h-4 w-4" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </section>
+    );
+}
+
+function CheckInDialog({ eventId, eventTitle, members, checkedInIds, onDone }) {
+    const [open, setOpen] = useState(false);
+    const [mode, setMode] = useState("member");
+    const [userId, setUserId] = useState("");
+    const [guestName, setGuestName] = useState("");
+    const [ticketType, setTicketType] = useState("general");
+    const [search, setSearch] = useState("");
+
+    async function submit() {
+        try {
+            const payload = { ticket_type: ticketType };
+            if (mode === "member") {
+                if (!userId) { toast.error("Pick a member"); return; }
+                payload.user_id = userId;
+            } else {
+                if (!guestName.trim()) { toast.error("Enter a guest name"); return; }
+                payload.guest_name = guestName.trim();
+            }
+            await api.post(`/events/${eventId}/check-in`, payload);
+            toast.success("Checked in ✅");
+            setUserId(""); setGuestName(""); setSearch(""); setTicketType("general"); setMode("member");
+            setOpen(false);
+            onDone();
+        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    }
+
+    const filtered = members.filter((m) => {
+        if (checkedInIds.has(m.id)) return false;
+        if (!search) return true;
+        const q = search.toLowerCase();
+        return m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q) || m.line_name?.toLowerCase().includes(q);
+    }).slice(0, 30);
+
+    return (
+        <>
+            <Button onClick={() => setOpen(true)} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="add-checkin-btn">
+                <UserCheck className="h-4 w-4 mr-1.5" /> Check in
+            </Button>
+            <Dialog open={open} onOpenChange={setOpen}>
+                <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+                    <DialogHeader><DialogTitle className="font-heading text-2xl">Check in to "{eventTitle}"</DialogTitle></DialogHeader>
+                    <div className="space-y-4 mt-2">
+                        <div className="flex gap-2">
+                            <button onClick={() => setMode("member")} className={`flex-1 rounded-full py-2 text-sm font-semibold ${mode === "member" ? "bg-primary text-white shadow-warm" : "bg-muted"}`} data-testid="checkin-mode-member">Member</button>
+                            <button onClick={() => setMode("guest")} className={`flex-1 rounded-full py-2 text-sm font-semibold ${mode === "guest" ? "bg-primary text-white shadow-warm" : "bg-muted"}`} data-testid="checkin-mode-guest">Guest</button>
+                        </div>
+                        {mode === "member" ? (
+                            <div>
+                                <Input placeholder="Search by name or email…" value={search} onChange={(e) => setSearch(e.target.value)} className="rounded-xl" data-testid="checkin-search" />
+                                <div className="max-h-56 overflow-y-auto mt-2 border border-border rounded-xl">
+                                    {filtered.length === 0 ? (
+                                        <div className="p-4 text-sm text-muted-foreground text-center">No matching members (already checked in are hidden).</div>
+                                    ) : filtered.map((m) => (
+                                        <button
+                                            key={m.id}
+                                            onClick={() => setUserId(m.id)}
+                                            className={`w-full text-left px-3 py-2 hover:bg-muted/60 border-b last:border-0 ${userId === m.id ? "bg-primary/10" : ""}`}
+                                            data-testid={`checkin-pick-${m.id}`}
+                                        >
+                                            <div className="text-sm font-medium">{m.name}</div>
+                                            <div className="text-xs text-muted-foreground">{m.email}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <div>
+                                <Label>Guest name</Label>
+                                <Input value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="John Doe" className="rounded-xl mt-1.5" data-testid="checkin-guest-name" />
+                            </div>
+                        )}
+                        <div>
+                            <Label>Ticket type</Label>
+                            <Select value={ticketType} onValueChange={setTicketType}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="checkin-ticket-type"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="general">General admission</SelectItem>
+                                    <SelectItem value="vip">VIP</SelectItem>
+                                    <SelectItem value="guest">Guest</SelectItem>
+                                    <SelectItem value="speaker">Speaker</SelectItem>
+                                    <SelectItem value="volunteer">Volunteer</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                    <DialogFooter className="mt-4"><Button onClick={submit} className="rounded-full bg-primary hover:bg-primary/90" data-testid="checkin-confirm-btn">Check in</Button></DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </>
     );
 }

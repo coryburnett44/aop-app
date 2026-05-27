@@ -15,6 +15,7 @@ import {
     Calendar, MapPin, Trophy, Clock, Medal, Star, Heart, GraduationCap, Sparkles,
     Award as AwardIcon, Building2, Lock, DollarSign, Activity, Phone, AtSign
 } from "lucide-react";
+import PayPalCheckout from "../components/PayPalCheckout";
 
 const ICON_MAP = { medal: Medal, star: Star, heart: Heart, "graduation-cap": GraduationCap, sparkles: Sparkles, trophy: Trophy, award: AwardIcon };
 
@@ -155,6 +156,18 @@ export default function Profile() {
                     <Button onClick={renew} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="renew-btn">
                         Renew for 1 year
                     </Button>
+                </div>
+                <div className="mt-4 pt-4 border-t border-border/40">
+                    <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Pay dues with PayPal</div>
+                    <PayPalCheckout
+                        purpose="dues"
+                        amount={60}
+                        note="Annual dues"
+                        onComplete={async () => {
+                            const { data } = await api.get("/auth/me").catch(() => ({ data: null }));
+                            if (data) setUser(data);
+                        }}
+                    />
                 </div>
             </div>
 

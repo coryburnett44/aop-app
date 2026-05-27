@@ -14,12 +14,16 @@ import { Sparkles, Menu } from "lucide-react";
 import { useState } from "react";
 
 const LINKS = [
+    { to: "/calendar", label: "Calendar" },
     { to: "/events", label: "Events" },
     { to: "/directory", label: "Members" },
     { to: "/chapters", label: "Chapters" },
     { to: "/photos", label: "Photos" },
     { to: "/documents", label: "AOP Forms" },
     { to: "/awards", label: "Awards" },
+    { to: "/gear", label: "Gear" },
+    { to: "/donations", label: "Donate" },
+    { to: "/omega", label: "Omega" },
     { to: "/news", label: "News" },
 ];
 
