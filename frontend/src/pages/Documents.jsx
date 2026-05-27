@@ -43,8 +43,8 @@ export default function Documents() {
         <div className="max-w-6xl mx-auto px-6 lg:px-10 py-12">
             <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
                 <div>
-                    <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">Documents</h1>
-                    <p className="text-muted-foreground mt-2">Bylaws, minutes, forms, resources — all in one place.</p>
+                    <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">AOP Forms</h1>
+                    <p className="text-muted-foreground mt-2">Bylaws, minutes, forms, and chapter resources — all in one place.</p>
                 </div>
                 {user && <UploadDocDialog onDone={load} />}
             </div>
@@ -74,8 +74,8 @@ export default function Documents() {
             {docs.length === 0 ? (
                 <div className="bg-muted/30 border-2 border-dashed border-border rounded-3xl p-16 text-center">
                     <FileText className="h-12 w-12 mx-auto text-muted-foreground/50" />
-                    <p className="mt-4 font-heading text-xl">No documents yet</p>
-                    <p className="text-sm text-muted-foreground">Upload the bylaws, meeting notes, and resources.</p>
+                    <p className="mt-4 font-heading text-xl">No AOP forms yet</p>
+                    <p className="text-sm text-muted-foreground">Upload the bylaws, meeting notes, and chapter resources.</p>
                 </div>
             ) : (
                 <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-warm">
@@ -190,11 +190,11 @@ function UploadDocDialog({ onDone }) {
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
                 <Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="upload-doc-btn">
-                    <Upload className="h-4 w-4 mr-1.5" /> Upload document
+                    <Upload className="h-4 w-4 mr-1.5" /> Upload form
                 </Button>
             </DialogTrigger>
             <DialogContent className="max-w-md">
-                <DialogHeader><DialogTitle className="font-heading text-2xl">Upload document</DialogTitle></DialogHeader>
+                <DialogHeader><DialogTitle className="font-heading text-2xl">Upload AOP form</DialogTitle></DialogHeader>
                 <div className="space-y-4 mt-2">
                     <div
                         onClick={() => inputRef.current?.click()}

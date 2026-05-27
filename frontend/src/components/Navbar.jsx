@@ -18,7 +18,7 @@ const LINKS = [
     { to: "/directory", label: "Members" },
     { to: "/chapters", label: "Chapters" },
     { to: "/photos", label: "Photos" },
-    { to: "/documents", label: "Docs" },
+    { to: "/documents", label: "AOP Forms" },
     { to: "/awards", label: "Awards" },
     { to: "/news", label: "News" },
 ];

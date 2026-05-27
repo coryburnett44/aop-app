@@ -24,8 +24,8 @@ export default function Profile() {
     const [tab, setTab] = useState(params.get("tab") || "profile");
     const [form, setForm] = useState({
         first_name: "", middle_name: "", last_name: "", line_name: "",
-        username: "", phone: "", bio: "", city: "", interests: "", avatar_url: "",
-        chapter_id: "",
+        username: "", phone: "", bio: "", city: "", address: "", birthdate: "",
+        interests: "", avatar_url: "", chapter_id: "",
     });
     const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
     const [chapters, setChapters] = useState([]);
@@ -48,6 +48,8 @@ export default function Profile() {
                 phone: user.phone || "",
                 bio: user.bio || "",
                 city: user.city || "",
+                address: user.address || "",
+                birthdate: user.birthdate ? user.birthdate.slice(0, 10) : "",
                 interests: (user.interests || []).join(", "),
                 avatar_url: user.avatar_url || "",
                 chapter_id: user.chapter_id || "",
@@ -68,7 +70,7 @@ export default function Profile() {
             const payload = {
                 first_name: form.first_name, middle_name: form.middle_name, last_name: form.last_name,
                 line_name: form.line_name, username: form.username, phone: form.phone,
-                bio: form.bio, city: form.city,
+                bio: form.bio, city: form.city, address: form.address, birthdate: form.birthdate,
                 interests: form.interests.split(",").map((s) => s.trim()).filter(Boolean),
                 avatar_url: form.avatar_url,
             };
@@ -191,12 +193,16 @@ export default function Profile() {
                             <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-phone" /></div>
                             <div><Label>City</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-city" /></div>
                         </div>
+                        <div className="grid sm:grid-cols-2 gap-4">
+                            <div><Label>Street address</Label><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-address" placeholder="123 Main St, Apt 4B" /></div>
+                            <div><Label>Birthdate</Label><Input type="date" value={form.birthdate} onChange={(e) => setForm({ ...form, birthdate: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-birthdate" /></div>
+                        </div>
                         <div>
                             <Label>Chapter</Label>
                             <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
                                 <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-chapter"><SelectValue placeholder="Select your chapter" /></SelectTrigger>
                                 <SelectContent>
-                                    {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name} {c.school && `— ${c.school}`}</SelectItem>)}
+                                    {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
                                 </SelectContent>
                             </Select>
                         </div>

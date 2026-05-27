@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { GraduationCap, MapPin, Users as UsersIcon } from "lucide-react";
+import { MapPin, Compass, Users as UsersIcon } from "lucide-react";
 
 export default function Chapters() {
     const [chapters, setChapters] = useState([]);
@@ -9,7 +9,7 @@ export default function Chapters() {
     return (
         <div className="max-w-6xl mx-auto px-6 lg:px-10 py-12">
             <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">Chapters</h1>
-            <p className="text-muted-foreground mt-2">Our houses, schools, and regional communities.</p>
+            <p className="text-muted-foreground mt-2">Our regions, states, and chapter communities.</p>
 
             <div className="mt-10 grid md:grid-cols-2 gap-5">
                 {chapters.map((c) => (
@@ -24,8 +24,8 @@ export default function Chapters() {
                             </div>
                         </div>
                         <div className="mt-4 space-y-1 text-sm text-muted-foreground">
-                            {c.school && <div className="flex items-center gap-2"><GraduationCap className="h-4 w-4" /> {c.school}</div>}
-                            {c.city && <div className="flex items-center gap-2"><MapPin className="h-4 w-4" /> {c.city}</div>}
+                            {c.region && <div className="flex items-center gap-2"><Compass className="h-4 w-4" /> {c.region} region</div>}
+                            {c.state && <div className="flex items-center gap-2"><MapPin className="h-4 w-4" /> {c.state}</div>}
                             <div className="flex items-center gap-2"><UsersIcon className="h-4 w-4" /> {c.member_count} member{c.member_count !== 1 ? "s" : ""}</div>
                         </div>
                         {c.description && <p className="text-sm mt-4 leading-relaxed">{c.description}</p>}

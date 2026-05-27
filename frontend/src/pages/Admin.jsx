@@ -399,6 +399,7 @@ function MembersAdmin() {
                             <th className="text-left px-4 py-3">Role</th>
                             <th className="text-left px-4 py-3">Chapter</th>
                             <th className="text-left px-4 py-3">Tier</th>
+                            <th className="text-left px-4 py-3">Status</th>
                             <th className="text-left px-4 py-3">Expires</th>
                             <th className="text-right px-4 py-3">Actions</th>
                         </tr>
@@ -435,12 +436,16 @@ function MembersAdmin() {
                                         </SelectContent>
                                     </Select>
                                 </td>
+                                <td className="px-4 py-3">
+                                    <StatusPill status={m.status} />
+                                </td>
                                 <td className="px-4 py-3 text-muted-foreground text-xs">
                                     {m.membership_expires_at ? format(parseISO(m.membership_expires_at), "MMM d, yyyy") : "—"}
                                     {m.within_grace && <span className="ml-2 text-[10px] bg-destructive/15 text-destructive rounded-full px-2 py-0.5">grace</span>}
                                 </td>
                                 <td className="px-4 py-3 text-right whitespace-nowrap">
-                                    <Button size="sm" variant="outline" className="rounded-full h-7 text-xs mr-1" onClick={() => extendMembership(m, 365)} data-testid={`extend-${m.id}`}>+1yr</Button>
+                                    <MemberCardDialog member={m} chapters={chapters} tiers={tiers} />
+                                    <Button size="sm" variant="outline" className="rounded-full h-7 text-xs mx-1" onClick={() => extendMembership(m, 365)} data-testid={`extend-${m.id}`}>+1yr</Button>
                                     <EditMemberDialog member={m} chapters={chapters} tiers={tiers} onSaved={load} />
                                     <Button size="sm" variant="outline" className="rounded-full h-7 text-xs ml-1" onClick={() => toggleRole(m)} data-testid={`toggle-role-${m.id}`}>
                                         {m.role === "admin" ? "Demote" : "Promote"}
@@ -462,8 +467,9 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({
         email: "", password: "", first_name: "", middle_name: "", last_name: "",
-        line_name: "", username: "", phone: "", city: "", role: "member",
-        chapter_id: "", tier_id: "",
+        line_name: "", username: "", phone: "", city: "", address: "", birthdate: "",
+        branch_of_service: "", role: "member",
+        chapter_id: "", tier_id: "", member_status: "active",
     });
     const [busy, setBusy] = useState(false);
     async function save() {
@@ -473,10 +479,11 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
             const payload = { ...form };
             if (!payload.chapter_id) delete payload.chapter_id;
             if (!payload.tier_id) delete payload.tier_id;
+            if (!payload.member_status) delete payload.member_status;
             await api.post("/admin/members", payload);
             toast.success("Member created");
             setOpen(false);
-            setForm({ email: "", password: "", first_name: "", middle_name: "", last_name: "", line_name: "", username: "", phone: "", city: "", role: "member", chapter_id: "", tier_id: "" });
+            setForm({ email: "", password: "", first_name: "", middle_name: "", last_name: "", line_name: "", username: "", phone: "", city: "", address: "", birthdate: "", branch_of_service: "", role: "member", chapter_id: "", tier_id: "", member_status: "active" });
             onSaved();
         } catch (e) { toast.error(e.response?.data?.detail || "Create failed"); }
         setBusy(false);
@@ -506,7 +513,26 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>Birthdate</Label><Input type="date" value={form.birthdate} onChange={(e) => setForm({ ...form, birthdate: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-birthdate" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Address</Label><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-address" /></div>
                         <div><Label>City</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Branch of service</Label><Input value={form.branch_of_service} onChange={(e) => setForm({ ...form, branch_of_service: e.target.value })} className="rounded-xl mt-1.5" placeholder="Army, Navy, Marines…" /></div>
+                        <div>
+                            <Label>Member status</Label>
+                            <Select value={form.member_status} onValueChange={(v) => setForm({ ...form, member_status: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="nm-status"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="active">Active</SelectItem>
+                                    <SelectItem value="inactive">Inactive</SelectItem>
+                                    <SelectItem value="grace">Grace period</SelectItem>
+                                    <SelectItem value="expired">Expired</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                         <div>
@@ -557,11 +583,15 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                 username: member.username || "",
                 phone: member.phone || "",
                 city: member.city || "",
+                address: member.address || "",
+                birthdate: member.birthdate ? member.birthdate.slice(0, 10) : "",
+                branch_of_service: member.branch_of_service || "",
                 bio: member.bio || "",
                 avatar_url: member.avatar_url || "",
                 chapter_id: member.chapter_id || "",
                 tier_id: member.tier_id || "",
                 role: member.role,
+                member_status: member.status_override || member.status || "active",
                 new_password: "",
             });
         }
@@ -602,8 +632,29 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                         <div><Label>Phone</Label><Input value={form.phone || ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Address</Label><Input value={form.address || ""} onChange={(e) => setForm({ ...form, address: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-address" /></div>
                         <div><Label>City</Label><Input value={form.city || ""} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div><Label>Birthdate</Label><Input type="date" value={form.birthdate || ""} onChange={(e) => setForm({ ...form, birthdate: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-birthdate" /></div>
+                        <div><Label>Branch of service</Label><Input value={form.branch_of_service || ""} onChange={(e) => setForm({ ...form, branch_of_service: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div>
+                            <Label>Member status</Label>
+                            <Select value={form.member_status || "active"} onValueChange={(v) => setForm({ ...form, member_status: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="em-status"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="active">Active</SelectItem>
+                                    <SelectItem value="inactive">Inactive</SelectItem>
+                                    <SelectItem value="grace">Grace period</SelectItem>
+                                    <SelectItem value="expired">Expired</SelectItem>
+                                    <SelectItem value="deceased">Deceased (Omega Chapter)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
                         <div><Label>Avatar URL</Label><Input value={form.avatar_url || ""} onChange={(e) => setForm({ ...form, avatar_url: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div></div>
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                         <div>
@@ -662,7 +713,11 @@ function ChaptersAdmin() {
                         <div className="flex items-start justify-between">
                             <div>
                                 <div className="font-heading font-semibold text-lg">{c.name}</div>
-                                <div className="text-sm text-muted-foreground">{c.school} · {c.city}</div>
+                                <div className="text-sm text-muted-foreground">
+                                    {c.region && <>{c.region} region</>}
+                                    {c.region && c.state ? " · " : ""}
+                                    {c.state}
+                                </div>
                                 <div className="text-xs text-muted-foreground mt-1">Founded {c.founded_year || "—"} · {c.member_count} members</div>
                             </div>
                             <div className="flex gap-1">
@@ -682,8 +737,8 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({
         name: chapter?.name || "",
-        school: chapter?.school || "",
-        city: chapter?.city || "",
+        region: chapter?.region || "",
+        state: chapter?.state || "",
         founded_year: chapter?.founded_year || "",
         description: chapter?.description || "",
     });
@@ -705,8 +760,8 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
                 <div className="space-y-3 mt-2">
                     <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-xl mt-1.5" data-testid="chapter-name-input" /></div>
                     <div className="grid grid-cols-2 gap-3">
-                        <div><Label>School</Label><Input value={form.school} onChange={(e) => setForm({ ...form, school: e.target.value })} className="rounded-xl mt-1.5" /></div>
-                        <div><Label>City</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>Region</Label><Input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} placeholder="e.g. East, West, South" className="rounded-xl mt-1.5" data-testid="chapter-region-input" /></div>
+                        <div><Label>State</Label><Input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} placeholder="e.g. TX, CA" className="rounded-xl mt-1.5" data-testid="chapter-state-input" /></div>
                     </div>
                     <div><Label>Founded year</Label><Input type="number" value={form.founded_year} onChange={(e) => setForm({ ...form, founded_year: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" /></div>
@@ -926,13 +981,16 @@ function GrantAwardDialog({ award, members, onSaved }) {
     const [open, setOpen] = useState(false);
     const [userId, setUserId] = useState("");
     const [reason, setReason] = useState("");
+    const [grantedAt, setGrantedAt] = useState("");
     async function grant() {
         if (!userId) { toast.error("Pick a member"); return; }
         try {
-            await api.post(`/awards/${award.id}/grant`, { user_id: userId, reason });
+            const payload = { user_id: userId, reason };
+            if (grantedAt) payload.granted_at = new Date(grantedAt).toISOString();
+            await api.post(`/awards/${award.id}/grant`, payload);
             toast.success(`${award.name} granted`);
             setOpen(false);
-            setUserId(""); setReason("");
+            setUserId(""); setReason(""); setGrantedAt("");
             onSaved();
         } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
     }
@@ -953,6 +1011,10 @@ function GrantAwardDialog({ award, members, onSaved }) {
                             </SelectContent>
                         </Select>
                     </div>
+                    <div>
+                        <Label>Date granted <span className="text-xs text-muted-foreground font-normal">(defaults to today)</span></Label>
+                        <Input type="date" value={grantedAt} onChange={(e) => setGrantedAt(e.target.value)} className="rounded-xl mt-1.5" data-testid="grant-date-input" />
+                    </div>
                     <div><Label>Reason (optional)</Label><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="rounded-xl mt-1.5" /></div>
                 </div>
                 <DialogFooter><Button onClick={grant} className="rounded-full bg-primary hover:bg-primary/90" data-testid="grant-confirm-btn">Grant award</Button></DialogFooter>
@@ -960,3 +1022,84 @@ function GrantAwardDialog({ award, members, onSaved }) {
         </Dialog>
     );
 }
+
+/* -------- Member Card (clickable view) -------- */
+function StatusPill({ status }) {
+    const map = {
+        active: "bg-green-500/15 text-green-700",
+        inactive: "bg-slate-500/15 text-slate-600",
+        grace: "bg-amber-500/20 text-amber-700",
+        expired: "bg-destructive/15 text-destructive",
+        deceased: "bg-black/10 text-black",
+    };
+    return (
+        <span className={`text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 ${map[status] || "bg-muted"}`}>
+            {status === "deceased" ? "Omega ✦" : status}
+        </span>
+    );
+}
+
+function MemberCardDialog({ member, chapters, tiers, trigger }) {
+    const [open, setOpen] = useState(false);
+    const [details, setDetails] = useState(member);
+    useEffect(() => {
+        if (open) {
+            api.get(`/members/${member.id}`).then(({ data }) => setDetails(data)).catch(() => {});
+        }
+    }, [open, member.id]);
+    const chapter = chapters?.find((c) => c.id === details.chapter_id);
+    const tier = tiers?.find((t) => t.id === details.tier_id);
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                {trigger || <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" data-testid={`view-member-${member.id}`}>View</Button>}
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">Member card</DialogTitle></DialogHeader>
+                <div className="flex items-center gap-4 mt-1">
+                    <div className="w-16 h-16 rounded-full bg-primary/15 text-primary grid place-items-center font-heading font-black text-2xl">
+                        {(details.name || details.email)[0]?.toUpperCase()}
+                    </div>
+                    <div className="flex-1">
+                        <div className="font-heading text-xl font-bold">{details.name}</div>
+                        {details.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary">"{details.line_name}"</div>}
+                        <div className="mt-1 flex flex-wrap gap-2 items-center">
+                            <StatusPill status={details.status} />
+                            {details.role === "admin" && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/15 text-primary">Admin</span>}
+                            {tier && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-accent/40">{tier.name}</span>}
+                        </div>
+                    </div>
+                </div>
+                <div className="mt-4 space-y-2 text-sm" data-testid={`member-card-${member.id}-details`}>
+                    <DetailRow label="Email" value={details.email} />
+                    {details.username && <DetailRow label="Username" value={`@${details.username}`} />}
+                    <DetailRow label="Phone" value={details.phone} />
+                    <DetailRow label="Address" value={[details.address, details.city].filter(Boolean).join(", ")} />
+                    <DetailRow label="Birthdate" value={details.birthdate ? format(parseISO(details.birthdate.length === 10 ? `${details.birthdate}T00:00:00` : details.birthdate), "MMM d, yyyy") : ""} />
+                    <DetailRow label="Branch of service" value={details.branch_of_service} />
+                    <DetailRow label="Chapter" value={chapter?.name} />
+                    <DetailRow label="Joined" value={details.created_at ? format(parseISO(details.created_at), "MMM d, yyyy") : ""} />
+                    <DetailRow label="Membership expires" value={details.membership_expires_at ? format(parseISO(details.membership_expires_at), "MMM d, yyyy") : ""} />
+                    {details.bio && (
+                        <div className="pt-2 border-t">
+                            <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-1">Bio</div>
+                            <p className="text-sm leading-relaxed">{details.bio}</p>
+                        </div>
+                    )}
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function DetailRow({ label, value }) {
+    if (!value) return null;
+    return (
+        <div className="flex items-start gap-3">
+            <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground w-32 shrink-0 pt-0.5">{label}</div>
+            <div className="text-sm flex-1 break-words">{value}</div>
+        </div>
+    );
+}
+
+export { MemberCardDialog, StatusPill };

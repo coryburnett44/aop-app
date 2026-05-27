@@ -8,7 +8,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Clock, Plus, Check, X, Calendar } from "lucide-react";
+import { Clock, Plus, Check, X, Calendar, Building2, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 
@@ -45,23 +45,41 @@ export default function Hours() {
 
 function LogHoursDialog() {
     const [open, setOpen] = useState(false);
-    const [hours, setHours] = useState("");
-    const [description, setDescription] = useState("");
-    const [date, setDate] = useState("");
+    const [form, setForm] = useState({
+        hours: "",
+        date: "",
+        event_type: "aop_related",
+        agency_name: "",
+        activity: "",
+        host_name: "",
+        host_email: "",
+        host_phone: "",
+    });
     const [busy, setBusy] = useState(false);
 
+    function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+
     async function save() {
-        if (!hours || !description || !date) { toast.error("Fill all fields"); return; }
+        if (!form.hours || !form.date || !form.activity.trim()) {
+            toast.error("Hours, date, and activity description are required");
+            return;
+        }
         setBusy(true);
         try {
             await api.post("/hours", {
-                hours: Number(hours),
-                description,
-                date: new Date(date).toISOString(),
+                hours: Number(form.hours),
+                date: new Date(form.date).toISOString(),
+                event_type: form.event_type,
+                agency_name: form.agency_name,
+                activity: form.activity,
+                description: form.activity,
+                host_name: form.host_name,
+                host_email: form.host_email,
+                host_phone: form.host_phone,
             });
             toast.success("Hours logged — pending admin review");
             setOpen(false);
-            setHours(""); setDescription(""); setDate("");
+            setForm({ hours: "", date: "", event_type: "aop_related", agency_name: "", activity: "", host_name: "", host_email: "", host_phone: "" });
             window.dispatchEvent(new Event("hours-logged"));
         } catch (e) {
             toast.error(e.response?.data?.detail || "Failed");
@@ -74,20 +92,46 @@ function LogHoursDialog() {
             <Button onClick={() => setOpen(true)} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="log-hours-btn">
                 <Plus className="h-4 w-4 mr-1.5" /> Log hours
             </Button>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">Log volunteer hours</DialogTitle></DialogHeader>
                 <div className="space-y-4 mt-2">
-                    <div>
-                        <Label>Hours</Label>
-                        <Input type="number" step="0.25" value={hours} onChange={(e) => setHours(e.target.value)} placeholder="e.g. 2.5" className="rounded-xl mt-1.5" data-testid="hours-amount-input" />
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <Label>Hours *</Label>
+                            <Input type="number" step="0.25" value={form.hours} onChange={(e) => set("hours", e.target.value)} placeholder="e.g. 2.5" className="rounded-xl mt-1.5" data-testid="hours-amount-input" />
+                        </div>
+                        <div>
+                            <Label>Date *</Label>
+                            <Input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="rounded-xl mt-1.5" data-testid="hours-date-input" />
+                        </div>
                     </div>
                     <div>
-                        <Label>Date</Label>
-                        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-xl mt-1.5" data-testid="hours-date-input" />
+                        <Label>Event type *</Label>
+                        <Select value={form.event_type} onValueChange={(v) => set("event_type", v)}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="hours-event-type">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="aop_related">AOP-related event</SelectItem>
+                                <SelectItem value="other">Other organization / personal</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
                     <div>
-                        <Label>What did you do?</Label>
-                        <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-desc-input" />
+                        <Label>Agency / Organization name</Label>
+                        <Input value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" />
+                    </div>
+                    <div>
+                        <Label>What did you do? *</Label>
+                        <Textarea rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" />
+                    </div>
+                    <div className="border-t pt-3">
+                        <Label className="text-xs uppercase tracking-wider text-muted-foreground">Host / Point of contact (optional)</Label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1.5">
+                            <Input value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder="Host name" className="rounded-xl" data-testid="hours-host-name-input" />
+                            <Input value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder="Host email" className="rounded-xl" data-testid="hours-host-email-input" />
+                            <Input value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder="Host phone" className="rounded-xl" data-testid="hours-host-phone-input" />
+                        </div>
                     </div>
                     <Button onClick={save} disabled={busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-submit-btn">
                         {busy ? "Saving…" : "Submit for approval"}
@@ -128,24 +172,33 @@ function MyHours() {
                 </div>
             ) : (
                 <div className="space-y-3">
-                    {entries.map((h) => (
-                        <div key={h.id} className="bg-card rounded-2xl border border-border p-5 flex items-start gap-4" data-testid={`hours-${h.id}`}>
-                            <div className="w-12 h-12 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold">
-                                {h.hours}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="text-sm leading-relaxed">{h.description}</div>
-                                <div className="text-xs text-muted-foreground mt-2 flex items-center gap-3">
-                                    <span><Calendar className="h-3 w-3 inline mr-1" />{h.date && format(parseISO(h.date), "MMM d, yyyy")}</span>
-                                    {h.reviewed_by_name && <span>reviewed by {h.reviewed_by_name}</span>}
-                                </div>
-                                {h.note && <div className="text-xs italic text-muted-foreground mt-1">Note: {h.note}</div>}
-                            </div>
-                            <StatusBadge status={h.status} />
-                        </div>
-                    ))}
+                    {entries.map((h) => <HoursCard key={h.id} h={h} />)}
                 </div>
             )}
+        </div>
+    );
+}
+
+function HoursCard({ h, children }) {
+    return (
+        <div className="bg-card rounded-2xl border border-border p-5 flex items-start gap-4" data-testid={`hours-${h.id}`}>
+            <div className="w-12 h-12 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold shrink-0">
+                {h.hours}
+            </div>
+            <div className="flex-1 min-w-0">
+                {h.user_name && <div className="text-sm font-semibold">{h.user_name}</div>}
+                <div className="text-sm leading-relaxed">{h.activity || h.description}</div>
+                <div className="text-xs text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span><Calendar className="h-3 w-3 inline mr-1" />{h.date && format(parseISO(h.date), "MMM d, yyyy")}</span>
+                    <span className={`uppercase tracking-wider font-semibold rounded-full px-2 py-0.5 ${h.event_type === "aop_related" ? "bg-primary/15 text-primary" : "bg-muted"}`}>
+                        {h.event_type === "aop_related" ? "AOP event" : "Other"}
+                    </span>
+                    {h.agency_name && <span className="inline-flex items-center gap-1"><Building2 className="h-3 w-3" />{h.agency_name}</span>}
+                    {h.host_name && <span className="inline-flex items-center gap-1"><UserIcon className="h-3 w-3" />Host: {h.host_name}</span>}
+                </div>
+                {h.note && <div className="text-xs italic text-muted-foreground mt-1">Note: {h.note}</div>}
+            </div>
+            {children || <StatusBadge status={h.status} />}
         </div>
     );
 }
@@ -169,7 +222,7 @@ function ReviewQueue() {
 
     return (
         <div>
-            <div className="flex gap-2 mb-4">
+            <div className="flex gap-2 mb-4 flex-wrap">
                 {["pending", "approved", "rejected", "all"].map((s) => (
                     <button
                         key={s}
@@ -187,19 +240,9 @@ function ReviewQueue() {
             ) : (
                 <div className="space-y-3">
                     {entries.map((h) => (
-                        <div key={h.id} className="bg-card rounded-2xl border border-border p-5 flex items-start gap-4" data-testid={`review-hours-${h.id}`}>
-                            <div className="w-12 h-12 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold">
-                                {h.hours}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="text-sm font-medium">{h.user_name}</div>
-                                <div className="text-sm leading-relaxed text-muted-foreground">{h.description}</div>
-                                <div className="text-xs text-muted-foreground mt-2">
-                                    {h.date && format(parseISO(h.date), "MMM d, yyyy")}
-                                </div>
-                            </div>
+                        <HoursCard key={h.id} h={h}>
                             {h.status === "pending" ? (
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 shrink-0">
                                     <Button size="sm" onClick={() => review(h.id, "approved")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`approve-${h.id}`}>
                                         <Check className="h-4 w-4 mr-1" /> Approve
                                     </Button>
@@ -210,7 +253,7 @@ function ReviewQueue() {
                             ) : (
                                 <StatusBadge status={h.status} />
                             )}
-                        </div>
+                        </HoursCard>
                     ))}
                 </div>
             )}
@@ -234,7 +277,7 @@ function StatusBadge({ status }) {
         rejected: "bg-destructive/15 text-destructive",
     };
     return (
-        <span className={`text-xs uppercase tracking-wider font-semibold rounded-full px-3 py-1 ${map[status] || "bg-muted"}`}>
+        <span className={`text-xs uppercase tracking-wider font-semibold rounded-full px-3 py-1 shrink-0 ${map[status] || "bg-muted"}`}>
             {status}
         </span>
     );

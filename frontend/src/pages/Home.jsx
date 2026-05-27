@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
-import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogIn } from "lucide-react";
-import { format } from "date-fns";
+import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogIn, Cake, UserPlus } from "lucide-react";
+import { format, parseISO } from "date-fns";
 import Countdown from "../components/Countdown";
 
 const HERO_BANNER = "https://images.clubexpress.com/211315/photos/original/Sheron_Tana_Banner_743849018.jpg";
@@ -17,11 +17,17 @@ export default function Home() {
     const { user } = useAuth();
     const [events, setEvents] = useState([]);
     const [news, setNews] = useState([]);
+    const [newMembers, setNewMembers] = useState([]);
+    const [birthdays, setBirthdays] = useState([]);
 
     useEffect(() => {
         api.get("/events?upcoming=true").then(({ data }) => setEvents(data.slice(0, 3))).catch(() => {});
         api.get("/news").then(({ data }) => setNews(data.slice(0, 2))).catch(() => {});
-    }, []);
+        if (user) {
+            api.get("/members-new?days=30&limit=6").then(({ data }) => setNewMembers(data)).catch(() => {});
+            api.get("/members-birthdays?days=30&limit=8").then(({ data }) => setBirthdays(data)).catch(() => {});
+        }
+    }, [user]);
 
     return (
         <div className="bg-white text-[#0A2463]" data-testid="home-aop">
@@ -129,6 +135,104 @@ export default function Home() {
                     </div>
                 </div>
             </section>
+
+            {/* Family pulse: New Members + Birthdays */}
+            {user && (newMembers.length > 0 || birthdays.length > 0) && (
+                <section className="bg-slate-50 border-b" style={{ borderColor: `${NAVY}20` }}>
+                    <div className="max-w-7xl mx-auto px-6 lg:px-10 py-12 sm:py-16">
+                        <div className="text-center mb-10">
+                            <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>The family</div>
+                            <h2 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight" style={{ color: NAVY }}>
+                                Who joined, who's celebrating
+                            </h2>
+                        </div>
+                        <div className="grid lg:grid-cols-2 gap-6">
+                            {/* New Members */}
+                            <div className="bg-white rounded-3xl p-6 sm:p-7 border-2 shadow-warm" style={{ borderColor: `${NAVY}15` }} data-testid="home-new-members">
+                                <div className="flex items-center gap-3 mb-5">
+                                    <div className="w-10 h-10 rounded-2xl grid place-items-center text-white shadow-warm" style={{ backgroundColor: NAVY }}>
+                                        <UserPlus className="h-5 w-5" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-heading font-black text-lg" style={{ color: NAVY }}>New members</h3>
+                                        <div className="text-xs text-slate-500">Last 30 days</div>
+                                    </div>
+                                </div>
+                                {newMembers.length === 0 ? (
+                                    <div className="text-sm text-slate-500 py-6 text-center">No new members in the last 30 days.</div>
+                                ) : (
+                                    <ul className="divide-y divide-slate-100">
+                                        {newMembers.map((m) => {
+                                            const initials = (m.name || m.email).split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+                                            return (
+                                                <li key={m.id} className="py-3 flex items-center gap-3" data-testid={`new-member-${m.id}`}>
+                                                    <div className="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style={{ backgroundColor: NAVY }}>
+                                                        {m.avatar_url ? <img src={m.avatar_url} alt="" className="w-full h-full rounded-full object-cover" /> : initials}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="font-semibold text-sm truncate" style={{ color: NAVY }}>{m.name}</div>
+                                                        <div className="text-xs text-slate-500 truncate">
+                                                            {m.line_name && <span className="font-bold mr-2" style={{ color: RED }}>"{m.line_name}"</span>}
+                                                            {m.city || "—"}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
+                                                        {m.created_at && format(parseISO(m.created_at), "MMM d")}
+                                                    </div>
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )}
+                            </div>
+
+                            {/* Birthdays */}
+                            <div className="bg-white rounded-3xl p-6 sm:p-7 border-2 shadow-warm" style={{ borderColor: `${RED}25` }} data-testid="home-birthdays">
+                                <div className="flex items-center gap-3 mb-5">
+                                    <div className="w-10 h-10 rounded-2xl grid place-items-center text-white shadow-warm" style={{ backgroundColor: RED }}>
+                                        <Cake className="h-5 w-5" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-heading font-black text-lg" style={{ color: NAVY }}>Upcoming birthdays</h3>
+                                        <div className="text-xs text-slate-500">Next 30 days</div>
+                                    </div>
+                                </div>
+                                {birthdays.length === 0 ? (
+                                    <div className="text-sm text-slate-500 py-6 text-center">No birthdays in the next 30 days.</div>
+                                ) : (
+                                    <ul className="divide-y divide-slate-100">
+                                        {birthdays.map((m) => {
+                                            const initials = (m.name || m.email).split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+                                            return (
+                                                <li key={m.id} className="py-3 flex items-center gap-3" data-testid={`birthday-${m.id}`}>
+                                                    <div className="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style={{ backgroundColor: RED }}>
+                                                        {m.avatar_url ? <img src={m.avatar_url} alt="" className="w-full h-full rounded-full object-cover" /> : initials}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="font-semibold text-sm truncate" style={{ color: NAVY }}>{m.name}</div>
+                                                        <div className="text-xs text-slate-500 truncate">
+                                                            {m.line_name && <span className="font-bold mr-2" style={{ color: RED }}>"{m.line_name}"</span>}
+                                                            Turning {m.age_turning}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
+                                                            {format(parseISO(m.next_birthday), "MMM d")}
+                                                        </div>
+                                                        <div className="text-[10px] font-semibold" style={{ color: RED }}>
+                                                            {m.days_until_birthday === 0 ? "Today!" : `in ${m.days_until_birthday}d`}
+                                                        </div>
+                                                    </div>
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
 
             {/* Secondary banner photo */}
             <section className="max-w-7xl mx-auto px-6 lg:px-10 py-14">

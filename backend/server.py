@@ -274,7 +274,7 @@ class ChapterUpdateIn(BaseModel):
 
 class HoursLogIn(BaseModel):
     hours: float = Field(gt=0, le=1000)
-    activity: str = Field(min_length=2)
+    activity: str = ""
     date: datetime
     event_type: Literal["aop_related", "other"] = "other"
     agency_name: str = ""
@@ -305,9 +305,13 @@ class AdminCreateMemberIn(BaseModel):
     username: str = ""
     phone: str = ""
     city: str = ""
+    address: str = ""
+    birthdate: str = ""
+    branch_of_service: str = ""
     role: Literal["member", "admin"] = "member"
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
+    member_status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
 
 class AdminUpdateMemberIn(BaseModel):
     email: Optional[EmailStr] = None
@@ -320,12 +324,17 @@ class AdminUpdateMemberIn(BaseModel):
     bio: Optional[str] = None
     city: Optional[str] = None
     phone: Optional[str] = None
+    address: Optional[str] = None
+    birthdate: Optional[str] = None
+    branch_of_service: Optional[str] = None
     interests: Optional[List[str]] = None
     avatar_url: Optional[str] = None
     role: Optional[Literal["member", "admin"]] = None
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
     membership_expires_at: Optional[datetime] = None
+    member_status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
+    deceased_at: Optional[str] = None
     new_password: Optional[str] = None
 
 class TransactionIn(BaseModel):
@@ -564,6 +573,69 @@ async def list_members(q: Optional[str] = None, city: Optional[str] = None):
 @api.get("/members/{member_id}")
 async def get_member(member_id: str):
     u = await db.users.find_one({"id": member_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return public_user(u)
+
+@api.get("/members-new")
+async def new_members(days: int = 30, limit: int = 8):
+    """Members who joined in the last N days."""
+    cutoff = iso(now_utc() - timedelta(days=days))
+    cursor = db.users.find(
+        {"created_at": {"$gte": cutoff}},
+        {"_id": 0, "password_hash": 0},
+    ).sort("created_at", -1).limit(limit)
+    items = await cursor.to_list(limit)
+    return [public_user(u) for u in items]
+
+@api.get("/members-birthdays")
+async def upcoming_birthdays(days: int = 30, limit: int = 25):
+    """Members with birthdays in the next N days (ignoring year)."""
+    today = now_utc().date()
+    out = []
+    cursor = db.users.find(
+        {"birthdate": {"$nin": [None, ""]}},
+        {"_id": 0, "password_hash": 0},
+    )
+    async for u in cursor:
+        bd_str = u.get("birthdate") or ""
+        try:
+            # Accept YYYY-MM-DD or full ISO
+            bd = datetime.fromisoformat(bd_str.replace("Z", "+00:00")).date() if "T" in bd_str else datetime.strptime(bd_str[:10], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        # Compute next anniversary on/after today
+        try:
+            this_year = bd.replace(year=today.year)
+        except ValueError:  # Feb 29
+            this_year = bd.replace(year=today.year, day=28)
+        next_bd = this_year if this_year >= today else (
+            bd.replace(year=today.year + 1) if bd.month != 2 or bd.day != 29 else bd.replace(year=today.year + 1, day=28)
+        )
+        delta = (next_bd - today).days
+        if 0 <= delta <= days:
+            entry = public_user(u)
+            entry["next_birthday"] = next_bd.isoformat()
+            entry["days_until_birthday"] = delta
+            entry["age_turning"] = next_bd.year - bd.year
+            out.append(entry)
+    out.sort(key=lambda x: x["days_until_birthday"])
+    return out[:limit]
+
+@api.put("/members/{user_id}/status")
+async def set_member_status(user_id: str, body: StatusOverrideIn, _: dict = Depends(require_admin)):
+    updates: dict = {}
+    if body.status is not None:
+        updates["status_override"] = body.status
+    if body.deceased_at is not None:
+        updates["deceased_at"] = body.deceased_at
+    elif body.status == "deceased":
+        updates["deceased_at"] = iso(now_utc())
+    elif body.status and body.status != "deceased":
+        updates["deceased_at"] = None
+    if updates:
+        await db.users.update_one({"id": user_id}, {"$set": updates})
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not u:
         raise HTTPException(status_code=404, detail="Member not found")
     return public_user(u)
@@ -875,6 +947,8 @@ def chapter_out(c: dict) -> dict:
         "name": c["name"],
         "school": c.get("school", ""),
         "city": c.get("city", ""),
+        "state": c.get("state", ""),
+        "region": c.get("region", ""),
         "founded_year": c.get("founded_year"),
         "description": c.get("description", ""),
         "member_count": c.get("member_count", 0),
@@ -984,6 +1058,9 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(requi
         "last_name": body.last_name,
         "line_name": body.line_name,
         "phone": body.phone,
+        "address": body.address,
+        "birthdate": body.birthdate,
+        "branch_of_service": body.branch_of_service,
         "role": body.role,
         "bio": "",
         "city": body.city,
@@ -992,6 +1069,7 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(requi
         "membership_tier": "standard",
         "tier_id": body.tier_id,
         "chapter_id": body.chapter_id,
+        "status_override": body.member_status,
         "membership_expires_at": iso(created + timedelta(days=365)),
         "email_verified": True,
         "created_at": iso(created),
@@ -1008,7 +1086,14 @@ async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, _: dict =
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Member not found")
-    updates = {k: v for k, v in body.model_dump().items() if v is not None and k != "new_password"}
+    updates = {k: v for k, v in body.model_dump().items() if v is not None and k not in ("new_password", "member_status")}
+    # Status override (member_status maps to status_override; "active" with no expiry issues means clear override)
+    if body.member_status is not None:
+        updates["status_override"] = body.member_status
+        if body.member_status == "deceased" and not (body.deceased_at or existing.get("deceased_at")):
+            updates["deceased_at"] = iso(now_utc())
+        if body.member_status != "deceased" and existing.get("deceased_at") and not body.deceased_at:
+            updates["deceased_at"] = None
     # username uniqueness
     if "username" in updates and updates["username"]:
         clash = await db.users.find_one({"username": updates["username"], "id": {"$ne": user_id}})
@@ -1161,7 +1246,7 @@ async def grant_award(award_id: str, body: AwardGrantIn, admin: dict = Depends(r
         "reason": body.reason,
         "granted_by": admin["id"],
         "granted_by_name": admin.get("name", "Admin"),
-        "granted_at": iso(now_utc()),
+        "granted_at": body.granted_at or iso(now_utc()),
     }
     await db.award_grants.insert_one(doc)
     out = dict(doc)
@@ -1192,7 +1277,13 @@ def hours_out(h: dict) -> dict:
         "user_id": h["user_id"],
         "user_name": h.get("user_name", ""),
         "hours": h["hours"],
-        "description": h.get("description", ""),
+        "description": h.get("description", "") or h.get("activity", ""),
+        "activity": h.get("activity", "") or h.get("description", ""),
+        "event_type": h.get("event_type", "other"),
+        "agency_name": h.get("agency_name", ""),
+        "host_name": h.get("host_name", ""),
+        "host_email": h.get("host_email", ""),
+        "host_phone": h.get("host_phone", ""),
         "date": h.get("date"),
         "event_id": h.get("event_id"),
         "status": h.get("status", "pending"),
@@ -1205,12 +1296,19 @@ def hours_out(h: dict) -> dict:
 
 @api.post("/hours")
 async def log_hours(body: HoursLogIn, user: dict = Depends(get_current_user)):
+    activity_text = body.activity or body.description or ""
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
         "user_name": user.get("name", ""),
         "hours": body.hours,
-        "description": body.description,
+        "description": activity_text,
+        "activity": activity_text,
+        "event_type": body.event_type,
+        "agency_name": body.agency_name,
+        "host_name": body.host_name,
+        "host_email": body.host_email,
+        "host_phone": body.host_phone,
         "date": iso(body.date),
         "event_id": body.event_id,
         "status": "pending",
