@@ -75,7 +75,7 @@ export default function Login() {
                     </Button>
                 </form>
                 <p className="mt-6 text-sm text-center text-muted-foreground">
-                    Membership is invitation-only. Contact your chapter admin if you need access.
+                    This is for Alpha Omega Phi members only. Once you complete Intake, you will be given access.
                 </p>
             </div>
         </div>

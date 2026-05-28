@@ -17,6 +17,7 @@ const LINKS = [
     { to: "/calendar", label: "Calendar" },
     { to: "/events", label: "Events" },
     { to: "/directory", label: "Members" },
+    { to: "/chat", label: "Chat" },
     { to: "/chapters", label: "Chapters" },
     { to: "/photos", label: "Photos" },
     { to: "/documents", label: "AOP Forms" },
@@ -66,13 +67,13 @@ export default function Navbar() {
                 </Link>
 
                 <nav className="hidden md:flex items-center gap-1">
-                    {LINKS.map((l) => (
+                    {user && LINKS.map((l) => (
                         <NavLink
                             key={l.to}
                             to={l.to}
                             data-testid={`nav-link-${l.label.toLowerCase()}`}
                             className={({ isActive }) =>
-                                `px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                                `px-3 py-2 rounded-full text-sm font-medium transition-colors ${
                                     isActive
                                         ? "bg-primary/10 text-primary"
                                         : "text-foreground/70 hover:text-foreground hover:bg-muted"
@@ -151,7 +152,7 @@ export default function Navbar() {
                         </Button>
                     )}
                     <button
-                        className="md:hidden rounded-full p-2 hover:bg-muted"
+                        className={`md:hidden rounded-full p-2 hover:bg-muted ${!user ? "hidden" : ""}`}
                         onClick={() => setOpen(!open)}
                         data-testid="mobile-menu-btn"
                         aria-label="Menu"
@@ -160,7 +161,7 @@ export default function Navbar() {
                     </button>
                 </div>
             </div>
-            {open && (
+            {open && user && (
                 <div className="md:hidden border-t border-border bg-background/95 backdrop-blur-xl" data-testid="mobile-menu">
                     <div className="px-6 py-3 flex flex-col gap-1">
                         {LINKS.map((l) => (

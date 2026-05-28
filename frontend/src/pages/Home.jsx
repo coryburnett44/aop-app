@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogIn, Cake, UserPlus } from "lucide-react";
@@ -14,20 +14,22 @@ const NAVY = "#0A2463";
 const RED = "#C8102E";
 
 export default function Home() {
-    const { user } = useAuth();
+    const { user, loading } = useAuth();
     const [events, setEvents] = useState([]);
     const [news, setNews] = useState([]);
     const [newMembers, setNewMembers] = useState([]);
     const [birthdays, setBirthdays] = useState([]);
 
     useEffect(() => {
+        if (!user) return;
         api.get("/events?upcoming=true").then(({ data }) => setEvents(data.slice(0, 3))).catch(() => {});
         api.get("/news").then(({ data }) => setNews(data.slice(0, 2))).catch(() => {});
-        if (user) {
-            api.get("/members-new?days=30&limit=6").then(({ data }) => setNewMembers(data)).catch(() => {});
-            api.get("/members-birthdays?days=30&limit=8").then(({ data }) => setBirthdays(data)).catch(() => {});
-        }
+        api.get("/members-new?days=30&limit=6").then(({ data }) => setNewMembers(data)).catch(() => {});
+        api.get("/members-birthdays?days=30&limit=8").then(({ data }) => setBirthdays(data)).catch(() => {});
     }, [user]);
+
+    if (loading) return null;
+    if (!user) return <Navigate to="/login" replace />;
 
     return (
         <div className="bg-white text-[#0A2463]" data-testid="home-aop">
@@ -40,40 +42,39 @@ export default function Home() {
                     <div className="flex-1" style={{ backgroundColor: NAVY }} />
                 </div>
 
-                <div className="relative h-[640px] sm:h-[680px] w-full">
-                    <img
-                        src={HERO_BANNER}
-                        alt="Alpha Omega Phi members"
-                        className="absolute inset-0 w-full h-full object-cover"
-                        onError={(e) => { e.currentTarget.style.display = "none"; }}
-                    />
-                    <div
-                        className="absolute inset-0"
-                        style={{
-                            background: `linear-gradient(180deg, rgba(10,36,99,0.55) 0%, rgba(10,36,99,0.35) 40%, rgba(10,36,99,0.85) 100%)`,
-                        }}
-                    />
+                <div className="relative w-full bg-slate-50">
+                    {/* Hero photo — full image visible (no crop) */}
+                    <div className="w-full" style={{ backgroundColor: NAVY }}>
+                        <img
+                            src={HERO_BANNER}
+                            alt="Alpha Omega Phi members"
+                            className="block w-full max-h-[640px] object-contain mx-auto"
+                            onError={(e) => { e.currentTarget.style.display = "none"; }}
+                            data-testid="hero-image"
+                        />
+                    </div>
 
-                    <div className="relative h-full max-w-7xl mx-auto px-6 lg:px-10 flex items-center">
-                        <div className="text-white animate-float-in max-w-3xl">
+                    {/* Headline below image so neither crops the other */}
+                    <div className="max-w-7xl mx-auto px-6 lg:px-10 py-12 sm:py-16 grid lg:grid-cols-[1fr_auto] gap-8 items-center">
+                        <div>
                             <div
-                                className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-[0.2em] mb-6 backdrop-blur-md"
-                                style={{ backgroundColor: "rgba(200,16,46,0.85)" }}
+                                className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-[0.2em] mb-5 text-white"
+                                style={{ backgroundColor: RED }}
                                 data-testid="hero-tag"
                             >
                                 <Star className="h-3.5 w-3.5 fill-current" /> Members Portal
                             </div>
-                            <h1 className="font-heading font-black text-4xl sm:text-5xl lg:text-7xl leading-[0.95] tracking-tighter">
+                            <h1 className="font-heading font-black text-4xl sm:text-5xl lg:text-6xl leading-[0.95] tracking-tighter" style={{ color: NAVY }}>
                                 Alpha Omega Phi
-                                <span className="block mt-2 text-3xl sm:text-4xl lg:text-5xl font-bold opacity-95">
+                                <span className="block mt-2 text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-700">
                                     Military Fraternity &amp; Sorority, Inc.
                                 </span>
                             </h1>
-                            <p className="mt-6 text-base sm:text-xl leading-relaxed opacity-90 max-w-2xl">
+                            <p className="mt-5 text-base sm:text-lg leading-relaxed text-slate-600 max-w-2xl">
                                 Welcome, Trendsetters. Your home for chapter events, members, awards, hours, and the work
                                 we do together for our veterans and communities.
                             </p>
-                            <div className="mt-8 flex flex-wrap gap-3">
+                            <div className="mt-7 flex flex-wrap gap-3">
                                 {user ? (
                                     <Link
                                         to="/profile"
@@ -93,20 +94,23 @@ export default function Home() {
                                         <LogIn className="h-4 w-4" /> Member login
                                     </Link>
                                 )}
-                                <Link
-                                    to="/events"
-                                    className="inline-flex items-center gap-2 rounded-full px-6 py-3 font-bold bg-white/10 border-2 border-white text-white backdrop-blur hover:bg-white hover:text-[#0A2463] transition-colors"
-                                    data-testid="hero-cta-events"
-                                >
-                                    See events
-                                </Link>
+                                {user && (
+                                    <Link
+                                        to="/events"
+                                        className="inline-flex items-center gap-2 rounded-full px-6 py-3 font-bold border-2 transition-colors"
+                                        style={{ borderColor: NAVY, color: NAVY }}
+                                        data-testid="hero-cta-events"
+                                    >
+                                        See events
+                                    </Link>
+                                )}
                             </div>
                         </div>
 
                         <img
                             src={AOP_LOGO}
                             alt="AOP crest"
-                            className="hidden lg:block absolute right-10 top-1/2 -translate-y-1/2 w-48 drop-shadow-2xl"
+                            className="hidden lg:block w-48 drop-shadow-2xl"
                             onError={(e) => { e.currentTarget.style.display = "none"; }}
                         />
                     </div>
@@ -234,24 +238,21 @@ export default function Home() {
                 </section>
             )}
 
-            {/* Secondary banner photo */}
+            {/* Secondary banner photo — full image */}
             <section className="max-w-7xl mx-auto px-6 lg:px-10 py-14">
-                <div className="relative aspect-[21/9] rounded-3xl overflow-hidden shadow-warm-lg border-4" style={{ borderColor: NAVY }}>
+                <div className="rounded-3xl overflow-hidden shadow-warm-lg border-4" style={{ borderColor: NAVY, backgroundColor: NAVY }}>
                     <img
                         src={SECONDARY_BANNER}
                         alt="AOP members"
-                        className="w-full h-full object-cover"
+                        className="block w-full max-h-[520px] object-contain mx-auto"
                         onError={(e) => { e.currentTarget.style.display = "none"; }}
                     />
-                    <div className="absolute inset-0" style={{ background: `linear-gradient(90deg, rgba(10,36,99,0.7) 0%, transparent 50%, rgba(200,16,46,0.4) 100%)` }} />
-                    <div className="absolute inset-y-0 left-0 flex items-center px-6 sm:px-10 lg:px-16 text-white max-w-2xl">
-                        <div>
-                            <div className="text-xs uppercase tracking-[0.25em] font-bold opacity-90 mb-3">Trendsetters</div>
-                            <h3 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-black leading-tight">
-                                Setting the standard, every chapter, every day.
-                            </h3>
-                        </div>
-                    </div>
+                </div>
+                <div className="mt-6 text-center">
+                    <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>Trendsetters</div>
+                    <h3 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-black leading-tight" style={{ color: NAVY }}>
+                        Setting the standard, every chapter, every day.
+                    </h3>
                 </div>
             </section>
 

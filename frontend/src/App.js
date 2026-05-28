@@ -27,6 +27,7 @@ import Omega from "./pages/Omega";
 import Gear from "./pages/Gear";
 import Donations from "./pages/Donations";
 import CalendarPage from "./pages/Calendar";
+import Chat from "./pages/Chat";
 
 function App() {
     return (
@@ -39,45 +40,26 @@ function App() {
                             <Route path="/" element={<Home />} />
                             <Route path="/login" element={<Login />} />
                             <Route path="/register" element={<Navigate to="/login" replace />} />
-                            <Route path="/events" element={<Events />} />
-                            <Route path="/events/:id" element={<EventDetail />} />
-                            <Route path="/news" element={<News />} />
-                            <Route path="/news/:id" element={<NewsDetail />} />
-                            <Route path="/directory" element={<Directory />} />
-                            <Route path="/chapters" element={<Chapters />} />
-                            <Route path="/photos" element={<Photos />} />
-                            <Route path="/documents" element={<Documents />} />
-                            <Route path="/awards" element={<Awards />} />
-                            <Route path="/anniversary" element={<Anniversary />} />
-                            <Route path="/omega" element={<Omega />} />
-                            <Route path="/gear" element={<Gear />} />
-                            <Route path="/donations" element={<Donations />} />
-                            <Route path="/calendar" element={<CalendarPage />} />
-                            <Route
-                                path="/hours"
-                                element={
-                                    <ProtectedRoute>
-                                        <Hours />
-                                    </ProtectedRoute>
-                                }
-                            />
+                            <Route path="/events" element={<ProtectedRoute><Events /></ProtectedRoute>} />
+                            <Route path="/events/:id" element={<ProtectedRoute><EventDetail /></ProtectedRoute>} />
+                            <Route path="/news" element={<ProtectedRoute><News /></ProtectedRoute>} />
+                            <Route path="/news/:id" element={<ProtectedRoute><NewsDetail /></ProtectedRoute>} />
+                            <Route path="/directory" element={<ProtectedRoute><Directory /></ProtectedRoute>} />
+                            <Route path="/chapters" element={<ProtectedRoute><Chapters /></ProtectedRoute>} />
+                            <Route path="/photos" element={<ProtectedRoute><Photos /></ProtectedRoute>} />
+                            <Route path="/documents" element={<ProtectedRoute><Documents /></ProtectedRoute>} />
+                            <Route path="/awards" element={<ProtectedRoute><Awards /></ProtectedRoute>} />
+                            <Route path="/anniversary" element={<ProtectedRoute><Anniversary /></ProtectedRoute>} />
+                            <Route path="/omega" element={<ProtectedRoute><Omega /></ProtectedRoute>} />
+                            <Route path="/gear" element={<ProtectedRoute><Gear /></ProtectedRoute>} />
+                            <Route path="/donations" element={<ProtectedRoute><Donations /></ProtectedRoute>} />
+                            <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
+                            <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+                            <Route path="/chat/:conversationId" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+                            <Route path="/hours" element={<ProtectedRoute><Hours /></ProtectedRoute>} />
                             <Route path="/page/:slug" element={<CmsPage />} />
-                            <Route
-                                path="/profile"
-                                element={
-                                    <ProtectedRoute>
-                                        <Profile />
-                                    </ProtectedRoute>
-                                }
-                            />
-                            <Route
-                                path="/admin"
-                                element={
-                                    <ProtectedRoute adminOnly>
-                                        <Admin />
-                                    </ProtectedRoute>
-                                }
-                            />
+                            <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+                            <Route path="/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
                         </Routes>
                     </main>
                     <Footer />

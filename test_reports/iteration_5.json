@@ -1,0 +1,57 @@
+{
+  "summary": "Phase D (Chat) testing for Alpha Omega Phi portal. Backend: 18/20 pytest pass + 1 skip + 1 CRITICAL fail in /app/backend/tests/test_phase_d.py — chat-uploaded files cannot be downloaded via /api/files/{path} because /api/chat/upload writes to object storage but does NOT create a corresponding record in db.photos or db.documents, while /api/files only serves files registered in those two collections. All other chat endpoints (DM idempotency, group CRUD, messages, soft-delete, read state, WebSocket auth + push) work correctly. Frontend: all asks PASS — non-auth visits to /, /events, /chat, /directory all redirect to /login; logged-out navbar shows only logo + 10-Year Anniversary badge + 'Member login' (zero NavLinks); login page paragraph reads EXACTLY 'This is for Alpha Omega Phi members only. Once you complete Intake, you will be given access.'; after admin login navbar exposes 12 links including Chat; Home hero <img data-testid='hero-image'> uses object-contain on navy bg with headline below image (no overlay/crop); /chat sidebar lists seed conversation, clicking opens thread, typing + Enter sends a text message that renders in the bubble; Chat link is visible at /chat.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/files/{storage_path}", "issue": "Returns 404 for files uploaded via POST /api/chat/upload. chat_upload (server.py L3186) puts the object into storage at chat/{user_id}/{file_id}/{filename} but does NOT insert a record into db.photos or db.documents. download_file at L1509 only resolves files that exist in those two collections, so every chat attachment is unreachable via its returned url. Reproduces 100% — see test_phase_d.py::TestFileUpload::test_get_uploaded_file. Impact: chat image/file attachments will appear as broken thumbnails / failed downloads in the UI.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "PUT /api/conversations/{id}", "issue": "Self-removal via remove_member_ids is silently ignored (caller is re-added). Behaviour matches spirit of 'cannot remove yourself' but a 400 with a clear error would be more discoverable for API consumers."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Navbar logo", "issue": "Brand text 'Alpha Omega Phi' wraps to 3 lines at 1920px because the logo block is inside flex with 12 sibling NavLinks competing for space. The brand should use whitespace-nowrap or the LINKS row should be condensed.", "selector": "[data-testid='nav-logo'] span", "priority": "LOW"},
+      {"component": "Chat.jsx", "issue": "The '+' (new chat) red FAB and the gear (conversation settings) button do not have data-testid attributes, making automated tests rely on text/icon selectors. Add data-testid='chat-new-btn' and data-testid='chat-settings-btn'.", "selector": "n/a", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Chat WebSocket initial connect", "issue": "Console shows 'WebSocket connection to wss://.../api/ws/chat failed: WebSocket is closed before the connection is established.' on first load. Backend WS works (verified via pytest with cookies). Likely caused by React StrictMode double-mount or useEffect cleanup closing the socket before the upgrade completes. Real-time delivery still works after the second connection establishes.", "affected_selectors": ["chat thread"]},
+      {"flow": "Chat attachments", "issue": "Inline images in chat bubbles WILL fail to render because the /api/files/{path} backend bug above causes GETs for chat attachments to 404. Composer upload + attach work; the display is broken.", "affected_selectors": ["chat bubble <img>"]}
+    ],
+    "design_issues": [
+      {"screen": "Logged-out home redirects", "issues": ["No issues — confirmed working."]},
+      {"screen": "Home hero", "issues": ["object-contain hero renders FULL image with letterboxing on navy background as required. Headline sits below the image."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_d.py",
+    "/app/test_reports/pytest/phase_d_results.xml"
+  ],
+  "action_items": [
+    "FIX (CRITICAL): /api/chat/upload must register the uploaded file so /api/files/{path} can serve it. Two options: (a) add an insert into db.documents (or a dedicated db.chat_files collection) inside chat_upload with {storage_path, content_type, uploaded_by, conversation_id (optional), is_deleted:false}, OR (b) extend download_file to also resolve storage_path against db.chat_files / authorize members of the conversation when storage_path starts with 'chat/'. Option (a) is the minimal change.",
+    "Add data-testid='chat-new-btn' to the red '+' FAB in /app/frontend/src/pages/Chat.jsx and data-testid='chat-settings-btn' to the gear button in the conversation header for testability.",
+    "Consider returning 400 on PUT /conversations/{id} when remove_member_ids contains the caller (currently silent no-op).",
+    "Consider adding whitespace-nowrap to the brand span in Navbar.jsx (line 53) so 'Alpha Omega Phi' stays on one line at typical desktop widths.",
+    "Optional: investigate WebSocket close-before-open warning — likely benign StrictMode double-mount."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 3274 lines — Phase D adds another 380+ lines on top. Strongly recommend splitting into routers (chat_router.py, fraternity_router.py, etc.) per the >700-line code-review threshold.",
+    "chat_upload buffers entire 100MB file in memory before flushing to object storage (chunks list joined to bytes). For real 100MB uploads this is a 100MB+ memory spike per concurrent upload — stream directly to storage instead.",
+    "/api/chat/upload returns url='/api/files/...' but does NOT register the file anywhere, so the URL is permanently dead (see CRITICAL bug). This is a contract mismatch that broke the integration.",
+    "ChatHub keeps a dict of user_id -> list[WebSocket] in process memory — fine for single-replica, but will silently drop fan-out when scaled horizontally. Acceptable for MVP, document for future.",
+    "delete_conversation deletes messages but does NOT delete uploaded files from object storage — orphaned blobs will accumulate.",
+    "WebSocket route accepts cookie but does not also accept ?token= query param, which makes WS testing from non-browser clients require building Cookie header manually. Consider supporting both for resilience."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_d.py (new)"
+  ],
+  "success_rate": {
+    "backend": "90% (18/20 phase D, 1 skip, 1 critical fail). Phase A/B/C endpoints used by Chat (auth, members listing) still alive.",
+    "frontend": "100% on all 4 Phase D frontend asks (redirects, login paragraph, hero, navbar+chat). Real-time WS delivery verified server-side."
+  },
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123!, harper.liu@clubhaven.app/Demo123! — all verified",
+  "seed_data_creation": "Test created and cleaned up one TEST_CHAT_<uuid> group conversation, several TEST_msg_ messages, and one TEST_upload.png in object storage at chat/<admin_id>/<uuid>/TEST_upload.png. Group conversation deleted by test. The uploaded blob remains in storage (no chat-side delete endpoint exposed) and the message that referenced it was sent into a now-deleted conversation. One TEST_msg_43940 was also sent via the UI smoke test into the seed Riley Chen DM — can be deleted by admin or left as harmless test data.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes the /api/files/{path} 404 for chat uploads, rerun: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest /app/backend/tests/test_phase_d.py::TestFileUpload -v. To verify the inline-image render in UI, open the Riley Chen DM, attach a small PNG via the paperclip, send, and confirm the bubble shows the image (not a broken icon). WebSocket smoke (already passing via pytest): server-side push correctly delivers message:new events to authenticated cookie-bearing WS clients. There is a seed conversation between admin and Riley Chen / member from earlier smoke tests — don't delete it.",
+  "rca of the issue": "Chat uploaded files 404 RCA: server.py defines a single /api/files/{storage_path:path} route (L1509) that resolves the storage path against ONLY db.photos and db.documents, requiring is_deleted!=true. Phase D adds /api/chat/upload (L3186) which uses the same /api/files/... URL prefix in its response but skips the DB registration step entirely (only put_object is called). Therefore every chat attachment's url returns 404 on download even though the bytes exist in object storage. Mitigation (option A, minimal): inside chat_upload, after put_object succeeds, also insert into db.documents (or a new db.chat_files collection) a record like {id: file_id, storage_path, filename, content_type, uploaded_by: user['id'], conversation_id: None, is_deleted: False, created_at: now_iso()}. Reusing db.documents would make the existing /files/{path} resolver work without any changes. For stricter access control, create a new db.chat_files collection and extend the /files resolver to additionally look in it AND verify the caller is a member of any conversation referencing this file_id. Reproduction: POST /api/chat/upload with any small file then GET /api/files/<returned_url path> -> 404 {'detail': 'File not found'}."
+}
