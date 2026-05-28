@@ -116,6 +116,8 @@ def public_user(u: dict) -> dict:
         "middle_name": u.get("middle_name", ""),
         "last_name": u.get("last_name", ""),
         "line_name": u.get("line_name", ""),
+        "intake_line": u.get("intake_line", ""),
+        "intake_completed_at": u.get("intake_completed_at", ""),
         "role": u.get("role", "member"),
         "admin_role": u.get("admin_role", "full") if u.get("role") == "admin" else None,
         "bio": u.get("bio", ""),
@@ -292,6 +294,28 @@ class RegisterIn(BaseModel):
     city: Optional[str] = ""
     interests: Optional[List[str]] = []
 
+class PublicApplicationIn(BaseModel):
+    """Open-registration application form. No password — admin approves, user sets password via link."""
+    first_name: str = Field(min_length=1, max_length=80)
+    last_name: str = Field(min_length=1, max_length=80)
+    email: EmailStr
+    line_name: str = ""
+    intake_line: str = ""
+    intake_completed_at: str = ""  # "YYYY-MM" or ISO date
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    zip_code: str = ""
+    country: str = ""
+
+class ApplicationReviewIn(BaseModel):
+    action: Literal["approve", "reject"]
+    note: Optional[str] = ""
+
+class SetPasswordIn(BaseModel):
+    token: str
+    new_password: str = Field(min_length=6)
+
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
@@ -302,6 +326,8 @@ class ProfileUpdateIn(BaseModel):
     middle_name: Optional[str] = None
     last_name: Optional[str] = None
     line_name: Optional[str] = None
+    intake_line: Optional[str] = None
+    intake_completed_at: Optional[str] = None
     username: Optional[str] = None
     bio: Optional[str] = None
     city: Optional[str] = None
@@ -368,6 +394,8 @@ class AdminCreateMemberIn(BaseModel):
     last_name: str = ""
     name: Optional[str] = None
     line_name: str = ""
+    intake_line: str = ""
+    intake_completed_at: str = ""
     username: str = ""
     phone: str = ""
     city: str = ""
@@ -391,6 +419,8 @@ class AdminUpdateMemberIn(BaseModel):
     middle_name: Optional[str] = None
     last_name: Optional[str] = None
     line_name: Optional[str] = None
+    intake_line: Optional[str] = None
+    intake_completed_at: Optional[str] = None
     username: Optional[str] = None
     bio: Optional[str] = None
     city: Optional[str] = None
@@ -622,6 +652,234 @@ async def logout(response: Response, _: dict = Depends(get_current_user)):
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     return public_user(user)
+
+
+# ---------- Public registration applications (admin-approval flow) ----------
+def application_out(a: dict) -> dict:
+    return {
+        "id": a["id"],
+        "first_name": a.get("first_name", ""),
+        "last_name": a.get("last_name", ""),
+        "name": (a.get("first_name", "") + " " + a.get("last_name", "")).strip(),
+        "email": a.get("email", ""),
+        "line_name": a.get("line_name", ""),
+        "intake_line": a.get("intake_line", ""),
+        "intake_completed_at": a.get("intake_completed_at", ""),
+        "address": a.get("address", ""),
+        "city": a.get("city", ""),
+        "state": a.get("state", ""),
+        "zip_code": a.get("zip_code", ""),
+        "country": a.get("country", ""),
+        "status": a.get("status", "pending"),
+        "created_at": a.get("created_at"),
+        "reviewed_at": a.get("reviewed_at"),
+        "reviewed_by": a.get("reviewed_by"),
+        "review_note": a.get("review_note", ""),
+        "user_id": a.get("user_id"),
+    }
+
+
+@api.post("/auth/apply")
+async def submit_application(body: PublicApplicationIn):
+    """Public open-registration: candidate fills out the form. Goes into 'pending'.
+    Admin reviews. On approval, a user is created with an unset password and an email
+    is sent with a one-time link to set their password."""
+    email = body.email.lower().strip()
+    # Already a member?
+    existing_user = await db.users.find_one({"email": email})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="An account already exists for this email")
+    # Already applied & pending?
+    existing_app = await db.applications.find_one({"email": email, "status": "pending"})
+    if existing_app:
+        raise HTTPException(status_code=400, detail="An application is already pending for this email — check back soon")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "first_name": body.first_name.strip(),
+        "last_name": body.last_name.strip(),
+        "email": email,
+        "line_name": body.line_name.strip(),
+        "intake_line": body.intake_line.strip(),
+        "intake_completed_at": body.intake_completed_at.strip(),
+        "address": body.address.strip(),
+        "city": body.city.strip(),
+        "state": body.state.strip(),
+        "zip_code": body.zip_code.strip(),
+        "country": body.country.strip(),
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    }
+    await db.applications.insert_one(doc)
+    return {"ok": True, "application_id": doc["id"]}
+
+
+@api.get("/admin/applications")
+async def list_applications(status_filter: Optional[str] = "pending", _: dict = Depends(admin_tab_dep("members"))):
+    q: dict = {}
+    if status_filter:
+        q["status"] = status_filter
+    cursor = db.applications.find(q, {"_id": 0}).sort("created_at", -1).limit(500)
+    items = await cursor.to_list(500)
+    return [application_out(a) for a in items]
+
+
+async def _send_set_password_email(email: str, name: str, token: str) -> bool:
+    if not RESEND_API_KEY or not email:
+        return False
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    set_link = f"{frontend}/set-password?token={token}"
+    import html as _h
+    safe_name = _h.escape(name or "")
+    body = f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
+      <h1 style="color:#C8102E;margin:0 0 12px;font-size:28px">Welcome to Alpha Omega Phi, {safe_name}.</h1>
+      <p style="line-height:1.6">Your membership application has been <strong>approved</strong>. To finish setting up your account, choose a password using the link below. This link is valid for 7 days and can only be used once.</p>
+      <p><a href="{set_link}" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Set my password</a></p>
+      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">If the button doesn't work, paste this link into your browser:<br><span style="color:#444">{set_link}</span></p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": RESEND_FROM,
+            "to": [email],
+            "subject": "Alpha Omega Phi — your application was approved, set your password",
+            "html": body,
+            "tags": [{"name": "type", "value": "set_password"}],
+        })
+        return True
+    except Exception as e:
+        logger.warning(f"Set-password email failed for {email}: {e}")
+        return False
+
+
+async def _send_rejection_email(email: str, name: str, note: str) -> bool:
+    if not RESEND_API_KEY or not email:
+        return False
+    import html as _h
+    safe_name = _h.escape(name or "")
+    safe_note = _h.escape(note or "")
+    body = f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
+      <h2 style="margin:0 0 12px">Alpha Omega Phi — application update</h2>
+      <p style="line-height:1.6">Hi {safe_name}, thank you for applying to Alpha Omega Phi Military Fraternity &amp; Sorority. Unfortunately your application was not approved at this time.</p>
+      {f'<blockquote style="border-left:3px solid #C8102E;padding:6px 12px;margin:16px 0;background:#f7f5f0;border-radius:4px">{safe_note}</blockquote>' if safe_note else ''}
+      <p style="font-size:12px;color:#888;margin-top:24px">If you believe this was in error, please reach out to your chapter Governor.</p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": RESEND_FROM,
+            "to": [email],
+            "subject": "Alpha Omega Phi — application update",
+            "html": body,
+            "tags": [{"name": "type", "value": "application_rejected"}],
+        })
+        return True
+    except Exception as e:
+        logger.warning(f"Rejection email failed for {email}: {e}")
+        return False
+
+
+@api.post("/admin/applications/{app_id}/review")
+async def review_application(app_id: str, body: ApplicationReviewIn, admin: dict = Depends(admin_tab_dep("members"))):
+    app_doc = await db.applications.find_one({"id": app_id})
+    if not app_doc:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if app_doc.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Application is already {app_doc.get('status')}")
+    if body.action == "approve":
+        # Create the user with an unusable password and a single-use set-password token.
+        token = str(uuid.uuid4()) + str(uuid.uuid4())
+        composed_name = (app_doc.get("first_name", "") + " " + app_doc.get("last_name", "")).strip() or app_doc["email"].split("@")[0]
+        uid = str(uuid.uuid4())
+        created = now_utc()
+        user_doc = {
+            "id": uid,
+            "email": app_doc["email"],
+            "username": "",
+            "password_hash": hash_password(token),  # placeholder unusable password
+            "name": composed_name,
+            "first_name": app_doc.get("first_name", ""),
+            "middle_name": "",
+            "last_name": app_doc.get("last_name", ""),
+            "line_name": app_doc.get("line_name", ""),
+            "intake_line": app_doc.get("intake_line", ""),
+            "intake_completed_at": app_doc.get("intake_completed_at", ""),
+            "phone": "",
+            "address": app_doc.get("address", ""),
+            "city": app_doc.get("city", ""),
+            "state": app_doc.get("state", ""),
+            "zip_code": app_doc.get("zip_code", ""),
+            "country": app_doc.get("country", ""),
+            "birthdate": "",
+            "branch_of_service": "",
+            "role": "member",
+            "bio": "",
+            "interests": [],
+            "avatar_url": "",
+            "membership_tier": "standard",
+            "tier_id": None,
+            "chapter_id": None,
+            "status_override": None,
+            "admin_role": None,
+            "join_date": iso(created),
+            "membership_expires_at": iso(created + timedelta(days=365)),
+            "email_verified": True,
+            "pending_set_password": True,
+            "created_at": iso(created),
+        }
+        await db.users.insert_one(user_doc)
+        await db.password_set_tokens.insert_one({
+            "token": token,
+            "user_id": uid,
+            "email": app_doc["email"],
+            "expires_at": iso(now_utc() + timedelta(days=7)),
+            "used": False,
+            "created_at": iso(now_utc()),
+        })
+        await db.applications.update_one(
+            {"id": app_id},
+            {"$set": {
+                "status": "approved",
+                "reviewed_at": iso(now_utc()),
+                "reviewed_by": admin.get("name", "Admin"),
+                "review_note": body.note or "",
+                "user_id": uid,
+            }},
+        )
+        await _send_set_password_email(app_doc["email"], composed_name, token)
+        return {"ok": True, "user_id": uid}
+    # Reject
+    await db.applications.update_one(
+        {"id": app_id},
+        {"$set": {
+            "status": "rejected",
+            "reviewed_at": iso(now_utc()),
+            "reviewed_by": admin.get("name", "Admin"),
+            "review_note": body.note or "",
+        }},
+    )
+    name = (app_doc.get("first_name", "") + " " + app_doc.get("last_name", "")).strip()
+    await _send_rejection_email(app_doc["email"], name, body.note or "")
+    return {"ok": True}
+
+
+@api.post("/auth/set-password")
+async def set_password_from_token(body: SetPasswordIn):
+    """One-time-token password set after approval. Marks the user as no longer pending."""
+    t = await db.password_set_tokens.find_one({"token": body.token, "used": False})
+    if not t:
+        raise HTTPException(status_code=400, detail="Invalid or already-used token")
+    if t.get("expires_at") and t["expires_at"] < iso(now_utc()):
+        raise HTTPException(status_code=400, detail="Token has expired")
+    await db.users.update_one(
+        {"id": t["user_id"]},
+        {"$set": {"password_hash": hash_password(body.new_password), "pending_set_password": False}},
+    )
+    await db.password_set_tokens.update_one({"token": body.token}, {"$set": {"used": True, "used_at": iso(now_utc())}})
+    user = await db.users.find_one({"id": t["user_id"]}, {"_id": 0, "password_hash": 0})
+    return {"ok": True, "email": user.get("email") if user else None}
+
 
 @api.post("/auth/refresh")
 async def refresh(request: Request, response: Response):
@@ -1191,6 +1449,8 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
         "middle_name": body.middle_name,
         "last_name": body.last_name,
         "line_name": body.line_name,
+        "intake_line": body.intake_line,
+        "intake_completed_at": body.intake_completed_at,
         "phone": body.phone,
         "address": body.address,
         "state": body.state,
@@ -1218,13 +1478,23 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
         if tier:
             doc["membership_tier"] = tier.get("name", "standard")
     await db.users.insert_one(doc)
+    # Send welcome email with temp password (best-effort; doesn't block creation if email fails)
+    try:
+        await send_welcome_email(email, composed_name, body.password)
+    except Exception as e:
+        logger.warning(f"welcome email failed for {email}: {e}")
     return public_user(doc)
 
+
 @api.put("/members/{user_id}")
-async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, _: dict = Depends(admin_tab_dep("members"))):
+async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, admin: dict = Depends(admin_tab_dep("members"))):
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Member not found")
+    # Only full admins may change role / admin_role
+    if (body.role is not None and body.role != existing.get("role")) or (body.admin_role is not None and body.admin_role != existing.get("admin_role")):
+        if admin_role_of(admin) != "full":
+            raise HTTPException(status_code=403, detail="Only full Admins may change member roles")
     updates = {k: v for k, v in body.model_dump().items() if v is not None and k not in ("new_password", "member_status")}
     # Status override (member_status maps to status_override; "active" with no expiry issues means clear override)
     if body.member_status is not None:
@@ -1288,7 +1558,10 @@ async def admin_delete_member(user_id: str, admin: dict = Depends(admin_tab_dep(
     return {"ok": True}
 
 @api.put("/members/{user_id}/role")
-async def update_member_role(user_id: str, body: RoleUpdateIn, _: dict = Depends(admin_tab_dep("members"))):
+async def update_member_role(user_id: str, body: RoleUpdateIn, admin: dict = Depends(admin_tab_dep("members"))):
+    # Only full admins may change member roles (Operations & Membership Managers cannot)
+    if admin_role_of(admin) != "full":
+        raise HTTPException(status_code=403, detail="Only full Admins may change member roles")
     await db.users.update_one({"id": user_id}, {"$set": {"role": body.role}})
     u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not u:
@@ -1999,6 +2272,9 @@ async def startup():
     await db.email_signatures.create_index([("owner_id", 1), ("kind", 1)])
     await db.chat_notifications.create_index("id", unique=True)
     await db.chat_notifications.create_index([("status", 1), ("due_at", 1)])
+    await db.applications.create_index("id", unique=True)
+    await db.applications.create_index([("status", 1), ("created_at", -1)])
+    await db.password_set_tokens.create_index("token", unique=True)
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -2532,6 +2808,35 @@ async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(admin_t
     out.pop("_id", None)
     return out
 
+@api.post("/events/{event_id}/self-check-in")
+async def self_check_in(event_id: str, user: dict = Depends(get_current_user)):
+    """Members can self-check-in to record their attendance — useful for events
+    that have already ended where the admin didn't process check-ins at the door.
+    Idempotent: returns the existing record if already checked in."""
+    event = await db.events.find_one({"id": event_id})
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    existing = await db.checkins.find_one({"event_id": event_id, "user_id": user["id"]}, {"_id": 0})
+    if existing:
+        return existing
+    doc = {
+        "id": str(uuid.uuid4()),
+        "event_id": event_id,
+        "event_title": event.get("title", ""),
+        "user_id": user["id"],
+        "user_name": user.get("name", ""),
+        "ticket_type": "general",
+        "note": "self-check-in",
+        "checked_in_by": user["id"],
+        "checked_in_by_name": user.get("name", ""),
+        "checked_in_at": iso(now_utc()),
+        "self_reported": True,
+    }
+    await db.checkins.insert_one(doc)
+    out = dict(doc)
+    out.pop("_id", None)
+    return out
+
 @api.get("/events/{event_id}/check-ins")
 async def list_checkins(event_id: str, _: dict = Depends(admin_tab_dep("events"))):
     items = await db.checkins.find({"event_id": event_id}, {"_id": 0}).sort("checked_in_at", -1).to_list(2000)
@@ -2566,7 +2871,79 @@ async def report_members(
     out = [public_user(u) for u in users]
     if status_filter:
         out = [u for u in out if u.get("status") == status_filter]
+    # Enrich with attended events + guests they registered
+    for u in out:
+        # Events attended (check-ins)
+        cks = await db.checkins.find({"user_id": u["id"]}, {"_id": 0, "event_id": 1, "event_title": 1, "ticket_type": 1, "checked_in_at": 1}).to_list(500)
+        u["events_attended_count"] = len(cks)
+        u["events_attended"] = [{"event_id": c["event_id"], "title": c.get("event_title", ""), "ticket_type": c.get("ticket_type"), "checked_in_at": c.get("checked_in_at")} for c in cks]
+        # Guests registered across their RSVPs
+        rsvps = await db.rsvps.find({"user_id": u["id"]}, {"_id": 0, "event_id": 1, "guests": 1}).to_list(500)
+        all_guests = []
+        for r in rsvps:
+            for g in (r.get("guests") or []):
+                all_guests.append({"event_id": r["event_id"], "name": g.get("name", ""), "email": g.get("email", ""), "phone": g.get("phone", "")})
+        u["guests_registered_count"] = len(all_guests)
+        u["guests_registered"] = all_guests
     return out
+
+
+@api.get("/reports/rsvps")
+async def report_rsvps(
+    event_id: Optional[str] = None,
+    parent_event_id: Optional[str] = None,
+    admin: dict = Depends(admin_tab_dep("reports")),
+):
+    """Report of all RSVPs (members + their guests) for events / sub-events.
+    Optional filter by event_id (single event) or parent_event_id (all sub-events under a parent).
+    Each row: member, event, RSVP date, ticket_type (from check-in if present), guests list."""
+    event_q: dict = {}
+    if event_id:
+        event_q["id"] = event_id
+    elif parent_event_id:
+        # parent event itself + all its sub-events
+        event_q["$or"] = [{"id": parent_event_id}, {"parent_event_id": parent_event_id}]
+    events_for_filter = []
+    if event_q:
+        events_for_filter = await db.events.find(event_q, {"_id": 0, "id": 1, "title": 1, "start_at": 1}).to_list(200)
+        event_ids = [e["id"] for e in events_for_filter]
+        if not event_ids:
+            return []
+        rsvp_q = {"event_id": {"$in": event_ids}}
+    else:
+        rsvp_q = {}
+    # Chapter-scope: limit by users in scope
+    if is_chapter_scoped(admin):
+        chapter_uids = await chapter_scope_user_ids(admin) or []
+        rsvp_q["user_id"] = {"$in": chapter_uids}
+    cursor = db.rsvps.find(rsvp_q, {"_id": 0}).sort("created_at", -1).limit(5000)
+    rsvps = await cursor.to_list(5000)
+    # Build event title cache
+    if not events_for_filter:
+        all_event_ids = list({r["event_id"] for r in rsvps})
+        cur = db.events.find({"id": {"$in": all_event_ids}}, {"_id": 0, "id": 1, "title": 1, "start_at": 1})
+        events_for_filter = await cur.to_list(2000)
+    event_by_id = {e["id"]: e for e in events_for_filter}
+    rows = []
+    for r in rsvps:
+        ev = event_by_id.get(r["event_id"], {})
+        # Look up admin check-in for this user+event to get assigned ticket_type, if any
+        ck = await db.checkins.find_one({"event_id": r["event_id"], "user_id": r["user_id"]}, {"_id": 0, "ticket_type": 1, "checked_in_at": 1})
+        rows.append({
+            "rsvp_id": r["id"],
+            "event_id": r["event_id"],
+            "event_title": ev.get("title", ""),
+            "event_start_at": ev.get("start_at"),
+            "user_id": r["user_id"],
+            "user_name": r.get("user_name", ""),
+            "rsvped_at": r.get("created_at"),
+            "guests": r.get("guests", []) or [],
+            "guest_count": len(r.get("guests", []) or []),
+            "ticket_type": (ck or {}).get("ticket_type"),
+            "checked_in_at": (ck or {}).get("checked_in_at"),
+        })
+    return rows
+
 
 @api.get("/reports/hours")
 async def report_hours(
@@ -2736,6 +3113,44 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "Alpha Omega Phi <onboarding@resend.dev>")
 if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
+
+
+async def send_welcome_email(to_email: str, name: str, temp_password: str) -> bool:
+    """Send a one-shot welcome email to a newly created member containing their
+    temporary password and a clear ask to change it on first login. Best-effort —
+    failures are logged, never raised."""
+    if not RESEND_API_KEY or not to_email:
+        return False
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    import html as _h
+    safe_name = _h.escape(name or "")
+    safe_email = _h.escape(to_email)
+    safe_pwd = _h.escape(temp_password)
+    body = f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
+      <h1 style="color:#C8102E;margin:0 0 16px;font-size:28px">Welcome to Alpha Omega Phi, {safe_name}.</h1>
+      <p style="line-height:1.6">You've been added to the Alpha Omega Phi Military Fraternity &amp; Sorority, Inc. member portal. Use the temporary password below to sign in, then please change it from your profile.</p>
+      <div style="background:#f7f5f0;border-radius:14px;padding:20px;margin:20px 0">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:6px">Sign-in details</div>
+        <div style="font-size:14px;margin:4px 0"><strong>Email:</strong> {safe_email}</div>
+        <div style="font-size:14px;margin:4px 0"><strong>Temporary password:</strong> <code style="background:#fff;padding:3px 8px;border-radius:6px;border:1px solid #ddd">{safe_pwd}</code></div>
+      </div>
+      <p style="line-height:1.6"><a href="{frontend}/login" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Sign in &amp; change your password</a></p>
+      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">For security, please change your password the first time you log in (Profile → Security).</p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": RESEND_FROM,
+            "to": [to_email],
+            "subject": "Welcome to Alpha Omega Phi — your temporary password",
+            "html": body,
+            "tags": [{"name": "type", "value": "welcome"}],
+        })
+        return True
+    except Exception as e:
+        logger.warning(f"Welcome email failed for {to_email}: {e}")
+        return False
 
 _paypal_token_cache = {"token": None, "expires_at": 0.0}
 
@@ -3614,70 +4029,104 @@ async def reconcile_awards():
 
 # ---------- 10-Year Anniversary umbrella event + 5 sub-events ----------
 ANNIVERSARY_PARENT_TITLE = "Alpha Omega Phi 10-Year Anniversary"
+# Per user: 29-31 July 2027.
+# Day 1 (29 Jul): Transportation Buses to Sip and Paint, Sip and Paint
+# Day 2 (30 Jul): Banquet
+# Day 3 (31 Jul): Transportation Buses to Top Golf, Top Golf
+ANNIVERSARY_START = datetime(2027, 7, 29, 0, 0, 0, tzinfo=timezone.utc)
+ANNIVERSARY_END = datetime(2027, 7, 31, 23, 59, 59, tzinfo=timezone.utc)
 ANNIVERSARY_SUB_EVENTS = [
-    {"title": "Transportation Buses to Sip and Paint", "category": "transportation", "allows_ticket_types": False, "offset_hours": 0},
-    {"title": "Sip and Paint",                          "category": "social",         "allows_ticket_types": True,  "offset_hours": 1},
-    {"title": "Transportation Buses to Top Golf",       "category": "transportation", "allows_ticket_types": False, "offset_hours": 4},
-    {"title": "Top Golf",                               "category": "social",         "allows_ticket_types": True,  "offset_hours": 5},
-    {"title": "Banquet",                                "category": "formal",         "allows_ticket_types": True,  "offset_hours": 24},
+    {"title": "Transportation Buses to Sip and Paint", "category": "transportation", "allows_ticket_types": False, "day_offset": 0, "hour": 16},
+    {"title": "Sip and Paint",                          "category": "social",         "allows_ticket_types": True,  "day_offset": 0, "hour": 18},
+    {"title": "Banquet",                                "category": "formal",         "allows_ticket_types": True,  "day_offset": 1, "hour": 18},
+    {"title": "Transportation Buses to Top Golf",       "category": "transportation", "allows_ticket_types": False, "day_offset": 2, "hour": 11},
+    {"title": "Top Golf",                               "category": "social",         "allows_ticket_types": True,  "day_offset": 2, "hour": 13},
 ]
+ANNIVERSARY_ALLOWED_TITLES = {ANNIVERSARY_PARENT_TITLE, *(s["title"] for s in ANNIVERSARY_SUB_EVENTS)}
 
 async def seed_anniversary_subevents():
-    """Ensure the 10-Year Anniversary parent event exists with its 5 sub-events.
-    Idempotent — only creates missing pieces; never overwrites event details."""
-    # Default anniversary date: Oct 18, 2026 (10 years from founding 2016).
-    # We compute from environment override if provided.
-    anniv_iso = os.environ.get("ANNIVERSARY_AT", "2026-10-18T17:00:00+00:00")
-    try:
-        anniv_dt = datetime.fromisoformat(anniv_iso.replace("Z", "+00:00"))
-    except Exception:
-        anniv_dt = datetime(2026, 10, 18, 17, 0, 0, tzinfo=timezone.utc)
+    """Reconcile the 10-Year Anniversary umbrella (29-31 July 2027) and its 5 sub-events.
+    - Parent event blocks all three days (start 29 Jul, end 31 Jul).
+    - Sub-events are placed on their assigned days (29 / 30 / 31 July).
+    - Any anniversary-titled event that is NOT in the canonical list is removed.
+    - Existing parent/sub events are updated (idempotent re-run on every startup)."""
     parent = await db.events.find_one({"title": ANNIVERSARY_PARENT_TITLE})
+    parent_updates = {
+        "description": "Three-day 10-year anniversary celebration for Alpha Omega Phi Military Fraternity & Sorority, Inc. — Sip & Paint, Banquet, Top Golf and transportation, 29-31 July 2027.",
+        "location": "Multiple venues",
+        "start_at": iso(ANNIVERSARY_START),
+        "end_at": iso(ANNIVERSARY_END),
+        "category": "anniversary",
+        "parent_event_id": None,
+        "allows_ticket_types": False,
+    }
     if not parent:
         parent_doc = {
             "id": str(uuid.uuid4()),
             "title": ANNIVERSARY_PARENT_TITLE,
-            "description": "The 10-year anniversary weekend for Alpha Omega Phi Military Fraternity & Sorority, Inc. Includes Sip & Paint, Top Golf, transportation, and a formal Banquet.",
-            "location": "Multiple venues",
-            "start_at": iso(anniv_dt),
-            "end_at": iso(anniv_dt + timedelta(days=2)),
+            **parent_updates,
             "capacity": 0,
             "cover_image": "",
-            "category": "anniversary",
             "price": 0.0,
-            "parent_event_id": None,
-            "allows_ticket_types": False,
             "rsvp_count": 0,
             "guest_count": 0,
             "created_at": iso(now_utc()),
         }
         await db.events.insert_one(parent_doc)
         parent = parent_doc
-        logger.info("Seeded 10-Year Anniversary parent event")
+        logger.info("Seeded 10-Year Anniversary parent event (29-31 Jul 2027)")
+    else:
+        await db.events.update_one({"id": parent["id"]}, {"$set": parent_updates})
+
+    # Reconcile sub-events: insert missing, update existing.
     for spec in ANNIVERSARY_SUB_EVENTS:
-        existing = await db.events.find_one({"title": spec["title"], "parent_event_id": parent["id"]})
-        if existing:
-            continue
-        sub_start = anniv_dt + timedelta(hours=spec["offset_hours"])
-        sub_doc = {
-            "id": str(uuid.uuid4()),
+        sub_start = ANNIVERSARY_START.replace(hour=spec["hour"]) + timedelta(days=spec["day_offset"])
+        sub_end = sub_start + timedelta(hours=3)
+        sub_updates = {
             "title": spec["title"],
-            "description": f"Part of the {ANNIVERSARY_PARENT_TITLE}.",
+            "description": f"Part of the {ANNIVERSARY_PARENT_TITLE} — 29-31 July 2027.",
             "location": "TBD",
             "start_at": iso(sub_start),
-            "end_at": iso(sub_start + timedelta(hours=3)),
-            "capacity": 0,
-            "cover_image": "",
+            "end_at": iso(sub_end),
             "category": spec["category"],
-            "price": 0.0,
             "parent_event_id": parent["id"],
             "allows_ticket_types": spec["allows_ticket_types"],
-            "rsvp_count": 0,
-            "guest_count": 0,
-            "created_at": iso(now_utc()),
         }
-        await db.events.insert_one(sub_doc)
-        logger.info(f"Seeded sub-event: {spec['title']}")
+        existing = await db.events.find_one({"title": spec["title"], "parent_event_id": parent["id"]})
+        if existing:
+            await db.events.update_one({"id": existing["id"]}, {"$set": sub_updates})
+        else:
+            doc = {
+                "id": str(uuid.uuid4()),
+                **sub_updates,
+                "capacity": 0,
+                "cover_image": "",
+                "price": 0.0,
+                "rsvp_count": 0,
+                "guest_count": 0,
+                "created_at": iso(now_utc()),
+            }
+            await db.events.insert_one(doc)
+            logger.info(f"Seeded sub-event: {spec['title']} ({sub_start.date()})")
+
+    # Remove any other anniversary-tagged events that aren't in our canonical list
+    stale = db.events.find(
+        {
+            "$and": [
+                {"$or": [
+                    {"parent_event_id": parent["id"]},
+                    {"category": "anniversary"},
+                ]},
+                {"title": {"$nin": list(ANNIVERSARY_ALLOWED_TITLES)}},
+            ]
+        },
+        {"_id": 0, "id": 1, "title": 1},
+    )
+    async for e in stale:
+        await db.events.delete_one({"id": e["id"]})
+        await db.rsvps.delete_many({"event_id": e["id"]})
+        await db.checkins.delete_many({"event_id": e["id"]})
+        logger.info(f"Removed stale anniversary event: {e.get('title')}")
 
 
 # ---------- Email Signatures (personal + org-wide) ----------

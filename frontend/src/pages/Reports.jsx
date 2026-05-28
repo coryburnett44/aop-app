@@ -33,11 +33,13 @@ export default function Reports() {
         <Tabs defaultValue="members">
             <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
                 <TabsTrigger value="members" className="rounded-full" data-testid="reports-tab-members">Members</TabsTrigger>
+                <TabsTrigger value="rsvps" className="rounded-full" data-testid="reports-tab-rsvps">RSVPs</TabsTrigger>
                 <TabsTrigger value="hours" className="rounded-full" data-testid="reports-tab-hours">Hours</TabsTrigger>
                 <TabsTrigger value="donations" className="rounded-full" data-testid="reports-tab-donations">Donations</TabsTrigger>
                 <TabsTrigger value="brief" className="rounded-full" data-testid="reports-tab-brief">Personnel Brief</TabsTrigger>
             </TabsList>
             <TabsContent value="members" className="mt-6"><MembersReport /></TabsContent>
+            <TabsContent value="rsvps" className="mt-6"><RsvpsReport /></TabsContent>
             <TabsContent value="hours" className="mt-6"><HoursReport /></TabsContent>
             <TabsContent value="donations" className="mt-6"><DonationsReport /></TabsContent>
             <TabsContent value="brief" className="mt-6"><PersonnelBriefSection /></TabsContent>
@@ -70,12 +72,19 @@ function MembersReport() {
             { label: "Phone", get: (m) => m.phone },
             { label: "Address", get: (m) => m.address },
             { label: "City", get: (m) => m.city },
+            { label: "State", get: (m) => m.state },
+            { label: "Zip", get: (m) => m.zip_code },
+            { label: "Country", get: (m) => m.country },
             { label: "Status", get: (m) => m.status },
             { label: "Role", get: (m) => m.role },
             { label: "Chapter", get: (m) => chapters.find((c) => c.id === m.chapter_id)?.name || "" },
             { label: "Tier", get: (m) => m.membership_tier },
-            { label: "Joined", get: (m) => m.created_at?.slice(0, 10) || "" },
+            { label: "Joined", get: (m) => (m.join_date || m.created_at)?.slice(0, 10) || "" },
             { label: "Expires", get: (m) => m.membership_expires_at?.slice(0, 10) || "" },
+            { label: "Events attended (count)", get: (m) => m.events_attended_count ?? 0 },
+            { label: "Events attended", get: (m) => (m.events_attended || []).map((e) => `${e.title} [${e.ticket_type || "?"}]`).join("; ") },
+            { label: "Guests registered (count)", get: (m) => m.guests_registered_count ?? 0 },
+            { label: "Guests registered", get: (m) => (m.guests_registered || []).map((g) => g.name).join("; ") },
         ]));
     }
 
@@ -109,17 +118,117 @@ function MembersReport() {
             <div className="bg-card rounded-2xl border overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-                        <tr><th className="text-left px-4 py-2.5">Name</th><th className="text-left px-4 py-2.5">Email</th><th className="text-left px-4 py-2.5">Status</th><th className="text-left px-4 py-2.5">Chapter</th><th className="text-left px-4 py-2.5">Tier</th><th className="text-left px-4 py-2.5">Joined</th></tr>
+                        <tr><th className="text-left px-4 py-2.5">Name</th><th className="text-left px-4 py-2.5">Email</th><th className="text-left px-4 py-2.5">Status</th><th className="text-left px-4 py-2.5">Chapter</th><th className="text-left px-4 py-2.5">Tier</th><th className="text-left px-4 py-2.5">Joined</th><th className="text-left px-4 py-2.5">Events attended</th><th className="text-left px-4 py-2.5">Guests</th></tr>
                     </thead>
                     <tbody>
                         {rows.map((m) => (
-                            <tr key={m.id} className="border-t border-border" data-testid={`report-row-${m.id}`}>
+                            <tr key={m.id} className="border-t border-border align-top" data-testid={`report-row-${m.id}`}>
                                 <td className="px-4 py-2.5">{m.name}</td>
                                 <td className="px-4 py-2.5 text-muted-foreground">{m.email}</td>
                                 <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{m.status}</td>
                                 <td className="px-4 py-2.5 text-muted-foreground">{chapters.find((c) => c.id === m.chapter_id)?.name || "—"}</td>
                                 <td className="px-4 py-2.5 text-muted-foreground">{m.membership_tier}</td>
-                                <td className="px-4 py-2.5 text-muted-foreground">{m.created_at && format(parseISO(m.created_at), "MMM d, yyyy")}</td>
+                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{(m.join_date || m.created_at) && format(parseISO(m.join_date || m.created_at), "MMM d, yyyy")}</td>
+                                <td className="px-4 py-2.5">
+                                    <div className="font-semibold">{m.events_attended_count ?? 0}</div>
+                                    {(m.events_attended || []).length > 0 && (
+                                        <div className="text-xs text-muted-foreground mt-0.5 leading-snug">{m.events_attended.map((e) => `${e.title}${e.ticket_type ? ` (${e.ticket_type})` : ""}`).join(", ")}</div>
+                                    )}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                    <div className="font-semibold">{m.guests_registered_count ?? 0}</div>
+                                    {(m.guests_registered || []).length > 0 && (
+                                        <div className="text-xs text-muted-foreground mt-0.5 leading-snug">{m.guests_registered.map((g) => g.name).join(", ")}</div>
+                                    )}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+function RsvpsReport() {
+    const [rows, setRows] = useState([]);
+    const [events, setEvents] = useState([]);
+    const [eventId, setEventId] = useState("");
+    const [parentId, setParentId] = useState("");
+
+    useEffect(() => {
+        api.get("/events").then(({ data }) => setEvents(data)).catch(() => {});
+    }, []);
+
+    async function run() {
+        const params = {};
+        if (eventId) params.event_id = eventId;
+        else if (parentId) params.parent_event_id = parentId;
+        const { data } = await api.get("/reports/rsvps", { params });
+        setRows(data);
+    }
+    useEffect(() => { run(); }, []); // eslint-disable-line
+
+    function exportCSV() {
+        downloadCSV(`rsvps-report-${new Date().toISOString().slice(0, 10)}.csv`, csvify(rows, [
+            { label: "Event", get: (r) => r.event_title },
+            { label: "Event date", get: (r) => r.event_start_at?.slice(0, 10) || "" },
+            { label: "Member", get: (r) => r.user_name },
+            { label: "RSVPed at", get: (r) => r.rsvped_at?.slice(0, 16).replace("T", " ") || "" },
+            { label: "Ticket type", get: (r) => r.ticket_type || "" },
+            { label: "Checked in at", get: (r) => r.checked_in_at?.slice(0, 16).replace("T", " ") || "" },
+            { label: "Guest count", get: (r) => r.guest_count },
+            { label: "Guests", get: (r) => (r.guests || []).map((g) => `${g.name}${g.email ? ` <${g.email}>` : ""}`).join("; ") },
+        ]));
+    }
+
+    const parentCandidates = events.filter((e) => !e.parent_event_id);
+
+    return (
+        <div data-testid="rsvps-report">
+            <div className="bg-card rounded-2xl border border-border p-5 mb-4">
+                <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
+                <div className="grid sm:grid-cols-3 gap-3">
+                    <FilterSelect label="Specific event" value={eventId} onChange={(v) => { setEventId(v); if (v) setParentId(""); }} options={[{ value: "", label: "Any" }, ...events.map((e) => ({ value: e.id, label: e.title }))]} testid="rsvps-filter-event" />
+                    <FilterSelect label="Or parent event (all sub-events)" value={parentId} onChange={(v) => { setParentId(v); if (v) setEventId(""); }} options={[{ value: "", label: "Any" }, ...parentCandidates.map((e) => ({ value: e.id, label: e.title }))]} testid="rsvps-filter-parent" />
+                </div>
+                <div className="flex justify-end gap-2 mt-4">
+                    <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="rsvps-report-run-btn">Run report</Button>
+                    <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="rsvps-report-csv-btn"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
+                </div>
+            </div>
+            <div className="text-sm text-muted-foreground mb-2">
+                {rows.length} RSVP{rows.length !== 1 ? "s" : ""}
+                {" · "}
+                {rows.reduce((acc, r) => acc + (r.guest_count || 0), 0)} guests
+            </div>
+            <div className="bg-card rounded-2xl border overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                            <th className="text-left px-4 py-2.5">Event</th>
+                            <th className="text-left px-4 py-2.5">Member</th>
+                            <th className="text-left px-4 py-2.5">RSVP'd</th>
+                            <th className="text-left px-4 py-2.5">Ticket</th>
+                            <th className="text-left px-4 py-2.5">Checked in</th>
+                            <th className="text-left px-4 py-2.5">Guests</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((r) => (
+                            <tr key={r.rsvp_id} className="border-t border-border align-top" data-testid={`rsvps-report-row-${r.rsvp_id}`}>
+                                <td className="px-4 py-2.5">
+                                    <div className="font-medium">{r.event_title}</div>
+                                    {r.event_start_at && <div className="text-xs text-muted-foreground">{format(parseISO(r.event_start_at), "MMM d, yyyy")}</div>}
+                                </td>
+                                <td className="px-4 py-2.5">{r.user_name}</td>
+                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">{r.rsvped_at ? format(parseISO(r.rsvped_at), "MMM d, yyyy h:mm a") : "—"}</td>
+                                <td className="px-4 py-2.5">{r.ticket_type ? <span className="text-xs uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary">{r.ticket_type.replace("_", " ")}</span> : <span className="text-xs text-muted-foreground italic">—</span>}</td>
+                                <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{r.checked_in_at ? format(parseISO(r.checked_in_at), "MMM d, h:mm a") : "—"}</td>
+                                <td className="px-4 py-2.5">
+                                    <div className="font-semibold">{r.guest_count}</div>
+                                    {(r.guests || []).length > 0 && <div className="text-xs text-muted-foreground leading-snug">{r.guests.map((g) => g.name).join(", ")}</div>}
+                                </td>
                             </tr>
                         ))}
                     </tbody>

@@ -1,0 +1,36 @@
+{
+  "summary": "Phase H — public application flow, anniversary 2027 dates, reports enrichment, RSVPs report, member self-check-in, role-change gating, intake fields, welcome email. Backend pytest: 24/24 PASS (full lifecycle: apply → admin approve → mongo token retrieval → set-password → login → replay blocked; reject; reports/members enriched; reports/rsvps with parent_event filter; self-check-in idempotent; anniversary 29-31 Jul 2027 dates; MM 403 on role-change endpoints). Frontend: /apply renders & submits → 'Application received' confirmation; Login has Apply link; /admin Members shows 'PENDING APPLICATIONS' panel with Approve/Reject (7 awaiting review); Reports has new RSVPs sub-tab with member/event/RSVP'd/ticket/checked-in/guests columns; Members report code has events_attended + guests columns; Profile has intake-line and intake-completed-at inputs. ONE GAP FOUND: EditMemberDialog in Admin.jsx is missing intake_line + intake_completed_at INPUTS — only present as read-only DetailRows in MemberCardDialog. Review request explicitly states they should be editable in Admin → Edit Member dialog.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Admin.jsx → EditMemberDialog", "issue": "Missing INPUTS for intake_line and intake_completed_at. Dialog only contains em-email, em-first, em-line (line_name, NOT intake_line), em-address, em-state, em-zip, em-country, em-join-date, em-expires-preview, em-birthdate, em-status, em-chapter, em-role, em-new-password, em-save-btn. Backend PUT /api/members/{id} accepts intake_line/intake_completed_at but admin has no UI to edit them (only viewable on Member Card). Review request says: 'now also includes Intake Line + Intake Completion Date inputs (newly added). Saving persists them.' — NOT IMPLEMENTED on admin Edit dialog (Profile page DOES have them).", "selector": "[role='dialog'] [data-testid='em-intake-line'] / [data-testid='em-intake-completed-at']", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Multiple Radix Dialogs", "issues": ["Console warning: 'Missing Description or aria-describedby={undefined} for DialogContent' on EditMemberDialog and others (a11y warning, cosmetic)."]},
+      {"screen": "Dashboard charts", "issues": ["Recharts warning: 'The width(-1) and height(-1) of chart should be greater than 0' appears repeatedly (cosmetic; chart still renders once container has size)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_h.py",
+    "/app/test_reports/pytest/phase_h_results.xml"
+  ],
+  "action_items": [
+    "Add intake_line + intake_completed_at INPUTS to EditMemberDialog in /app/frontend/src/pages/Admin.jsx (with data-testid='em-intake-line' and 'em-intake-completed-at'). Wire to PUT /api/members/{id} payload. Backend already supports it (verified via curl + pytest test_admin_can_set_join_date pattern and TestProfileIntakeFields)."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is 4419 lines — exceeds 700-line guideline. Strongly recommend modular split (already flagged in iteration 9).",
+    "Public application flow has no rate limit on POST /api/auth/apply — vulnerable to bot signups. Consider adding a CAPTCHA or rate limiter (e.g., slowapi).",
+    "_send_set_password_email failures are silent (best-effort). If RESEND_API_KEY rotates or domain unverified, admin won't see this in approve response. Consider returning {email_sent: bool} alongside {ok, user_id}.",
+    "PublicApplicationIn fields like address/city/state/zip are NOT marked required at the Pydantic level (all default to ''). Frontend marks them as required with red asterisks. Backend should mirror — either make them required or remove the asterisk on /apply.",
+    "DialogContent components missing aria-describedby across EditMemberDialog/GuestManager/Apply (already noted in iteration 9). Low-priority a11y."
+  ],
+  "updated_files": ["/app/backend/tests/test_phase_h.py"],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "~92% — all flows verified except admin EditMemberDialog intake inputs which are missing"},
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123!, mm.tx@clubhaven.app/MemMgr123! — all verified",
+  "seed_data_creation": "Created ~7 TEST_* applications during testing (visible in 'Pending applications' panel). Also created one approved+set-password user via the auto end-to-end test. Created one TEST_SelfCheckIn_* event owned by admin for self-check-in idempotency tests. Created one TEST_welcome_* admin-created member for welcome email path.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend Phase H is 100% verified. Only outstanding gap is the EditMemberDialog missing intake_line/intake_completed_at INPUTS in Admin.jsx (Profile page has them; admin can only edit via /api/members/me curl or via Profile, NOT via Admin Edit Member UI). To re-run backend: REACT_APP_BACKEND_URL=https://club-express-lite.preview.emergentagent.com python -m pytest backend/tests/test_phase_h.py -v. Mongo collections of interest: applications (~10 docs incl. 7 pending), password_set_tokens (mix of used/unused), users (~1 new approved test user with set password). The RSVPs report row schema uses 'user_id' + 'rsvped_at' (not 'member_id' + 'rsvp_date') — main agent should align frontend column labels if they ever diverge. Gear mobile dialog scroll verified via code (max-h-[92vh] + overflow-y-auto grid layout in /app/frontend/src/pages/Gear.jsx line 91-97). Self-check-in panel + button data-testid='self-checkin-panel'/'self-checkin-btn'/'self-checkin-done' present in EventDetail.jsx line 181-191.",
+  "rca of the issue": "EditMemberDialog gap: code in Admin.jsx (lines ~1227-1228) renders intake_line/intake_completed_at as read-only DetailRow components in MemberCardDialog (view), but the EditMemberDialog form (separate component) was never updated to include the corresponding input fields. Fix: add two more <Input/> rows (intake_line text input + intake_completed_at month input, matching Profile.jsx pattern) inside EditMemberDialog's form, with data-testid 'em-intake-line' and 'em-intake-completed-at', and include them in the PUT payload on save."
+}

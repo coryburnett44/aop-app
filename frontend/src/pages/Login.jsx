@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -75,7 +75,7 @@ export default function Login() {
                     </Button>
                 </form>
                 <p className="mt-6 text-sm text-center text-muted-foreground">
-                    This is for Alpha Omega Phi members only. Once you complete Intake, you will be given access.
+                    Newly intaken? <Link to="/apply" className="text-primary font-semibold hover:underline" data-testid="login-apply-link">Apply for access</Link>
                 </p>
             </div>
         </div>

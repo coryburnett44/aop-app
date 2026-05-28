@@ -26,6 +26,7 @@ export default function Profile() {
     const [tab, setTab] = useState(params.get("tab") || "profile");
     const [form, setForm] = useState({
         first_name: "", middle_name: "", last_name: "", line_name: "",
+        intake_line: "", intake_completed_at: "",
         username: "", phone: "", bio: "", city: "", address: "", state: "", zip_code: "", country: "",
         birthdate: "", interests: "", avatar_url: "", chapter_id: "",
     });
@@ -46,6 +47,8 @@ export default function Profile() {
                 middle_name: user.middle_name || "",
                 last_name: user.last_name || "",
                 line_name: user.line_name || "",
+                intake_line: user.intake_line || "",
+                intake_completed_at: user.intake_completed_at || "",
                 username: user.username || "",
                 phone: user.phone || "",
                 bio: user.bio || "",
@@ -74,7 +77,8 @@ export default function Profile() {
         try {
             const payload = {
                 first_name: form.first_name, middle_name: form.middle_name, last_name: form.last_name,
-                line_name: form.line_name, username: form.username, phone: form.phone,
+                line_name: form.line_name, intake_line: form.intake_line, intake_completed_at: form.intake_completed_at,
+                username: form.username, phone: form.phone,
                 bio: form.bio, city: form.city, address: form.address,
                 state: form.state, zip_code: form.zip_code, country: form.country,
                 birthdate: form.birthdate,
@@ -209,6 +213,12 @@ export default function Profile() {
                                 <Input value={form.line_name} onChange={(e) => setForm({ ...form, line_name: e.target.value })} className="rounded-xl mt-1.5" placeholder="e.g. Patriot" data-testid="profile-line-name" /></div>
                             <div><Label>Username</Label>
                                 <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-username" /></div>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-4">
+                            <div><Label>Intake line</Label>
+                                <Input value={form.intake_line} onChange={(e) => setForm({ ...form, intake_line: e.target.value })} className="rounded-xl mt-1.5" placeholder="e.g. Spring '24 — A1" data-testid="profile-intake-line" /></div>
+                            <div><Label>Intake completion date <span className="text-xs text-muted-foreground font-normal">(Month/Year)</span></Label>
+                                <Input type="month" value={form.intake_completed_at} onChange={(e) => setForm({ ...form, intake_completed_at: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-intake-completed-at" /></div>
                         </div>
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-phone" /></div>

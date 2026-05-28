@@ -88,13 +88,13 @@ export default function Gear() {
             </section>
 
             <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
-                <DialogContent className="max-w-2xl p-0 overflow-hidden">
+                <DialogContent className="max-w-2xl p-0 overflow-hidden max-h-[92vh] sm:max-h-[90vh] grid grid-rows-[auto_1fr] sm:grid-rows-none">
                     {active && (
-                        <div className="grid sm:grid-cols-2">
-                            <div className="aspect-square sm:aspect-auto bg-slate-100">
+                        <div className="grid sm:grid-cols-2 overflow-y-auto" data-testid={`gear-dialog-${active.id}`}>
+                            <div className="aspect-square sm:aspect-auto bg-slate-100 sm:sticky sm:top-0 sm:h-full">
                                 {active.cover_image && <img src={active.cover_image} alt={active.name} className="w-full h-full object-cover" />}
                             </div>
-                            <div className="p-6">
+                            <div className="p-6 overflow-y-auto">
                                 <DialogHeader><DialogTitle className="font-heading text-2xl" style={{ color: NAVY }}>{active.name}</DialogTitle></DialogHeader>
                                 <div className="font-heading font-black text-3xl mt-2" style={{ color: RED }}>${active.price.toFixed(2)}</div>
                                 {active.sku && <div className="text-xs text-slate-500 mt-1 inline-flex items-center gap-1"><Tag className="h-3 w-3" />SKU: {active.sku}</div>}

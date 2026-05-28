@@ -131,6 +131,7 @@ export default function EventDetail() {
                     {hasRsvped && (
                         <GuestManager guests={myGuests} onSave={updateGuests} disabled={loading} />
                     )}
+                    <SelfCheckIn event={event} onCheckedIn={load} />
                     {rsvps.length > 0 && (
                         <div>
                             <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Going</div>
@@ -148,6 +149,49 @@ export default function EventDetail() {
             {subs.length > 0 && <SubEventsPanel subs={subs} />}
 
             {user?.role === "admin" && <CheckInPanel eventId={id} eventTitle={event.title} allowsTickets={event.allows_ticket_types} />}
+        </div>
+    );
+}
+
+function SelfCheckIn({ event, onCheckedIn }) {
+    const [busy, setBusy] = useState(false);
+    const [done, setDone] = useState(false);
+    const now = new Date();
+    const start = event.start_at ? new Date(event.start_at) : null;
+    // Show only after event has started — members can self-mark attendance
+    // during or after the event to keep a record.
+    const showSelf = start && start <= now;
+    if (!showSelf) return null;
+
+    async function selfCheckIn() {
+        setBusy(true);
+        try {
+            await api.post(`/events/${event.id}/self-check-in`);
+            setDone(true);
+            toast.success("Attendance recorded — thanks!");
+            onCheckedIn?.();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not record attendance");
+        }
+        setBusy(false);
+    }
+
+    if (done) {
+        return (
+            <div className="border-t border-border/40 pt-4 text-sm" data-testid="self-checkin-done">
+                <div className="text-xs uppercase tracking-wider font-semibold text-primary mb-1">Attendance recorded</div>
+                <p className="text-muted-foreground">Thanks for marking your attendance.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="border-t border-border/40 pt-4" data-testid="self-checkin-panel">
+            <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Were you here?</div>
+            <Button onClick={selfCheckIn} disabled={busy} variant="outline" className="w-full rounded-full" data-testid="self-checkin-btn">
+                {busy ? "Recording…" : "Mark me as attended"}
+            </Button>
+            <p className="text-[11px] text-muted-foreground mt-2">Use this if admins didn't check you in at the door — it keeps your attendance history accurate.</p>
         </div>
     );
 }

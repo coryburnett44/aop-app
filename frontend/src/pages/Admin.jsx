@@ -360,6 +360,60 @@ function PageDialog({ page, onSaved, trigger }) {
 }
 
 /* -------- Members admin: with role toggle, chapter/tier assignment -------- */
+function ApplicationsPanel({ onApproved }) {
+    const [apps, setApps] = useState([]);
+    const [busy, setBusy] = useState({});
+
+    async function load() {
+        try {
+            const { data } = await api.get("/admin/applications", { params: { status_filter: "pending" } });
+            setApps(data);
+        } catch { /* ignore */ }
+    }
+    useEffect(() => { load(); }, []);
+
+    async function review(id, action) {
+        const note = action === "reject" ? (prompt("Optional reason for rejection (sent in email):") || "") : "";
+        setBusy({ ...busy, [id]: true });
+        try {
+            await api.post(`/admin/applications/${id}/review`, { action, note });
+            toast.success(action === "approve" ? "Approved — set-password email sent" : "Application rejected");
+            await load();
+            if (action === "approve") onApproved?.();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Failed");
+        }
+        setBusy({ ...busy, [id]: false });
+    }
+
+    if (apps.length === 0) return null;
+    return (
+        <div className="bg-card rounded-2xl border-2 border-primary/20 shadow-warm p-5 mb-6" data-testid="applications-panel">
+            <div className="flex items-end justify-between mb-3 gap-3 flex-wrap">
+                <div>
+                    <div className="text-xs uppercase tracking-[0.25em] font-bold text-primary">Pending applications</div>
+                    <h3 className="font-heading text-xl font-bold mt-1">{apps.length} awaiting review</h3>
+                </div>
+            </div>
+            <div className="space-y-2">
+                {apps.map((a) => (
+                    <div key={a.id} className="border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3" data-testid={`application-${a.id}`}>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-heading text-base font-bold truncate">{a.name}</div>
+                            <div className="text-xs text-muted-foreground truncate">{a.email} · {a.intake_line || "no line"}{a.intake_completed_at ? ` · Intake ${a.intake_completed_at}` : ""}</div>
+                            <div className="text-xs text-muted-foreground mt-0.5 truncate">{[a.address, a.city, a.state, a.zip_code, a.country].filter(Boolean).join(", ")}</div>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                            <Button size="sm" variant="outline" disabled={busy[a.id]} onClick={() => review(a.id, "reject")} className="rounded-full" data-testid={`reject-application-${a.id}`}>Reject</Button>
+                            <Button size="sm" disabled={busy[a.id]} onClick={() => review(a.id, "approve")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`approve-application-${a.id}`}>Approve</Button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function MembersAdmin() {
     const [members, setMembers] = useState([]);
     const [chapters, setChapters] = useState([]);
@@ -415,6 +469,7 @@ function MembersAdmin() {
 
     return (
         <div>
+            <ApplicationsPanel onApproved={load} />
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
                 <NewMemberDialog chapters={chapters} tiers={tiers} onSaved={load} />
@@ -1144,9 +1199,13 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">Member card</DialogTitle></DialogHeader>
                 <div className="flex items-center gap-4 mt-1">
-                    <div className="w-16 h-16 rounded-full bg-primary/15 text-primary grid place-items-center font-heading font-black text-2xl">
-                        {(details.name || details.email)[0]?.toUpperCase()}
-                    </div>
+                    {details.avatar_url ? (
+                        <img src={details.avatar_url} alt={details.name} className="w-20 h-20 rounded-full object-cover border-2 border-white shadow-warm" data-testid={`member-card-${member.id}-avatar`} />
+                    ) : (
+                        <div className="w-20 h-20 rounded-full bg-primary/15 text-primary grid place-items-center font-heading font-black text-2xl">
+                            {(details.name || details.email)[0]?.toUpperCase()}
+                        </div>
+                    )}
                     <div className="flex-1">
                         <div className="font-heading text-xl font-bold">{details.name}</div>
                         {details.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary">"{details.line_name}"</div>}
@@ -1161,12 +1220,15 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                     <DetailRow label="Email" value={details.email} />
                     {details.username && <DetailRow label="Username" value={`@${details.username}`} />}
                     <DetailRow label="Phone" value={details.phone} />
-                    <DetailRow label="Address" value={[details.address, details.city].filter(Boolean).join(", ")} />
+                    <DetailRow label="Address" value={[details.address, details.city, details.state, details.zip_code].filter(Boolean).join(", ")} />
+                    <DetailRow label="Country" value={details.country} />
                     <DetailRow label="Birthdate" value={details.birthdate ? format(parseISO(details.birthdate.length === 10 ? `${details.birthdate}T00:00:00` : details.birthdate), "MMM d, yyyy") : ""} />
                     <DetailRow label="Branch of service" value={details.branch_of_service} />
+                    <DetailRow label="Intake line" value={details.intake_line} />
+                    <DetailRow label="Intake completed" value={details.intake_completed_at} />
                     <DetailRow label="Chapter" value={chapter?.name} />
                     <DetailRow label="Member type" value={tier?.name} />
-                    <DetailRow label="Joined" value={details.created_at ? format(parseISO(details.created_at), "MMM d, yyyy") : ""} />
+                    <DetailRow label="Date joined" value={details.join_date ? format(parseISO(details.join_date), "MMM d, yyyy") : (details.created_at ? format(parseISO(details.created_at), "MMM d, yyyy") : "")} />
                     <DetailRow label="Membership expires" value={details.membership_expires_at ? format(parseISO(details.membership_expires_at), "MMM d, yyyy") : ""} />
                     {details.bio && (
                         <div className="pt-2 border-t">
