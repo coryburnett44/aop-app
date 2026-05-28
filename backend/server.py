@@ -127,6 +127,8 @@ def public_user(u: dict) -> dict:
         "state": u.get("state", ""),
         "zip_code": u.get("zip_code", ""),
         "country": u.get("country", ""),
+        "chat_email_notifications": u.get("chat_email_notifications", True),
+        "chat_sms_notifications": u.get("chat_sms_notifications", True),
         "birthdate": u.get("birthdate", ""),
         "branch_of_service": u.get("branch_of_service", ""),
         "join_date": u.get("join_date") or u.get("created_at"),
@@ -343,6 +345,9 @@ class ProfileUpdateIn(BaseModel):
     branch_of_service: Optional[str] = None
     interests: Optional[List[str]] = None
     avatar_url: Optional[str] = None
+    chat_email_notifications: Optional[bool] = None
+    chat_sms_notifications: Optional[bool] = None
+
 
 class StatusOverrideIn(BaseModel):
     status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
@@ -3276,6 +3281,59 @@ RESEND_FROM = os.environ.get("RESEND_FROM", "Alpha Omega Phi <onboarding@resend.
 if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
 
+# ---------- Twilio SMS (graceful no-op if creds absent) ----------
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
+_twilio_client = None
+if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+    try:
+        from twilio.rest import Client as TwilioClient
+        _twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        logger.info("Twilio SMS client initialized")
+    except Exception as e:
+        logger.warning(f"Twilio init failed: {e}")
+        _twilio_client = None
+else:
+    logger.info("Twilio SMS disabled (TWILIO_ACCOUNT_SID/TOKEN not set)")
+
+
+def _normalize_phone_e164(raw: str) -> Optional[str]:
+    """Best-effort E.164 normalization for US-default numbers. Returns None if
+    we can't make sense of the input. Accepts: '5551234567', '(555) 123-4567',
+    '+15551234567', '1-555-123-4567'."""
+    if not raw:
+        return None
+    digits = "".join(c for c in raw if c.isdigit() or c == "+")
+    if digits.startswith("+"):
+        digits = "+" + "".join(c for c in digits[1:] if c.isdigit())
+        return digits if len(digits) >= 9 else None
+    bare = "".join(c for c in digits if c.isdigit())
+    if len(bare) == 10:
+        return f"+1{bare}"
+    if len(bare) == 11 and bare.startswith("1"):
+        return f"+{bare}"
+    return None
+
+
+async def send_sms(to_phone: str, body: str) -> bool:
+    """Send an SMS via Twilio. Returns True on success, False on any failure
+    (missing creds, invalid number, Twilio error). Never raises."""
+    if not _twilio_client or not TWILIO_FROM_NUMBER:
+        return False
+    e164 = _normalize_phone_e164(to_phone)
+    if not e164:
+        return False
+    try:
+        def _send():
+            return _twilio_client.messages.create(to=e164, from_=TWILIO_FROM_NUMBER, body=body[:1500])
+        await asyncio.to_thread(_send)
+        return True
+    except Exception as e:
+        logger.warning(f"SMS send failed to {e164}: {e}")
+        return False
+
+
 
 async def send_welcome_email(to_email: str, name: str, temp_password: str) -> bool:
     """Send a one-shot welcome email to a newly created member containing their
@@ -4454,18 +4512,31 @@ async def upload_my_avatar(file: UploadFile = File(...), user: dict = Depends(ge
 
 
 # ---------- Chat email digest service (5-min debounce) ----------
-CHAT_DIGEST_DELAY_SECONDS = 5 * 60  # 5 minutes
+CHAT_DIGEST_DELAY_SECONDS = 15 * 60  # 15 minutes per user request (10-20 range)
 
 async def queue_chat_notifications(conv: dict, message: dict, sender: dict):
     """Insert one pending notification per recipient (excluding sender).
-    A background task wakes every 60s, sends consolidated emails for any
-    recipient whose oldest pending notification has aged past CHAT_DIGEST_DELAY_SECONDS,
-    and marks them sent. Read-receipts cancel pending notifications."""
+    A background task wakes every 60s, sends consolidated emails (+SMS if phone on file)
+    for any recipient whose oldest pending notification has aged past CHAT_DIGEST_DELAY_SECONDS,
+    and marks them sent. Read-receipts cancel pending notifications. Recipients who have
+    opted out of BOTH email and SMS are skipped at queue time."""
     due_at = iso(now_utc() + timedelta(seconds=CHAT_DIGEST_DELAY_SECONDS))
+    member_ids = [rid for rid in conv.get("member_ids", []) if rid != sender["id"]]
+    if not member_ids:
+        return
+    # Bulk-fetch recipient prefs to skip fully-opted-out users
+    recipients = await db.users.find(
+        {"id": {"$in": member_ids}},
+        {"_id": 0, "id": 1, "chat_email_notifications": 1, "chat_sms_notifications": 1},
+    ).to_list(len(member_ids))
+    prefs = {r["id"]: r for r in recipients}
     docs = []
-    for rid in conv.get("member_ids", []):
-        if rid == sender["id"]:
-            continue
+    for rid in member_ids:
+        p = prefs.get(rid, {})
+        email_on = p.get("chat_email_notifications", True)
+        sms_on = p.get("chat_sms_notifications", True)
+        if not email_on and not sms_on:
+            continue  # fully opted out
         docs.append({
             "id": str(uuid.uuid4()),
             "recipient_id": rid,
@@ -4530,7 +4601,8 @@ def _html_escape(s: str) -> str:
 
 async def _chat_digest_loop():
     """Background loop: every 60s, batch pending notifications older than due_at
-    by (recipient, conversation), send one consolidated email per bundle, mark sent."""
+    by (recipient, conversation), send one consolidated email + SMS (if opted-in)
+    per bundle, mark sent."""
     while True:
         try:
             now_iso_s = iso(now_utc())
@@ -4553,14 +4625,36 @@ async def _chat_digest_loop():
                         {"$set": {"status": "skipped", "sent_at": _now_iso()}},
                     )
                     continue
-                ok = await _send_chat_digest_email(recipient, conv, notifs)
+                email_on = recipient.get("chat_email_notifications", True)
+                sms_on = recipient.get("chat_sms_notifications", True)
+                email_sent = False
+                sms_sent = False
+                if email_on:
+                    email_sent = await _send_chat_digest_email(recipient, conv, notifs)
+                if sms_on and recipient.get("phone"):
+                    sms_sent = await _send_chat_digest_sms(recipient, conv, notifs)
+                # Mark sent if EITHER channel made it through; failed only if both failed AND both were attempted
+                attempted_any = email_on or (sms_on and recipient.get("phone"))
+                if not attempted_any:
+                    final = "skipped"  # fully opted-out (shouldn't happen due to queue filter)
+                elif email_sent or sms_sent:
+                    final = "sent"
+                else:
+                    final = "failed"
                 await db.chat_notifications.update_many(
                     {"id": {"$in": [n["id"] for n in notifs]}},
-                    {"$set": {"status": "sent" if ok else "failed", "sent_at": _now_iso()}},
+                    {"$set": {"status": final, "sent_at": _now_iso(), "email_sent": email_sent, "sms_sent": sms_sent}},
                 )
         except Exception as e:
             logger.error(f"chat digest loop iteration error: {e}")
         await asyncio.sleep(60)
+
+
+async def _send_chat_digest_sms(recipient: dict, conv: dict, notifs: list) -> bool:
+    """Per user request: short, clear copy. Recipient has phone + sms_on already checked."""
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    body = f"You have a new message in Alpha Omega Phi chat. Open the portal to read it: {frontend.rstrip('/')}/chat"
+    return await send_sms(recipient["phone"], body)
 
 
 # ---------- Mount ----------

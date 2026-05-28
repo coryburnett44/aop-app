@@ -3,6 +3,7 @@ import { useSearchParams, Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
+import { Switch } from "../components/ui/switch";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
@@ -194,6 +195,7 @@ export default function Profile() {
                 <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
                     <TabsTrigger value="profile" className="rounded-full data-[state=active]:bg-background" data-testid="tab-profile">Profile</TabsTrigger>
                     <TabsTrigger value="security" className="rounded-full data-[state=active]:bg-background" data-testid="tab-security">Security</TabsTrigger>
+                    <TabsTrigger value="notifications" className="rounded-full data-[state=active]:bg-background" data-testid="tab-notifications">Notifications</TabsTrigger>
                     <TabsTrigger value="activity" className="rounded-full data-[state=active]:bg-background" data-testid="tab-activity">Activity ({activity.length})</TabsTrigger>
                     <TabsTrigger value="transactions" className="rounded-full data-[state=active]:bg-background" data-testid="tab-transactions">Transactions ({transactions.length})</TabsTrigger>
                     <TabsTrigger value="awards" className="rounded-full data-[state=active]:bg-background" data-testid="tab-awards">Awards ({awards.length})</TabsTrigger>
@@ -264,6 +266,10 @@ export default function Profile() {
                             {changingPwd ? "Updating…" : "Update password"}
                         </Button>
                     </form>
+                </TabsContent>
+
+                <TabsContent value="notifications" className="mt-6">
+                    <NotificationPrefs user={user} onSaved={(updated) => setUser(updated)} />
                 </TabsContent>
 
                 <TabsContent value="activity" className="mt-6">
@@ -409,6 +415,82 @@ function ActivityItem({ a }) {
                     <div className="text-sm text-muted-foreground mt-1">${a.meta.amount.toFixed(2)} {a.meta.currency} · {a.meta.status}</div>
                 )}
             </div>
+        </div>
+    );
+}
+
+function NotificationPrefs({ user, onSaved }) {
+    const [emailOn, setEmailOn] = useState(user?.chat_email_notifications !== false);
+    const [smsOn, setSmsOn] = useState(user?.chat_sms_notifications !== false);
+    const [busy, setBusy] = useState(false);
+
+    async function save() {
+        setBusy(true);
+        try {
+            const { data } = await api.put("/members/me", {
+                chat_email_notifications: emailOn,
+                chat_sms_notifications: smsOn,
+            });
+            onSaved?.(data);
+            toast.success("Notification preferences saved");
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not save");
+        }
+        setBusy(false);
+    }
+
+    const hasPhone = !!user?.phone;
+
+    return (
+        <div className="bg-card rounded-2xl p-6 border border-border shadow-warm max-w-2xl space-y-6" data-testid="notification-prefs">
+            <div>
+                <h2 className="font-heading text-xl font-bold">Chat message notifications</h2>
+                <p className="text-sm text-muted-foreground mt-1">When someone messages you in the Alpha Omega Phi chat, we can ping you outside the portal. We bundle messages over 15 minutes so you don't get spammed for back-and-forth threads.</p>
+            </div>
+
+            <ToggleRow
+                title="Email me about new chat messages"
+                description="A consolidated email is sent ~15 minutes after a message arrives, only if you haven't opened the chat by then."
+                checked={emailOn}
+                onChange={setEmailOn}
+                testid="notif-email-toggle"
+            />
+
+            <ToggleRow
+                title="Text me about new chat messages"
+                description={hasPhone
+                    ? `We'll text ${user.phone}. We bundle messages and only send if you haven't opened the chat within 15 minutes.`
+                    : "Add a phone number in the Profile tab first, then we can text you."
+                }
+                checked={smsOn}
+                onChange={setSmsOn}
+                disabled={!hasPhone}
+                testid="notif-sms-toggle"
+            />
+
+            <div className="pt-3 border-t border-border/40 flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">If you turn both off, you'll only see new messages by opening the chat tab.</p>
+                <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="notif-save-btn">
+                    {busy ? "Saving…" : "Save"}
+                </Button>
+            </div>
+        </div>
+    );
+}
+
+function ToggleRow({ title, description, checked, onChange, disabled, testid }) {
+    return (
+        <div className={`flex items-start justify-between gap-4 ${disabled ? "opacity-50" : ""}`}>
+            <div className="flex-1">
+                <div className="font-medium">{title}</div>
+                <div className="text-xs text-muted-foreground mt-1 leading-relaxed">{description}</div>
+            </div>
+            <Switch
+                checked={checked}
+                onCheckedChange={onChange}
+                disabled={disabled}
+                data-testid={testid}
+            />
         </div>
     );
 }
