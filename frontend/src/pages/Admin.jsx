@@ -612,6 +612,9 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                 phone: member.phone || "",
                 city: member.city || "",
                 address: member.address || "",
+                state: member.state || "",
+                zip_code: member.zip_code || "",
+                country: member.country || "",
                 birthdate: member.birthdate ? member.birthdate.slice(0, 10) : "",
                 branch_of_service: member.branch_of_service || "",
                 bio: member.bio || "",
@@ -619,6 +622,8 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                 chapter_id: member.chapter_id || "",
                 tier_id: member.tier_id || "",
                 role: member.role,
+                admin_role: member.admin_role || "full",
+                join_date: member.join_date ? member.join_date.slice(0, 10) : "",
                 member_status: member.status_override || member.status || "active",
                 new_password: "",
             });
@@ -630,6 +635,10 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
         try {
             const payload = Object.fromEntries(Object.entries(form).filter(([_, v]) => v !== "" && v !== null && v !== undefined));
             if (!payload.new_password) delete payload.new_password;
+            // Convert join_date YYYY-MM-DD to ISO timestamp so backend recomputes membership_expires_at
+            if (payload.join_date && payload.join_date.length === 10) {
+                payload.join_date = new Date(`${payload.join_date}T00:00:00Z`).toISOString();
+            }
             await api.put(`/members/${member.id}`, payload);
             toast.success("Saved");
             setOpen(false);
@@ -662,6 +671,25 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                     <div className="grid grid-cols-2 gap-3">
                         <div><Label>Address</Label><Input value={form.address || ""} onChange={(e) => setForm({ ...form, address: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-address" /></div>
                         <div><Label>City</Label><Input value={form.city || ""} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div><Label>State</Label><Input value={form.state || ""} onChange={(e) => setForm({ ...form, state: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-state" placeholder="TX" /></div>
+                        <div><Label>Zip code</Label><Input value={form.zip_code || ""} onChange={(e) => setForm({ ...form, zip_code: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-zip" placeholder="77001" /></div>
+                        <div><Label>Country</Label><Input value={form.country || ""} onChange={(e) => setForm({ ...form, country: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-country" placeholder="USA" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <Label>Date joined <span className="text-xs text-muted-foreground font-normal">(recomputes renewal date)</span></Label>
+                            <Input type="date" value={form.join_date || ""} onChange={(e) => setForm({ ...form, join_date: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-join-date" />
+                        </div>
+                        <div>
+                            <Label>Membership expires (auto from join date)</Label>
+                            <div className="rounded-xl mt-1.5 px-3 py-2 bg-muted/40 text-sm text-muted-foreground" data-testid="em-expires-preview">
+                                {form.join_date
+                                    ? format(new Date(new Date(`${form.join_date}T00:00:00Z`).getTime() + 365 * 86400000), "MMM d, yyyy")
+                                    : (member.membership_expires_at ? format(parseISO(member.membership_expires_at), "MMM d, yyyy") : "—")}
+                            </div>
+                        </div>
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                         <div><Label>Birthdate</Label><Input type="date" value={form.birthdate || ""} onChange={(e) => setForm({ ...form, birthdate: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-birthdate" /></div>
@@ -1426,8 +1454,11 @@ function ComposeBlast() {
     const [segment, setSegment] = useState("active");
     const [tier_id, setTierId] = useState("");
     const [chapter_id, setChapterId] = useState("");
+    const [individualId, setIndividualId] = useState("");
+    const [memberSearch, setMemberSearch] = useState("");
     const [tiers, setTiers] = useState([]);
     const [chapters, setChapters] = useState([]);
+    const [members, setMembers] = useState([]);
     const [templates, setTemplates] = useState([]);
     const [signatures, setSignatures] = useState([]);
     const [preview, setPreview] = useState(null);
@@ -1436,6 +1467,7 @@ function ComposeBlast() {
     useEffect(() => {
         api.get("/tiers").then(({ data }) => setTiers(data)).catch(() => {});
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
+        api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
         api.get("/email/templates").then(({ data }) => setTemplates(data)).catch(() => {});
         api.get("/email/signatures").then(({ data }) => setSignatures(data)).catch(() => {});
     }, []);
@@ -1458,7 +1490,12 @@ function ComposeBlast() {
     }
 
     function buildPayload() {
-        return { subject, body_html, segment, tier_id: tier_id || undefined, chapter_id: chapter_id || undefined };
+        const payload = { subject, body_html, segment, tier_id: tier_id || undefined, chapter_id: chapter_id || undefined };
+        if (segment === "individual") {
+            payload.segment = "custom";
+            payload.custom_user_ids = individualId ? [individualId] : [];
+        }
+        return payload;
     }
 
     async function runPreview() {
@@ -1526,6 +1563,7 @@ function ComposeBlast() {
                                 <SelectItem value="admins">Admins only</SelectItem>
                                 <SelectItem value="tier">By tier</SelectItem>
                                 <SelectItem value="chapter">By chapter</SelectItem>
+                                <SelectItem value="individual">Individual member</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -1545,6 +1583,39 @@ function ComposeBlast() {
                                 <SelectTrigger className="rounded-xl mt-1.5"><SelectValue placeholder="Pick" /></SelectTrigger>
                                 <SelectContent>{chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                             </Select>
+                        </div>
+                    )}
+                    {segment === "individual" && (
+                        <div className="sm:col-span-2">
+                            <Label>Member</Label>
+                            <Input
+                                placeholder="Search by name or email…"
+                                value={memberSearch}
+                                onChange={(e) => setMemberSearch(e.target.value)}
+                                className="rounded-xl mt-1.5"
+                                data-testid="email-individual-search"
+                            />
+                            <div className="max-h-40 overflow-y-auto mt-2 border border-border rounded-xl bg-muted/20">
+                                {members
+                                    .filter((m) => {
+                                        if (!memberSearch) return true;
+                                        const q = memberSearch.toLowerCase();
+                                        return m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q);
+                                    })
+                                    .slice(0, 30)
+                                    .map((m) => (
+                                        <button
+                                            key={m.id}
+                                            type="button"
+                                            onClick={() => setIndividualId(m.id)}
+                                            className={`w-full text-left px-3 py-2 hover:bg-muted/60 border-b last:border-0 ${individualId === m.id ? "bg-primary/10" : ""}`}
+                                            data-testid={`email-individual-pick-${m.id}`}
+                                        >
+                                            <div className="text-sm font-medium">{m.name}</div>
+                                            <div className="text-xs text-muted-foreground">{m.email}</div>
+                                        </button>
+                                    ))}
+                            </div>
                         </div>
                     )}
                 </div>

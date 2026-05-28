@@ -1,0 +1,31 @@
+{
+  "summary": "Phase G — major feature batch (avatar upload, profile state/zip/country, admin join_date recompute, RSVP guests, anniversary parent + 5 sub-events, all_access check-in ticket type, chat email digest queue/cancel, individual email blast). 18/18 backend pytest cases PASS. Frontend UI verified end-to-end on /profile, /admin (Members + Email Compose), and /events/{anniversary_parent} + /events/{sip_and_paint}. All data-testid hooks present and correctly wired. Live preview on Email Compose with Individual Member segment correctly shows 'Recipients: 1' and sample = picked member. EditMemberDialog expires preview updates live (2025-03-10 → Mar 10, 2026 = +365d).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "GuestManager dialog / EditMemberDialog", "issues": ["Radix Dialog missing Description / aria-describedby (a11y warning printed in console). Cosmetic — does not affect functionality but should be addressed for screen-reader users."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_g.py",
+    "/app/test_reports/pytest/phase_g_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is now 3969 lines — exceeds the 700-line guideline. Strongly recommend splitting into modules (events.py, chat.py, email.py, members.py, auth.py, seed.py). Deferred to backlog per user choice 1c, but flagging for future-iteration prioritization.",
+    "POST /api/events/{id}/rsvp uses toggle semantics (same endpoint adds AND removes). This is functionally fine but couples DELETE semantics to a POST and led to non-deterministic test state until tests added explicit reset helpers. Consider a separate DELETE /api/events/{id}/rsvp for clarity.",
+    "queue_chat_notifications creates one row per recipient per message rather than upserting against a (recipient_id, conversation_id, status='pending') key. This means a chatty thread can accumulate many pending rows for the same recipient+conversation; the digest loop must aggregate them (verified in _send_chat_digest_email). Functionally correct, just denser than needed. Optional optimization: upsert on (recipient_id, conversation_id) with the earliest due_at + append to an aggregated preview list.",
+    "Avatar upload reads the full file into memory before bouncing to put_object (line 3805–3826). For the 10MB cap this is fine, but if the cap is raised later this should be streamed to object storage. Low priority.",
+    "Camera capture path (AvatarUploader) gracefully renders data-testid='avatar-cam-error' when getUserMedia is denied — confirmed via codepath review; not exercised in headless test per agent_to_agent_context_note."
+  ],
+  "updated_files": ["/app/backend/tests/test_phase_g.py"],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% on tested flows (profile state/zip/country persistence, anniversary 5 sub-events, RSVP+guests UI, EditMemberDialog live expires preview, Email Compose individual segment + live recipient_count=1)"},
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123!, maya.patel@clubhaven.app/Demo123! — all verified",
+  "seed_data_creation": "Test data created during runs: TEST_GuestA/B (RSVP guests), UI_Guest_A/B (UI guests), one avatar file in object storage under avatars/{member_id}/. Demo member maya.patel had join_date changed to 2025-06-15 for the recompute test — note this may affect other tests that rely on her original membership_expires_at. Banquet event has one check-in record for member@clubhaven.app with ticket_type='all_access'.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase G is fully verified. To re-run: REACT_APP_BACKEND_URL=https://club-express-lite.preview.emergentagent.com python -m pytest backend/tests/test_phase_g.py -v. The anniversary parent event id was 444769bf-5a23-4ed8-973c-ad0e6e187cda and Sip&Paint sub-event was 55d34605-a7aa-4add-9d85-15141f7ac066 at testing time. chat_notifications collection had 4 rows (all cancelled) at end of test — proving the queue → cancel flow works end-to-end via /conversations/{id}/messages then /conversations/{id}/read. Background digest loop _chat_digest_loop runs every 60s (verified started in lifespan event); 5-min wait not exercised but the doc shape (due_at = created_at + 5min, status='pending'/'cancelled') is correct.",
+  "rca of the issue": "N/A — no defects found. Two initial test failures were artifacts of pre-existing RSVP/check-in state from manual smoke-testing and were fixed by adding explicit reset helpers in test_phase_g.py (not production code changes)."
+}

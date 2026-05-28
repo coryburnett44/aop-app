@@ -122,6 +122,9 @@ def public_user(u: dict) -> dict:
         "city": u.get("city", ""),
         "phone": u.get("phone", ""),
         "address": u.get("address", ""),
+        "state": u.get("state", ""),
+        "zip_code": u.get("zip_code", ""),
+        "country": u.get("country", ""),
         "birthdate": u.get("birthdate", ""),
         "branch_of_service": u.get("branch_of_service", ""),
         "join_date": u.get("join_date") or u.get("created_at"),
@@ -304,6 +307,9 @@ class ProfileUpdateIn(BaseModel):
     city: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: Optional[str] = None
     birthdate: Optional[str] = None
     branch_of_service: Optional[str] = None
     interests: Optional[List[str]] = None
@@ -366,6 +372,9 @@ class AdminCreateMemberIn(BaseModel):
     phone: str = ""
     city: str = ""
     address: str = ""
+    state: str = ""
+    zip_code: str = ""
+    country: str = ""
     birthdate: str = ""
     branch_of_service: str = ""
     role: Literal["member", "admin"] = "member"
@@ -373,6 +382,7 @@ class AdminCreateMemberIn(BaseModel):
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
     member_status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
+    join_date: Optional[datetime] = None
 
 class AdminUpdateMemberIn(BaseModel):
     email: Optional[EmailStr] = None
@@ -386,6 +396,9 @@ class AdminUpdateMemberIn(BaseModel):
     city: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: Optional[str] = None
     birthdate: Optional[str] = None
     branch_of_service: Optional[str] = None
     interests: Optional[List[str]] = None
@@ -395,6 +408,7 @@ class AdminUpdateMemberIn(BaseModel):
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
     membership_expires_at: Optional[datetime] = None
+    join_date: Optional[datetime] = None
     member_status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
     deceased_at: Optional[str] = None
     new_password: Optional[str] = None
@@ -417,6 +431,8 @@ class EventIn(BaseModel):
     cover_image: str = ""
     category: str = "general"
     price: float = 0.0
+    parent_event_id: Optional[str] = None
+    allows_ticket_types: bool = False  # if True, admins can assign vip/all_access/general
 
 class EventUpdateIn(BaseModel):
     title: Optional[str] = None
@@ -428,6 +444,16 @@ class EventUpdateIn(BaseModel):
     cover_image: Optional[str] = None
     category: Optional[str] = None
     price: Optional[float] = None
+    parent_event_id: Optional[str] = None
+    allows_ticket_types: Optional[bool] = None
+
+class GuestIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: Optional[str] = ""
+    phone: Optional[str] = ""
+
+class EventRsvpIn(BaseModel):
+    guests: List[GuestIn] = []  # optional: register guests alongside
 
 class NewsIn(BaseModel):
     title: str
@@ -781,6 +807,9 @@ def event_out(e: dict) -> dict:
         "category": e.get("category", "general"),
         "price": e.get("price", 0.0),
         "rsvp_count": e.get("rsvp_count", 0),
+        "guest_count": e.get("guest_count", 0),
+        "parent_event_id": e.get("parent_event_id"),
+        "allows_ticket_types": e.get("allows_ticket_types", False),
         "created_at": e.get("created_at"),
     }
 
@@ -834,26 +863,62 @@ async def delete_event(event_id: str, _: dict = Depends(admin_tab_dep("events"))
     return {"ok": True}
 
 @api.post("/events/{event_id}/rsvp")
-async def rsvp_event(event_id: str, user: dict = Depends(get_current_user)):
+async def rsvp_event(event_id: str, body: Optional[EventRsvpIn] = None, user: dict = Depends(get_current_user)):
     e = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not e:
         raise HTTPException(status_code=404, detail="Event not found")
     existing = await db.rsvps.find_one({"event_id": event_id, "user_id": user["id"]})
     if existing:
+        prev_guests = len(existing.get("guests", []) or [])
         await db.rsvps.delete_one({"_id": existing["_id"]})
-        await db.events.update_one({"id": event_id}, {"$inc": {"rsvp_count": -1}})
+        await db.events.update_one(
+            {"id": event_id},
+            {"$inc": {"rsvp_count": -1, "guest_count": -prev_guests}},
+        )
         return {"rsvped": False}
-    if e.get("capacity", 0) > 0 and e.get("rsvp_count", 0) >= e["capacity"]:
-        raise HTTPException(status_code=400, detail="Event is full")
+    guests = [g.model_dump() for g in (body.guests if body else [])]
+    seats_needed = 1 + len(guests)
+    if e.get("capacity", 0) > 0 and (e.get("rsvp_count", 0) + e.get("guest_count", 0) + seats_needed) > e["capacity"]:
+        raise HTTPException(status_code=400, detail="Event does not have enough seats")
     await db.rsvps.insert_one({
         "id": str(uuid.uuid4()),
         "event_id": event_id,
         "user_id": user["id"],
         "user_name": user.get("name", ""),
+        "guests": guests,
         "created_at": iso(now_utc()),
     })
-    await db.events.update_one({"id": event_id}, {"$inc": {"rsvp_count": 1}})
-    return {"rsvped": True}
+    await db.events.update_one(
+        {"id": event_id},
+        {"$inc": {"rsvp_count": 1, "guest_count": len(guests)}},
+    )
+    return {"rsvped": True, "guests": len(guests)}
+
+@api.put("/events/{event_id}/rsvp/guests")
+async def update_rsvp_guests(event_id: str, body: EventRsvpIn, user: dict = Depends(get_current_user)):
+    """Update the guest list on an existing RSVP without toggling it."""
+    rsvp = await db.rsvps.find_one({"event_id": event_id, "user_id": user["id"]})
+    if not rsvp:
+        raise HTTPException(status_code=404, detail="You have not RSVPed for this event")
+    e = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    prev_guests = len(rsvp.get("guests", []) or [])
+    new_guests = [g.model_dump() for g in body.guests]
+    delta = len(new_guests) - prev_guests
+    if e.get("capacity", 0) > 0 and (e.get("rsvp_count", 0) + e.get("guest_count", 0) + delta) > e["capacity"]:
+        raise HTTPException(status_code=400, detail="Event does not have enough seats")
+    await db.rsvps.update_one({"_id": rsvp["_id"]}, {"$set": {"guests": new_guests}})
+    if delta:
+        await db.events.update_one({"id": event_id}, {"$inc": {"guest_count": delta}})
+    return {"ok": True, "guests": len(new_guests)}
+
+@api.get("/events/{event_id}/sub-events")
+async def list_sub_events(event_id: str):
+    """List child events under a parent event (e.g. 10-Year anniversary umbrella)."""
+    cursor = db.events.find({"parent_event_id": event_id}, {"_id": 0}).sort("start_at", 1).limit(100)
+    items = await cursor.to_list(100)
+    return [event_out(e) for e in items]
 
 @api.get("/events/{event_id}/rsvps")
 async def list_rsvps(event_id: str):
@@ -1109,6 +1174,13 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
     uid = str(uuid.uuid4())
     created = now_utc()
     composed_name = body.name or " ".join(p for p in [body.first_name, body.middle_name, body.last_name] if p).strip() or email.split("@")[0]
+    join_dt = body.join_date or created
+    if isinstance(join_dt, datetime):
+        join_iso = iso(join_dt)
+        exp_iso = iso(join_dt + timedelta(days=365))
+    else:
+        join_iso = iso(created)
+        exp_iso = iso(created + timedelta(days=365))
     doc = {
         "id": uid,
         "email": email,
@@ -1121,6 +1193,9 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
         "line_name": body.line_name,
         "phone": body.phone,
         "address": body.address,
+        "state": body.state,
+        "zip_code": body.zip_code,
+        "country": body.country,
         "birthdate": body.birthdate,
         "branch_of_service": body.branch_of_service,
         "role": body.role,
@@ -1133,7 +1208,8 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
         "chapter_id": body.chapter_id,
         "status_override": body.member_status,
         "admin_role": (body.admin_role or "full") if body.role == "admin" else None,
-        "membership_expires_at": iso(created + timedelta(days=365)),
+        "join_date": join_iso,
+        "membership_expires_at": exp_iso,
         "email_verified": True,
         "created_at": iso(created),
     }
@@ -1186,6 +1262,13 @@ async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, _: dict =
     # Date field
     if "membership_expires_at" in updates and isinstance(updates["membership_expires_at"], datetime):
         updates["membership_expires_at"] = iso(updates["membership_expires_at"])
+    # Join date: when admin changes it, recompute membership_expires_at = join_date + 365d
+    # unless admin also explicitly set membership_expires_at in the same request.
+    if "join_date" in updates and isinstance(updates["join_date"], datetime):
+        jd = updates["join_date"]
+        updates["join_date"] = iso(jd)
+        if "membership_expires_at" not in updates:
+            updates["membership_expires_at"] = iso(jd + timedelta(days=365))
     if body.new_password:
         updates["password_hash"] = hash_password(body.new_password)
     if updates:
@@ -1914,6 +1997,8 @@ async def startup():
     await db.chat_files.create_index("storage_path")
     await db.email_signatures.create_index("id", unique=True)
     await db.email_signatures.create_index([("owner_id", 1), ("kind", 1)])
+    await db.chat_notifications.create_index("id", unique=True)
+    await db.chat_notifications.create_index([("status", 1), ("due_at", 1)])
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -1925,6 +2010,9 @@ async def startup():
     await reconcile_chapters()
     await reconcile_tiers()
     await reconcile_awards()
+    await seed_anniversary_subevents()
+    # Start background tasks
+    asyncio.create_task(_chat_digest_loop())
 
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")
@@ -2407,7 +2495,7 @@ async def events_calendar(month: Optional[str] = None):
 class CheckInIn(BaseModel):
     user_id: Optional[str] = None
     guest_name: Optional[str] = None  # for walk-in non-members
-    ticket_type: Literal["vip", "general", "guest", "speaker", "volunteer"] = "general"
+    ticket_type: Literal["vip", "all_access", "general", "guest", "speaker", "volunteer"] = "general"
     note: str = ""
 
 @api.post("/events/{event_id}/check-in")
@@ -3223,6 +3311,11 @@ async def mark_read(cid: str, user: dict = Depends(get_current_user)):
     if not c:
         raise HTTPException(status_code=404, detail="Conversation not found")
     await db.conversations.update_one({"id": cid}, {"$set": {f"read_state.{user['id']}": _now_iso()}})
+    # Cancel any pending email digest notifications for this user+conversation
+    await db.chat_notifications.update_many(
+        {"recipient_id": user["id"], "conversation_id": cid, "status": "pending"},
+        {"$set": {"status": "cancelled", "cancelled_at": _now_iso()}},
+    )
     return {"ok": True}
 
 
@@ -3273,6 +3366,11 @@ async def send_message(cid: str, body: MessageIn, user: dict = Depends(get_curre
     )
     payload = message_out(doc)
     await chat_hub.push(c.get("member_ids", []), {"type": "message:new", "message": payload})
+    # Queue email digest notifications for offline recipients (debounced 5 min — cancelled when they read)
+    try:
+        await queue_chat_notifications(c, doc, user)
+    except Exception as e:
+        logger.warning(f"queue_chat_notifications failed: {e}")
     return payload
 
 
@@ -3498,7 +3596,7 @@ AOP_AWARDS = [
 AOP_AWARD_NAMES = [a["name"] for a in AOP_AWARDS]
 
 async def reconcile_awards():
-    """Replace the awards catalog with the canonical AOP list.
+    """Reconcile AOP-specific Ribbons/Awards: insert missing, refresh on existing.
     Legacy awards (and their grants) are deleted — these were demo seed data."""
     legacy = await db.awards.find({"name": {"$nin": AOP_AWARD_NAMES}}, {"_id": 0}).to_list(200)
     for a in legacy:
@@ -3512,6 +3610,74 @@ async def reconcile_awards():
         else:
             doc = {**spec, "id": str(uuid.uuid4()), "created_at": iso(now_utc())}
             await db.awards.insert_one(doc)
+
+
+# ---------- 10-Year Anniversary umbrella event + 5 sub-events ----------
+ANNIVERSARY_PARENT_TITLE = "Alpha Omega Phi 10-Year Anniversary"
+ANNIVERSARY_SUB_EVENTS = [
+    {"title": "Transportation Buses to Sip and Paint", "category": "transportation", "allows_ticket_types": False, "offset_hours": 0},
+    {"title": "Sip and Paint",                          "category": "social",         "allows_ticket_types": True,  "offset_hours": 1},
+    {"title": "Transportation Buses to Top Golf",       "category": "transportation", "allows_ticket_types": False, "offset_hours": 4},
+    {"title": "Top Golf",                               "category": "social",         "allows_ticket_types": True,  "offset_hours": 5},
+    {"title": "Banquet",                                "category": "formal",         "allows_ticket_types": True,  "offset_hours": 24},
+]
+
+async def seed_anniversary_subevents():
+    """Ensure the 10-Year Anniversary parent event exists with its 5 sub-events.
+    Idempotent — only creates missing pieces; never overwrites event details."""
+    # Default anniversary date: Oct 18, 2026 (10 years from founding 2016).
+    # We compute from environment override if provided.
+    anniv_iso = os.environ.get("ANNIVERSARY_AT", "2026-10-18T17:00:00+00:00")
+    try:
+        anniv_dt = datetime.fromisoformat(anniv_iso.replace("Z", "+00:00"))
+    except Exception:
+        anniv_dt = datetime(2026, 10, 18, 17, 0, 0, tzinfo=timezone.utc)
+    parent = await db.events.find_one({"title": ANNIVERSARY_PARENT_TITLE})
+    if not parent:
+        parent_doc = {
+            "id": str(uuid.uuid4()),
+            "title": ANNIVERSARY_PARENT_TITLE,
+            "description": "The 10-year anniversary weekend for Alpha Omega Phi Military Fraternity & Sorority, Inc. Includes Sip & Paint, Top Golf, transportation, and a formal Banquet.",
+            "location": "Multiple venues",
+            "start_at": iso(anniv_dt),
+            "end_at": iso(anniv_dt + timedelta(days=2)),
+            "capacity": 0,
+            "cover_image": "",
+            "category": "anniversary",
+            "price": 0.0,
+            "parent_event_id": None,
+            "allows_ticket_types": False,
+            "rsvp_count": 0,
+            "guest_count": 0,
+            "created_at": iso(now_utc()),
+        }
+        await db.events.insert_one(parent_doc)
+        parent = parent_doc
+        logger.info("Seeded 10-Year Anniversary parent event")
+    for spec in ANNIVERSARY_SUB_EVENTS:
+        existing = await db.events.find_one({"title": spec["title"], "parent_event_id": parent["id"]})
+        if existing:
+            continue
+        sub_start = anniv_dt + timedelta(hours=spec["offset_hours"])
+        sub_doc = {
+            "id": str(uuid.uuid4()),
+            "title": spec["title"],
+            "description": f"Part of the {ANNIVERSARY_PARENT_TITLE}.",
+            "location": "TBD",
+            "start_at": iso(sub_start),
+            "end_at": iso(sub_start + timedelta(hours=3)),
+            "capacity": 0,
+            "cover_image": "",
+            "category": spec["category"],
+            "price": 0.0,
+            "parent_event_id": parent["id"],
+            "allows_ticket_types": spec["allows_ticket_types"],
+            "rsvp_count": 0,
+            "guest_count": 0,
+            "created_at": iso(now_utc()),
+        }
+        await db.events.insert_one(sub_doc)
+        logger.info(f"Seeded sub-event: {spec['title']}")
 
 
 # ---------- Email Signatures (personal + org-wide) ----------
@@ -3628,6 +3794,162 @@ async def email_upload_image(file: UploadFile = File(...), user: dict = Depends(
         "size": total,
         "content_type": content_type,
     }
+
+
+# ---------- Avatar upload (member self-service) ----------
+@api.post("/members/me/avatar")
+async def upload_my_avatar(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Member uploads a new avatar from their phone/laptop or camera capture.
+    Stores in object storage, registers in chat_files (so /api/files/ resolves it),
+    and persists the new URL on the user record."""
+    chunks: list = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Avatar must be under 10 MB")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    fname = (file.filename or "avatar.jpg").replace("/", "_")
+    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
+    if ext not in IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
+    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
+    file_id = str(uuid.uuid4())
+    storage_path = f"avatars/{user['id']}/{file_id}/{fname}"
+
+    def _put():
+        return put_object(storage_path, data, content_type)
+    await asyncio.to_thread(_put)
+
+    rec = {
+        "id": file_id,
+        "filename": fname,
+        "storage_path": storage_path,
+        "content_type": content_type,
+        "size": total,
+        "kind": "image",
+        "uploaded_by": user["id"],
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.chat_files.insert_one(rec)
+    avatar_url = f"/api/files/{storage_path}"
+    await db.users.update_one({"id": user["id"]}, {"$set": {"avatar_url": avatar_url}})
+    return {"avatar_url": avatar_url, "size": total}
+
+
+# ---------- Chat email digest service (5-min debounce) ----------
+CHAT_DIGEST_DELAY_SECONDS = 5 * 60  # 5 minutes
+
+async def queue_chat_notifications(conv: dict, message: dict, sender: dict):
+    """Insert one pending notification per recipient (excluding sender).
+    A background task wakes every 60s, sends consolidated emails for any
+    recipient whose oldest pending notification has aged past CHAT_DIGEST_DELAY_SECONDS,
+    and marks them sent. Read-receipts cancel pending notifications."""
+    due_at = iso(now_utc() + timedelta(seconds=CHAT_DIGEST_DELAY_SECONDS))
+    docs = []
+    for rid in conv.get("member_ids", []):
+        if rid == sender["id"]:
+            continue
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "recipient_id": rid,
+            "conversation_id": conv["id"],
+            "message_id": message["id"],
+            "sender_id": sender["id"],
+            "sender_name": sender.get("name", ""),
+            "preview": (message.get("body") or "")[:200],
+            "status": "pending",
+            "due_at": due_at,
+            "created_at": _now_iso(),
+        })
+    if docs:
+        await db.chat_notifications.insert_many(docs)
+
+
+async def _send_chat_digest_email(recipient: dict, conv: dict, notifs: list) -> bool:
+    """Send one consolidated email for a recipient + conversation. Returns True on success."""
+    if not RESEND_API_KEY:
+        return False
+    to_email = (recipient.get("email") or "").strip()
+    if not to_email:
+        return False
+    name = recipient.get("name") or recipient.get("first_name") or "there"
+    conv_name = conv.get("name") or "your chat"
+    count = len(notifs)
+    senders = list({n.get("sender_name", "") for n in notifs if n.get("sender_name")})
+    senders_label = ", ".join(senders[:3]) + (f" +{len(senders) - 3} others" if len(senders) > 3 else "")
+    items_html = "".join(
+        f"<li><strong>{(_html_escape(n.get('sender_name', '')))}</strong>: {_html_escape(n.get('preview', ''))}</li>"
+        for n in notifs[:10]
+    )
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    body_html = f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
+      <h2 style="color:#C8102E;margin:0 0 12px">You have {count} unread message{'s' if count != 1 else ''}</h2>
+      <p>Hi {_html_escape(name)}, you received new messages in <strong>{_html_escape(conv_name)}</strong> from {_html_escape(senders_label) or 'Alpha Omega Phi'}.</p>
+      <ul style="background:#f7f5f0;border-radius:12px;padding:16px 16px 16px 32px">{items_html}</ul>
+      <p style="margin-top:24px"><a href="{frontend}/chat" style="background:#C8102E;color:#fff;padding:10px 20px;border-radius:999px;text-decoration:none;font-weight:600">Open chat</a></p>
+      <p style="font-size:11px;color:#888;margin-top:24px">You receive this email because you didn't open your chat within 5 minutes of receiving a message.</p>
+    </div>
+    """
+    try:
+        params = {
+            "from": RESEND_FROM,
+            "to": [to_email],
+            "subject": f"{count} new message{'s' if count != 1 else ''} from Alpha Omega Phi chat",
+            "html": body_html,
+            "tags": [{"name": "type", "value": "chat_digest"}],
+        }
+        await asyncio.to_thread(resend_sdk.Emails.send, params)
+        return True
+    except Exception as e:
+        logger.warning(f"Chat digest email failed for {to_email}: {e}")
+        return False
+
+
+def _html_escape(s: str) -> str:
+    import html as _h
+    return _h.escape(s or "")
+
+
+async def _chat_digest_loop():
+    """Background loop: every 60s, batch pending notifications older than due_at
+    by (recipient, conversation), send one consolidated email per bundle, mark sent."""
+    while True:
+        try:
+            now_iso_s = iso(now_utc())
+            # Find candidate notifications
+            cursor = db.chat_notifications.find(
+                {"status": "pending", "due_at": {"$lte": now_iso_s}}, {"_id": 0}
+            ).limit(500)
+            items = await cursor.to_list(500)
+            # Group by recipient + conversation
+            groups: dict = {}
+            for n in items:
+                key = (n["recipient_id"], n["conversation_id"])
+                groups.setdefault(key, []).append(n)
+            for (rid, cid), notifs in groups.items():
+                recipient = await db.users.find_one({"id": rid}, {"_id": 0, "password_hash": 0})
+                conv = await db.conversations.find_one({"id": cid}, {"_id": 0})
+                if not recipient or not conv:
+                    await db.chat_notifications.update_many(
+                        {"id": {"$in": [n["id"] for n in notifs]}},
+                        {"$set": {"status": "skipped", "sent_at": _now_iso()}},
+                    )
+                    continue
+                ok = await _send_chat_digest_email(recipient, conv, notifs)
+                await db.chat_notifications.update_many(
+                    {"id": {"$in": [n["id"] for n in notifs]}},
+                    {"$set": {"status": "sent" if ok else "failed", "sent_at": _now_iso()}},
+                )
+        except Exception as e:
+            logger.error(f"chat digest loop iteration error: {e}")
+        await asyncio.sleep(60)
 
 
 # ---------- Mount ----------

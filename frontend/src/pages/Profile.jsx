@@ -16,6 +16,7 @@ import {
     Award as AwardIcon, Building2, Lock, DollarSign, Activity, Phone, AtSign
 } from "lucide-react";
 import PayPalCheckout from "../components/PayPalCheckout";
+import AvatarUploader from "../components/AvatarUploader";
 
 const ICON_MAP = { medal: Medal, star: Star, heart: Heart, "graduation-cap": GraduationCap, sparkles: Sparkles, trophy: Trophy, award: AwardIcon };
 
@@ -25,8 +26,8 @@ export default function Profile() {
     const [tab, setTab] = useState(params.get("tab") || "profile");
     const [form, setForm] = useState({
         first_name: "", middle_name: "", last_name: "", line_name: "",
-        username: "", phone: "", bio: "", city: "", address: "", birthdate: "",
-        interests: "", avatar_url: "", chapter_id: "",
+        username: "", phone: "", bio: "", city: "", address: "", state: "", zip_code: "", country: "",
+        birthdate: "", interests: "", avatar_url: "", chapter_id: "",
     });
     const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
     const [chapters, setChapters] = useState([]);
@@ -50,6 +51,9 @@ export default function Profile() {
                 bio: user.bio || "",
                 city: user.city || "",
                 address: user.address || "",
+                state: user.state || "",
+                zip_code: user.zip_code || "",
+                country: user.country || "",
                 birthdate: user.birthdate ? user.birthdate.slice(0, 10) : "",
                 interests: (user.interests || []).join(", "),
                 avatar_url: user.avatar_url || "",
@@ -71,7 +75,9 @@ export default function Profile() {
             const payload = {
                 first_name: form.first_name, middle_name: form.middle_name, last_name: form.last_name,
                 line_name: form.line_name, username: form.username, phone: form.phone,
-                bio: form.bio, city: form.city, address: form.address, birthdate: form.birthdate,
+                bio: form.bio, city: form.city, address: form.address,
+                state: form.state, zip_code: form.zip_code, country: form.country,
+                birthdate: form.birthdate,
                 interests: form.interests.split(",").map((s) => s.trim()).filter(Boolean),
                 avatar_url: form.avatar_url,
             };
@@ -125,12 +131,14 @@ export default function Profile() {
     return (
         <div className="max-w-5xl mx-auto px-6 lg:px-10 py-10">
             <div className="flex items-center gap-5 mb-8">
-                <Avatar className="h-20 w-20 border-2 border-white shadow-warm">
-                    {user.avatar_url && <AvatarImage src={user.avatar_url} />}
-                    <AvatarFallback className="bg-primary/15 text-primary text-2xl font-bold">
-                        {user.name?.[0]?.toUpperCase() || "M"}
-                    </AvatarFallback>
-                </Avatar>
+                <AvatarUploader
+                    user={user}
+                    onUpdated={async (newUrl) => {
+                        setForm((f) => ({ ...f, avatar_url: newUrl }));
+                        const { data } = await api.get("/auth/me").catch(() => ({ data: null }));
+                        if (data) setUser(data);
+                    }}
+                />
                 <div>
                     <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight">{user.name}</h1>
                     {user.line_name && <div className="text-sm font-bold uppercase tracking-widest text-primary mt-0.5">"{user.line_name}"</div>}
@@ -209,6 +217,11 @@ export default function Profile() {
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div><Label>Street address</Label><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-address" placeholder="123 Main St, Apt 4B" /></div>
                             <div><Label>Birthdate</Label><Input type="date" value={form.birthdate} onChange={(e) => setForm({ ...form, birthdate: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-birthdate" /></div>
+                        </div>
+                        <div className="grid sm:grid-cols-3 gap-4">
+                            <div><Label>State</Label><Input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} className="rounded-xl mt-1.5" placeholder="TX" data-testid="profile-state" /></div>
+                            <div><Label>Zip code</Label><Input value={form.zip_code} onChange={(e) => setForm({ ...form, zip_code: e.target.value })} className="rounded-xl mt-1.5" placeholder="77001" data-testid="profile-zip" /></div>
+                            <div><Label>Country</Label><Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="rounded-xl mt-1.5" placeholder="USA" data-testid="profile-country" /></div>
                         </div>
                         <div>
                             <Label>Chapter</Label>
