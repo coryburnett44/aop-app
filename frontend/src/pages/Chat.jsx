@@ -474,7 +474,7 @@ function NewChatDialog({ onCreated }) {
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-                <Button className="rounded-full text-white shadow-warm" style={{ backgroundColor: RED }} size="icon" data-testid="new-chat-btn">
+                <Button className="rounded-full text-white shadow-warm" style={{ backgroundColor: RED }} size="icon" data-testid="chat-new-btn">
                     <Plus className="h-4 w-4" />
                 </Button>
             </DialogTrigger>
@@ -581,7 +581,7 @@ function ConversationSettings({ conversation, onChanged }) {
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" className="shrink-0" data-testid="conv-settings-btn"><Settings className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="shrink-0" data-testid="chat-settings-btn"><Settings className="h-4 w-4" /></Button>
             </DialogTrigger>
             <DialogContent className="max-w-md">
                 <DialogHeader><DialogTitle className="font-heading text-2xl" style={{ color: NAVY }}>Chat settings</DialogTitle></DialogHeader>

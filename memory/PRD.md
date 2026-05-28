@@ -74,9 +74,22 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
   - Variable substitution is HTML-escaped (XSS-safe).
   - Frontend Admin → Email tab (Compose / Templates / History) with live preview pane.
 
-### Test Status (iteration_4 — post route fix)
-- Backend: 32/32 pytest in `/app/backend/tests/test_phase_bc.py`. Phase A regression endpoints still alive.
-- Frontend: all pages render; admin tabs Gear/Causes/Reports/Email functional; PayPal button iframe loads on Donations / Gear / Profile; Calendar shows month grid with events.
+### Phase D — Chat (real-time messaging + file sharing) (2026-02-28)
+- **Members-only gating**: All routes except `/login` and CMS pages now require auth via `ProtectedRoute`; navbar links hidden when logged out (only logo, 10-year badge, and login button visible); `/` redirects unauthenticated visitors to `/login`.
+- **Login page text** updated to "This is for Alpha Omega Phi members only. Once you complete Intake, you will be given access."
+- **Home theme** rebuilt to show hero images IN FULL (`object-contain` on navy background, headline below the image — no crop, no overlay).
+- **Real-time chat** (`/chat`):
+  - Conversations: 1:1 DMs (idempotent — re-using existing DM if one already exists between the two users) + group chats with N members and optional name.
+  - Messages: text + multi-attachment with reply quoting, soft-delete, read-receipts, day grouping in UI.
+  - File uploads up to **100 MB** per attachment (images render inline, video/audio players inline, files as downloadable cards). Stored in Emergent Object Storage under `chat/{user_id}/{file_id}/{filename}`, registered in `db.chat_files` so `/api/files/{path}` resolves them.
+  - WebSocket at `wss://.../api/ws/chat` (cookie-auth using existing access_token JWT); auto-reconnect with 3s backoff; server pushes `message:new`, `conversation:created`, `conversation:updated`, `conversation:deleted`.
+  - Settings dialog per conversation: rename group, view members, leave (groups), delete (creator/admin).
+- New endpoints: `GET/POST /api/conversations`, `GET/PUT/DELETE /api/conversations/{id}`, `POST /api/conversations/{id}/leave`, `POST /api/conversations/{id}/read`, `GET/POST /api/conversations/{id}/messages`, `DELETE /api/messages/{id}`, `POST /api/chat/upload`, `WS /api/ws/chat`.
+- `/api/files/{path}` resolver extended to include `db.chat_files`.
+
+### Test Status (iteration_5)
+- Backend: 99/101 pass (2 pre-existing photo/doc upload tests from iteration_2 still fail — out of Phase D scope). Phase D: 19/19 pass + 1 skipped (100 MB oversize check, intentionally skipped to save time).
+- Frontend: 100% on all 4 user asks (redirect gating, hero theme, login text, chat).
 
 ### Known limitations / config items
 - **Resend free tier**: `RESEND_FROM=onboarding@resend.dev` only allows sending to the Resend account-owner email until a domain is verified at `resend.com/domains`. The blast endpoint logs the failure reason per recipient — UI shows sent/failed counts. **Action for user**: verify your domain at resend.com and update `RESEND_FROM` in `/app/backend/.env`.

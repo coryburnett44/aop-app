@@ -1507,11 +1507,13 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
 
 # ---------- File proxy (serves both photos and documents) ----------
 @api.get("/files/{storage_path:path}")
-async def download_file(storage_path: str, _: dict = Depends(get_current_user)):
-    # Check DB for existence + soft-delete flag
+async def download_file(storage_path: str, user: dict = Depends(get_current_user)):
+    # Check DB for existence + soft-delete flag (photos / documents / chat files)
     rec = await db.photos.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
     if not rec:
         rec = await db.documents.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
+    if not rec:
+        rec = await db.chat_files.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
     if not rec:
         raise HTTPException(status_code=404, detail="File not found")
     try:
@@ -1819,6 +1821,8 @@ async def startup():
     await db.conversations.create_index("last_message_at")
     await db.messages.create_index("id", unique=True)
     await db.messages.create_index([("conversation_id", 1), ("created_at", -1)])
+    await db.chat_files.create_index("id", unique=True)
+    await db.chat_files.create_index("storage_path")
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -3208,6 +3212,18 @@ async def chat_upload(file: UploadFile = File(...), user: dict = Depends(get_cur
     await asyncio.to_thread(_put)
 
     kind = "image" if ext in IMAGE_EXT else "video" if ext in {"mp4", "mov", "webm", "avi"} else "audio" if ext in {"mp3", "wav", "ogg", "m4a"} else "file"
+    rec = {
+        "id": file_id,
+        "filename": fname,
+        "storage_path": storage_path,
+        "content_type": content_type,
+        "size": total,
+        "kind": kind,
+        "uploaded_by": user["id"],
+        "is_deleted": False,
+        "created_at": _now_iso(),
+    }
+    await db.chat_files.insert_one(rec)
     return {
         "id": file_id,
         "filename": fname,

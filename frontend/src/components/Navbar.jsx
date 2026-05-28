@@ -50,7 +50,7 @@ export default function Navbar() {
                     <div className="w-9 h-9 rounded-2xl bg-[#0A2463] text-white grid place-items-center font-heading font-black text-lg shadow-warm group-hover:rotate-6 transition-transform">
                         A
                     </div>
-                    <span className="font-heading font-bold text-xl tracking-tight leading-tight">
+                    <span className="font-heading font-bold text-xl tracking-tight leading-tight whitespace-nowrap">
                         Alpha<span className="text-[#D62828]"> Omega Phi</span>
                     </span>
                 </Link>
