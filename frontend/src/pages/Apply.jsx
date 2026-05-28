@@ -9,6 +9,7 @@ import { toast } from "sonner";
 export default function Apply() {
     const [form, setForm] = useState({
         first_name: "", last_name: "", email: "",
+        password: "", confirm_password: "",
         line_name: "", intake_line: "", intake_completed_at: "",
         address: "", city: "", state: "", zip_code: "", country: "USA",
     });
@@ -19,9 +20,12 @@ export default function Apply() {
 
     async function onSubmit(e) {
         e.preventDefault();
+        if (form.password.length < 6) { toast.error("Password must be at least 6 characters"); return; }
+        if (form.password !== form.confirm_password) { toast.error("Passwords don't match"); return; }
         setSubmitting(true);
         try {
-            await api.post("/auth/apply", form);
+            const { confirm_password: _, ...payload } = form;
+            await api.post("/auth/apply", payload);
             setDone(true);
         } catch (err) {
             toast.error(err.response?.data?.detail || "Could not submit application");
@@ -35,7 +39,7 @@ export default function Apply() {
                 <div className="bg-card rounded-3xl p-10 shadow-warm border border-border text-center">
                     <div className="text-xs uppercase tracking-[0.25em] font-bold text-primary mb-3">Application received</div>
                     <h1 className="font-heading text-3xl font-bold mb-3">Thank you, {form.first_name}.</h1>
-                    <p className="text-muted-foreground leading-relaxed">An Alpha Omega Phi admin will review your application. Once approved, we'll email you a link to set your password and access the portal.</p>
+                    <p className="text-muted-foreground leading-relaxed">An Alpha Omega Phi admin will review your application. Once approved, you'll receive an email — then you can sign in with the email and password you just chose.</p>
                     <Link to="/login" className="inline-block mt-6 text-primary font-semibold hover:underline">Back to login</Link>
                 </div>
             </div>
@@ -47,7 +51,7 @@ export default function Apply() {
             <div className="bg-card rounded-3xl p-8 sm:p-10 shadow-warm border border-border">
                 <div className="text-xs uppercase tracking-[0.25em] font-bold text-primary">Apply for access</div>
                 <h1 className="font-heading text-3xl sm:text-4xl font-bold mt-1">Membership application</h1>
-                <p className="text-sm text-muted-foreground mt-2">Tell us about your intake. An admin reviews each application personally — once approved, we'll email you to set a password.</p>
+                <p className="text-sm text-muted-foreground mt-2">Tell us about your intake and choose a password. An admin reviews each application personally — once approved, you can sign in with the email + password you set below.</p>
                 <form onSubmit={onSubmit} className="mt-8 space-y-4" data-testid="apply-form">
                     <div className="grid sm:grid-cols-2 gap-4">
                         <div><Label>First name *</Label><Input required value={form.first_name} onChange={(e) => set("first_name", e.target.value)} className="rounded-xl mt-1.5" data-testid="apply-first-name" /></div>
@@ -56,6 +60,10 @@ export default function Apply() {
                     <div>
                         <Label>Email *</Label>
                         <Input required type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className="rounded-xl mt-1.5" data-testid="apply-email" />
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                        <div><Label>Choose a password *</Label><Input required type="password" minLength={6} value={form.password} onChange={(e) => set("password", e.target.value)} className="rounded-xl mt-1.5" placeholder="At least 6 characters" data-testid="apply-password" /></div>
+                        <div><Label>Confirm password *</Label><Input required type="password" minLength={6} value={form.confirm_password} onChange={(e) => set("confirm_password", e.target.value)} className="rounded-xl mt-1.5" data-testid="apply-confirm-password" /></div>
                     </div>
                     <div className="grid sm:grid-cols-2 gap-4">
                         <div><Label>Line name</Label><Input value={form.line_name} onChange={(e) => set("line_name", e.target.value)} className="rounded-xl mt-1.5" placeholder="ex. Thunder" data-testid="apply-line-name" /></div>

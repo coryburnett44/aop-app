@@ -277,6 +277,10 @@ export default function Profile() {
                 </TabsContent>
 
                 <TabsContent value="transactions" className="mt-6">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                        <p className="text-sm text-muted-foreground">Recent dues, donations, and gear orders.</p>
+                        <Link to="/transactions" className="text-sm text-primary font-semibold hover:underline" data-testid="profile-view-all-tx">View full transactions history →</Link>
+                    </div>
                     {transactions.length === 0 ? (
                         <div className="text-muted-foreground">No transactions yet. Renewals, donations, and credits appear here.</div>
                     ) : (

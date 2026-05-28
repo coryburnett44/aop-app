@@ -395,6 +395,24 @@ function PersonnelBriefSection() {
         setOpen(true);
     }
 
+    async function downloadPdf(userId) {
+        if (!userId) return;
+        try {
+            const res = await api.get(`/reports/personnel-brief/${userId}/pdf`, { responseType: "blob" });
+            const blob = new Blob([res.data], { type: "application/pdf" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            const m = members.find((x) => x.id === userId);
+            const safe = (m?.name || "member").replace(/\s+/g, "_");
+            a.download = `personnel-brief-${safe}.pdf`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch {
+            // server error already toasts via interceptor
+        }
+    }
+
     return (
         <div>
             <div className="bg-card rounded-2xl border p-5 max-w-xl">
@@ -416,9 +434,14 @@ function PersonnelBriefSection() {
                     <DialogHeader className="print:pb-2 print:border-b print:border-black">
                         <DialogTitle className="font-heading text-2xl flex items-center justify-between gap-3">
                             Personnel Brief
-                            <Button size="sm" onClick={() => window.print()} variant="outline" className="rounded-full print:hidden" data-testid="brief-print-btn">
-                                <Printer className="h-4 w-4 mr-1.5" />Print
-                            </Button>
+                            <div className="flex gap-2 print:hidden">
+                                <Button size="sm" onClick={() => downloadPdf(chosen)} variant="outline" className="rounded-full" data-testid="brief-pdf-btn">
+                                    <Download className="h-4 w-4 mr-1.5" />Download PDF
+                                </Button>
+                                <Button size="sm" onClick={() => window.print()} variant="outline" className="rounded-full" data-testid="brief-print-btn">
+                                    <Printer className="h-4 w-4 mr-1.5" />Print
+                                </Button>
+                            </div>
                         </DialogTitle>
                     </DialogHeader>
                     {brief && <BriefBody b={brief} />}

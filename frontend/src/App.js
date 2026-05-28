@@ -10,7 +10,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Apply from "./pages/Apply";
-import SetPassword from "./pages/SetPassword";
+import Transactions from "./pages/Transactions";
 import Events from "./pages/Events";
 import EventDetail from "./pages/EventDetail";
 import News from "./pages/News";
@@ -42,8 +42,9 @@ function App() {
                             <Route path="/" element={<Home />} />
                             <Route path="/login" element={<Login />} />
                             <Route path="/apply" element={<Apply />} />
-                            <Route path="/set-password" element={<SetPassword />} />
+                            <Route path="/set-password" element={<Navigate to="/login" replace />} />
                             <Route path="/register" element={<Navigate to="/apply" replace />} />
+                            <Route path="/transactions" element={<ProtectedRoute><Transactions /></ProtectedRoute>} />
                             <Route path="/events" element={<ProtectedRoute><Events /></ProtectedRoute>} />
                             <Route path="/events/:id" element={<ProtectedRoute><EventDetail /></ProtectedRoute>} />
                             <Route path="/news" element={<ProtectedRoute><News /></ProtectedRoute>} />

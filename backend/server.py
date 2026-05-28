@@ -262,18 +262,29 @@ def admin_tab_dep(tab: str):
     return _dep
 
 async def chapter_scope_user_ids(admin: dict) -> Optional[list]:
-    """For Governor Managers, return the list of user_ids in their chapter.
-    Returns None for full admins (no scoping applied)."""
-    if admin_role_of(admin) != "governor_manager":
-        return None
-    cid = admin.get("chapter_id")
-    if not cid:
-        return []  # Governor without chapter sees nothing
-    cursor = db.users.find({"chapter_id": cid}, {"id": 1, "_id": 0})
-    return [u["id"] async for u in cursor]
+    """Returns the list of user_ids in the admin's chapter scope, or None if no scoping applies."""
+    role = admin_role_of(admin)
+    # Governor Manager is ALWAYS scoped. Operations & Membership Managers are
+    # scoped only when assigned to a specific chapter (full admins with no chapter remain unscoped).
+    if role == "governor_manager":
+        cid = admin.get("chapter_id")
+        if not cid:
+            return []
+        cursor = db.users.find({"chapter_id": cid}, {"id": 1, "_id": 0})
+        return [u["id"] async for u in cursor]
+    if role in ("operations_manager", "membership_manager") and admin.get("chapter_id"):
+        cid = admin["chapter_id"]
+        cursor = db.users.find({"chapter_id": cid}, {"id": 1, "_id": 0})
+        return [u["id"] async for u in cursor]
+    return None
 
 def is_chapter_scoped(admin: dict) -> bool:
-    return admin_role_of(admin) == "governor_manager"
+    role = admin_role_of(admin)
+    if role == "governor_manager":
+        return True
+    if role in ("operations_manager", "membership_manager"):
+        return bool(admin.get("chapter_id"))
+    return False
 
 @api.get("/admin/permissions")
 async def admin_permissions(user: dict = Depends(require_admin)):
@@ -295,13 +306,16 @@ class RegisterIn(BaseModel):
     interests: Optional[List[str]] = []
 
 class PublicApplicationIn(BaseModel):
-    """Open-registration application form. No password — admin approves, user sets password via link."""
+    """Open-registration application form. Applicant chooses their own password
+    up-front; on admin approval, the password is set on the new user account and
+    a 'you're approved' email is sent so they can sign in directly."""
     first_name: str = Field(min_length=1, max_length=80)
     last_name: str = Field(min_length=1, max_length=80)
     email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
     line_name: str = ""
     intake_line: str = ""
-    intake_completed_at: str = ""  # "YYYY-MM" or ISO date
+    intake_completed_at: str = ""
     address: str = ""
     city: str = ""
     state: str = ""
@@ -698,6 +712,7 @@ async def submit_application(body: PublicApplicationIn):
         "first_name": body.first_name.strip(),
         "last_name": body.last_name.strip(),
         "email": email,
+        "password_hash": hash_password(body.password),
         "line_name": body.line_name.strip(),
         "intake_line": body.intake_line.strip(),
         "intake_completed_at": body.intake_completed_at.strip(),
@@ -752,6 +767,42 @@ async def _send_set_password_email(email: str, name: str, token: str) -> bool:
         return False
 
 
+async def _send_approval_email(email: str, name: str) -> bool:
+    """Sent when an admin approves an application. The applicant already chose
+    their password during apply, so we just tell them to log in."""
+    if not RESEND_API_KEY or not email:
+        return False
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    import html as _h
+    safe_name = _h.escape(name or "")
+    safe_email = _h.escape(email)
+    body = f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
+      <h1 style="color:#C8102E;margin:0 0 12px;font-size:28px">Welcome to Alpha Omega Phi, {safe_name}.</h1>
+      <p style="line-height:1.6">Your membership application has been <strong>approved</strong>. You can now sign in with the email and password you provided when you applied.</p>
+      <div style="background:#f7f5f0;border-radius:14px;padding:20px;margin:20px 0">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:6px">Sign in</div>
+        <div style="font-size:14px;margin:4px 0"><strong>Email:</strong> {safe_email}</div>
+        <div style="font-size:14px;margin:4px 0"><strong>Password:</strong> The one you chose when applying.</div>
+      </div>
+      <p><a href="{frontend}/login" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Sign in to the portal</a></p>
+      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">Forgot your password? Reach out to your chapter Governor.</p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": RESEND_FROM,
+            "to": [email],
+            "subject": "Alpha Omega Phi — your application was approved",
+            "html": body,
+            "tags": [{"name": "type", "value": "application_approved"}],
+        })
+        return True
+    except Exception as e:
+        logger.warning(f"Approval email failed for {email}: {e}")
+        return False
+
+
 async def _send_rejection_email(email: str, name: str, note: str) -> bool:
     if not RESEND_API_KEY or not email:
         return False
@@ -788,8 +839,11 @@ async def review_application(app_id: str, body: ApplicationReviewIn, admin: dict
     if app_doc.get("status") != "pending":
         raise HTTPException(status_code=400, detail=f"Application is already {app_doc.get('status')}")
     if body.action == "approve":
-        # Create the user with an unusable password and a single-use set-password token.
-        token = str(uuid.uuid4()) + str(uuid.uuid4())
+        # Use the password the applicant chose when applying.
+        applicant_password_hash = app_doc.get("password_hash")
+        if not applicant_password_hash:
+            # Backwards-compat for legacy pending apps with no password — fall back to token flow.
+            applicant_password_hash = hash_password(str(uuid.uuid4()) + str(uuid.uuid4()))
         composed_name = (app_doc.get("first_name", "") + " " + app_doc.get("last_name", "")).strip() or app_doc["email"].split("@")[0]
         uid = str(uuid.uuid4())
         created = now_utc()
@@ -797,7 +851,7 @@ async def review_application(app_id: str, body: ApplicationReviewIn, admin: dict
             "id": uid,
             "email": app_doc["email"],
             "username": "",
-            "password_hash": hash_password(token),  # placeholder unusable password
+            "password_hash": applicant_password_hash,
             "name": composed_name,
             "first_name": app_doc.get("first_name", ""),
             "middle_name": "",
@@ -825,18 +879,10 @@ async def review_application(app_id: str, body: ApplicationReviewIn, admin: dict
             "join_date": iso(created),
             "membership_expires_at": iso(created + timedelta(days=365)),
             "email_verified": True,
-            "pending_set_password": True,
+            "pending_set_password": False,
             "created_at": iso(created),
         }
         await db.users.insert_one(user_doc)
-        await db.password_set_tokens.insert_one({
-            "token": token,
-            "user_id": uid,
-            "email": app_doc["email"],
-            "expires_at": iso(now_utc() + timedelta(days=7)),
-            "used": False,
-            "created_at": iso(now_utc()),
-        })
         await db.applications.update_one(
             {"id": app_id},
             {"$set": {
@@ -847,7 +893,7 @@ async def review_application(app_id: str, body: ApplicationReviewIn, admin: dict
                 "user_id": uid,
             }},
         )
-        await _send_set_password_email(app_doc["email"], composed_name, token)
+        await _send_approval_email(app_doc["email"], composed_name)
         return {"ok": True, "user_id": uid}
     # Reject
     await db.applications.update_one(
@@ -3013,6 +3059,162 @@ async def personnel_brief(user_id: str, _: dict = Depends(admin_tab_dep("reports
         "total_paid": total_paid,
         "generated_at": iso(now_utc()),
     }
+
+
+@api.get("/reports/personnel-brief/{user_id}/pdf")
+async def personnel_brief_pdf(user_id: str, admin: dict = Depends(admin_tab_dep("reports"))):
+    """Generates a printable PDF version of the personnel brief."""
+    # Reuse the same data-gathering as the JSON endpoint by calling it directly.
+    data = await personnel_brief(user_id, admin)
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from io import BytesIO
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=0.6 * inch, rightMargin=0.6 * inch, topMargin=0.7 * inch, bottomMargin=0.6 * inch, title=f"Personnel Brief — {data['member']['name']}")
+    styles = getSampleStyleSheet()
+    AOP_RED = colors.HexColor("#C8102E")
+    AOP_NAVY = colors.HexColor("#0C1B33")
+    h1 = ParagraphStyle("AopH1", parent=styles["Heading1"], textColor=AOP_RED, fontSize=22, leading=26, spaceAfter=4)
+    h2 = ParagraphStyle("AopH2", parent=styles["Heading2"], textColor=AOP_NAVY, fontSize=13, leading=16, spaceBefore=14, spaceAfter=6)
+    body_style = ParagraphStyle("AopBody", parent=styles["BodyText"], fontSize=10, leading=14)
+    small = ParagraphStyle("AopSmall", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#999999"))
+
+    m = data["member"]
+    chapter = data.get("chapter") or {}
+    tier = data.get("tier") or {}
+    elements = []
+
+    # Header
+    elements.append(Paragraph(f"<b>{m.get('name', '—')}</b>", h1))
+    if m.get("line_name"):
+        elements.append(Paragraph(f'<font color="#C8102E"><b>"{m["line_name"]}"</b></font>', body_style))
+    sub = " · ".join([s for s in [tier.get("name"), chapter.get("name"), m.get("role", "").upper()] if s])
+    if sub:
+        elements.append(Paragraph(sub, small))
+    elements.append(Paragraph(f"Personnel Brief generated {data['generated_at'][:10]}", small))
+    elements.append(Spacer(1, 12))
+
+    # Identity table
+    rows = [
+        ["Email", m.get("email", "—")],
+        ["Phone", m.get("phone", "—")],
+        ["Address", ", ".join(x for x in [m.get("address"), m.get("city"), m.get("state"), m.get("zip_code")] if x) or "—"],
+        ["Country", m.get("country") or "—"],
+        ["Branch of Service", m.get("branch_of_service") or "—"],
+        ["Intake Line", m.get("intake_line") or "—"],
+        ["Intake Completed", m.get("intake_completed_at") or "—"],
+        ["Date Joined", (m.get("join_date") or "")[:10] or "—"],
+        ["Membership Expires", (m.get("membership_expires_at") or "")[:10] or "—"],
+        ["Status", (m.get("status") or "").upper()],
+    ]
+    t = Table(rows, colWidths=[1.4 * inch, 4.5 * inch], hAlign="LEFT")
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#666666")),
+        ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#222222")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#EFEFEF")),
+    ]))
+    elements.append(t)
+
+    # Stats strip
+    elements.append(Paragraph("Service Summary", h2))
+    stats = Table([
+        ["Approved hours", f"{data.get('approved_hours', 0):.1f}", "Awards", str(data.get("awards_count", 0))],
+        ["Events attended", str(data.get("events_count", 0)), "Total contributed", f"${data.get('total_paid', 0):.2f}"],
+    ], colWidths=[1.4 * inch, 1.6 * inch, 1.4 * inch, 1.6 * inch])
+    stats.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F7F5F0")),
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#666666")),
+        ("TEXTCOLOR", (2, 0), (2, -1), colors.HexColor("#666666")),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(stats)
+
+    # Awards
+    if data.get("awards"):
+        elements.append(Paragraph("Awards & Ribbons", h2))
+        for g in data["awards"][:30]:
+            elements.append(Paragraph(f"<b>{g.get('award_name') or g.get('name', '—')}</b> &nbsp; <font color='#999999'>{(g.get('granted_at') or '')[:10]}</font>", body_style))
+            if g.get("note"):
+                elements.append(Paragraph(g["note"], small))
+            elements.append(Spacer(1, 4))
+
+    # Hours
+    if data.get("hours"):
+        elements.append(Paragraph("Volunteer Hours", h2))
+        hours_rows = [["Date", "Hours", "Status", "Activity"]]
+        for h in data["hours"][:40]:
+            hours_rows.append([
+                (h.get("date") or "")[:10],
+                f"{h.get('hours', 0):.2f}",
+                (h.get("status") or "").upper(),
+                (h.get("activity") or h.get("description") or "—")[:60],
+            ])
+        ht = Table(hours_rows, colWidths=[0.9 * inch, 0.7 * inch, 0.9 * inch, 3.5 * inch])
+        ht.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0EBE3")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#EFEFEF")),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        elements.append(ht)
+
+    # Events attended
+    if data.get("events"):
+        elements.append(Paragraph("Events Attended", h2))
+        for e in data["events"][:40]:
+            when = (e.get("start_at") or "")[:10]
+            elements.append(Paragraph(f"<b>{e.get('title', '—')}</b> &nbsp; <font color='#999999'>{when}</font>", body_style))
+        elements.append(Spacer(1, 4))
+
+    # Transactions
+    if data.get("transactions"):
+        elements.append(Paragraph("Transactions", h2))
+        tx_rows = [["Date", "Type", "Amount", "Status", "Note"]]
+        for t in data["transactions"][:40]:
+            tx_rows.append([
+                (t.get("created_at") or "")[:10],
+                (t.get("type") or "").upper(),
+                f"${t.get('amount', 0):.2f}",
+                (t.get("status") or ""),
+                (t.get("note") or t.get("description") or "")[:50],
+            ])
+        tx_tbl = Table(tx_rows, colWidths=[0.9 * inch, 0.8 * inch, 0.9 * inch, 0.9 * inch, 2.5 * inch])
+        tx_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0EBE3")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#EFEFEF")),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        elements.append(tx_tbl)
+
+    elements.append(Spacer(1, 16))
+    elements.append(Paragraph("Generated by the Alpha Omega Phi member portal.", small))
+
+    doc.build(elements)
+    buf.seek(0)
+    safe_name = (m.get("name") or "member").replace(" ", "_")
+    filename = f"personnel-brief-{safe_name}-{data['generated_at'][:10]}.pdf"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------- Seed Phase B sample data (idempotent) ----------
