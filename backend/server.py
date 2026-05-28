@@ -1823,6 +1823,8 @@ async def startup():
     await db.messages.create_index([("conversation_id", 1), ("created_at", -1)])
     await db.chat_files.create_index("id", unique=True)
     await db.chat_files.create_index("storage_path")
+    await db.email_signatures.create_index("id", unique=True)
+    await db.email_signatures.create_index([("owner_id", 1), ("kind", 1)])
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -1831,6 +1833,7 @@ async def startup():
         logger.warning(f"Object storage init skipped: {e}")
     await seed_data()
     await seed_phase_b()
+    await reconcile_chapters()
 
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")
@@ -3270,6 +3273,157 @@ async def chat_ws(ws: WebSocket):
         logger.warning(f"WS error for {user_id}: {e}")
     finally:
         chat_hub.disconnect(user_id, ws)
+
+
+# ============================================================
+# PHASE E — Fixed chapters + Email signatures + Rich email images
+# ============================================================
+
+# Canonical AOP chapter list (idempotent reconciliation)
+AOP_CHAPTERS = [
+    {"name": "Texas", "region": "South", "state": "TX", "description": "Texas chapter."},
+    {"name": "Florida", "region": "South", "state": "FL", "description": "Florida chapter."},
+    {"name": "Tri-South", "region": "South", "state": "Multi", "description": "Tri-South chapter — covers GA, AL, MS, LA, SC, NC."},
+    {"name": "DMV", "region": "Mid-Atlantic", "state": "Multi", "description": "DMV chapter — DC, Maryland, Virginia."},
+]
+
+async def reconcile_chapters():
+    """Ensure the four canonical AOP chapters exist with the right region/state.
+    Existing chapters with names matching AOP_CHAPTERS are updated; other chapters
+    are left intact so member references survive."""
+    for spec in AOP_CHAPTERS:
+        existing = await db.chapters.find_one({"name": spec["name"]})
+        if existing:
+            await db.chapters.update_one(
+                {"id": existing["id"]},
+                {"$set": {"region": spec["region"], "state": spec["state"]}},
+            )
+        else:
+            doc = {
+                **spec,
+                "id": str(uuid.uuid4()),
+                "school": "",
+                "city": "",
+                "founded_year": None,
+                "created_at": iso(now_utc()),
+            }
+            await db.chapters.insert_one(doc)
+
+
+# ---------- Email Signatures (personal + org-wide) ----------
+class SignatureIn(BaseModel):
+    name: str
+    body_html: str
+    kind: Literal["personal", "org"] = "personal"
+
+class SignatureUpdateIn(BaseModel):
+    name: Optional[str] = None
+    body_html: Optional[str] = None
+
+def signature_out(s: dict) -> dict:
+    return {
+        "id": s["id"],
+        "name": s["name"],
+        "body_html": s.get("body_html", ""),
+        "kind": s.get("kind", "personal"),
+        "owner_id": s.get("owner_id"),
+        "created_at": s.get("created_at"),
+    }
+
+@api.get("/email/signatures")
+async def list_signatures(user: dict = Depends(require_admin)):
+    """Return signatures visible to the current admin: their personal sigs + all org sigs."""
+    cursor = db.email_signatures.find(
+        {"$or": [{"kind": "org"}, {"kind": "personal", "owner_id": user["id"]}]},
+        {"_id": 0},
+    ).sort([("kind", 1), ("created_at", -1)])
+    items = await cursor.to_list(200)
+    return [signature_out(s) for s in items]
+
+@api.post("/email/signatures")
+async def create_signature(body: SignatureIn, user: dict = Depends(require_admin)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": body.name,
+        "body_html": body.body_html,
+        "kind": body.kind,
+        "owner_id": user["id"],
+        "created_at": iso(now_utc()),
+    }
+    await db.email_signatures.insert_one(doc)
+    return signature_out(doc)
+
+@api.put("/email/signatures/{sid}")
+async def update_signature(sid: str, body: SignatureUpdateIn, user: dict = Depends(require_admin)):
+    s = await db.email_signatures.find_one({"id": sid})
+    if not s:
+        raise HTTPException(status_code=404, detail="Signature not found")
+    if s.get("kind") == "personal" and s.get("owner_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.email_signatures.update_one({"id": sid}, {"$set": updates})
+    s2 = await db.email_signatures.find_one({"id": sid}, {"_id": 0})
+    return signature_out(s2)
+
+@api.delete("/email/signatures/{sid}")
+async def delete_signature(sid: str, user: dict = Depends(require_admin)):
+    s = await db.email_signatures.find_one({"id": sid})
+    if not s:
+        raise HTTPException(status_code=404, detail="Signature not found")
+    if s.get("kind") == "personal" and s.get("owner_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.email_signatures.delete_one({"id": sid})
+    return {"ok": True}
+
+
+# ---------- Rich email image upload (reuses chat_files resolver) ----------
+@api.post("/email/upload-image")
+async def email_upload_image(file: UploadFile = File(...), user: dict = Depends(require_admin)):
+    """Upload an inline image for use in email composer / signatures.
+    Reuses the chat_files collection so /api/files/{path} resolves it."""
+    chunks = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > 25 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Image must be under 25 MB")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    fname = (file.filename or "image").replace("/", "_")
+    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
+    if ext not in IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
+    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
+    file_id = str(uuid.uuid4())
+    storage_path = f"email/{user['id']}/{file_id}/{fname}"
+
+    def _put():
+        return put_object(storage_path, data, content_type)
+    await asyncio.to_thread(_put)
+
+    rec = {
+        "id": file_id,
+        "filename": fname,
+        "storage_path": storage_path,
+        "content_type": content_type,
+        "size": total,
+        "kind": "image",
+        "uploaded_by": user["id"],
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.chat_files.insert_one(rec)
+    return {
+        "id": file_id,
+        "filename": fname,
+        "url": f"/api/files/{storage_path}",
+        "size": total,
+        "content_type": content_type,
+    }
 
 
 # ---------- Mount ----------

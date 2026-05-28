@@ -7,11 +7,12 @@ import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import AdminDashboard from "./AdminDashboard";
 import Reports from "./Reports";
+import RichEditor from "../components/RichEditor";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
@@ -431,7 +432,7 @@ function MembersAdmin() {
                                             <SelectValue placeholder={chapterName(m.chapter_id)} />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                                            {chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                                         </SelectContent>
                                     </Select>
                                 </td>
@@ -548,7 +549,7 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
                             <Label>Chapter</Label>
                             <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
                                 <SelectTrigger className="rounded-xl mt-1.5" data-testid="nm-chapter"><SelectValue placeholder="—" /></SelectTrigger>
-                                <SelectContent>{chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                                <SelectContent>{chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                             </Select>
                         </div>
                         <div>
@@ -669,8 +670,8 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                         <div>
                             <Label>Chapter</Label>
                             <Select value={form.chapter_id || ""} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
-                                <SelectTrigger className="rounded-xl mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
-                                <SelectContent>{chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="em-chapter"><SelectValue placeholder="—" /></SelectTrigger>
+                                <SelectContent>{chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                             </Select>
                         </div>
                         <div>
@@ -752,6 +753,7 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
         description: chapter?.description || "",
     });
     async function save() {
+        if (!form.name) { toast.error("Pick a chapter from the list"); return; }
         try {
             const payload = { ...form, founded_year: form.founded_year ? Number(form.founded_year) : null };
             if (chapter) await api.put(`/chapters/${chapter.id}`, payload);
@@ -767,10 +769,19 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
             <DialogContent className="max-w-lg">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">{chapter ? "Edit chapter" : "New chapter"}</DialogTitle></DialogHeader>
                 <div className="space-y-3 mt-2">
-                    <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-xl mt-1.5" data-testid="chapter-name-input" /></div>
+                    <div>
+                        <Label>Chapter</Label>
+                        <Select value={form.name} onValueChange={(v) => setForm({ ...form, name: v })}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="chapter-name-input"><SelectValue placeholder="Pick a chapter…" /></SelectTrigger>
+                            <SelectContent>
+                                {OFFICIAL_CHAPTER_NAMES.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                        <div className="text-xs text-muted-foreground mt-1.5">Official AOP chapters: Texas, Florida, Tri-South, DMV.</div>
+                    </div>
                     <div className="grid grid-cols-2 gap-3">
-                        <div><Label>Region</Label><Input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} placeholder="e.g. East, West, South" className="rounded-xl mt-1.5" data-testid="chapter-region-input" /></div>
-                        <div><Label>State</Label><Input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} placeholder="e.g. TX, CA" className="rounded-xl mt-1.5" data-testid="chapter-state-input" /></div>
+                        <div><Label>Region</Label><Input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} placeholder="e.g. South, Mid-Atlantic" className="rounded-xl mt-1.5" data-testid="chapter-region-input" /></div>
+                        <div><Label>State</Label><Input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} placeholder="e.g. TX, FL, Multi" className="rounded-xl mt-1.5" data-testid="chapter-state-input" /></div>
                     </div>
                     <div><Label>Founded year</Label><Input type="number" value={form.founded_year} onChange={(e) => setForm({ ...form, founded_year: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" /></div>
@@ -1333,10 +1344,12 @@ function EmailBlastAdmin() {
             <TabsList className="rounded-full bg-muted p-1">
                 <TabsTrigger value="compose" className="rounded-full" data-testid="email-tab-compose"><Send className="h-4 w-4 mr-1.5" />Compose</TabsTrigger>
                 <TabsTrigger value="templates" className="rounded-full" data-testid="email-tab-templates"><FileText className="h-4 w-4 mr-1.5" />Templates</TabsTrigger>
+                <TabsTrigger value="signatures" className="rounded-full" data-testid="email-tab-signatures"><PenSquare className="h-4 w-4 mr-1.5" />Signatures</TabsTrigger>
                 <TabsTrigger value="history" className="rounded-full" data-testid="email-tab-history"><Clock className="h-4 w-4 mr-1.5" />History</TabsTrigger>
             </TabsList>
             <TabsContent value="compose" className="mt-6"><ComposeBlast /></TabsContent>
             <TabsContent value="templates" className="mt-6"><EmailTemplates /></TabsContent>
+            <TabsContent value="signatures" className="mt-6"><EmailSignatures /></TabsContent>
             <TabsContent value="history" className="mt-6"><BlastHistory /></TabsContent>
         </Tabs>
     );
@@ -1344,13 +1357,14 @@ function EmailBlastAdmin() {
 
 function ComposeBlast() {
     const [subject, setSubject] = useState("");
-    const [body_html, setBody] = useState("<p>Hello {{first_name}},</p>\n<p>Write your message here. You can use <strong>{{name}}</strong>, <strong>{{first_name}}</strong>, <strong>{{last_name}}</strong>, <strong>{{line_name}}</strong>, <strong>{{email}}</strong> as variables.</p>\n<p>— Alpha Omega Phi</p>");
+    const [body_html, setBody] = useState("<p>Hello {{first_name}},</p><p>Write your message here. Use the toolbar — bold, lists, images, links — no code needed.</p><p>— Alpha Omega Phi</p>");
     const [segment, setSegment] = useState("active");
     const [tier_id, setTierId] = useState("");
     const [chapter_id, setChapterId] = useState("");
     const [tiers, setTiers] = useState([]);
     const [chapters, setChapters] = useState([]);
     const [templates, setTemplates] = useState([]);
+    const [signatures, setSignatures] = useState([]);
     const [preview, setPreview] = useState(null);
     const [busy, setBusy] = useState(false);
 
@@ -1358,6 +1372,7 @@ function ComposeBlast() {
         api.get("/tiers").then(({ data }) => setTiers(data)).catch(() => {});
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
         api.get("/email/templates").then(({ data }) => setTemplates(data)).catch(() => {});
+        api.get("/email/signatures").then(({ data }) => setSignatures(data)).catch(() => {});
     }, []);
 
     function applyTemplate(tid) {
@@ -1365,6 +1380,16 @@ function ComposeBlast() {
         if (!t) return;
         setSubject(t.subject);
         setBody(t.body_html);
+    }
+
+    function insertSignature(sid) {
+        const s = signatures.find((x) => x.id === sid);
+        if (!s) return;
+        setBody((prev) => {
+            const sep = '<p>—</p>';
+            return (prev || "") + sep + (s.body_html || "");
+        });
+        toast.success(`Inserted "${s.name}"`);
     }
 
     function buildPayload() {
@@ -1394,23 +1419,36 @@ function ComposeBlast() {
     return (
         <div className="grid lg:grid-cols-[1fr_400px] gap-6">
             <div className="bg-card rounded-2xl border border-border p-6 space-y-4 shadow-warm">
-                {templates.length > 0 && (
-                    <div>
-                        <Label>Start from template (optional)</Label>
-                        <Select value="" onValueChange={applyTemplate}>
-                            <SelectTrigger className="rounded-xl mt-1.5"><SelectValue placeholder="Pick a template…" /></SelectTrigger>
-                            <SelectContent>{templates.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
-                        </Select>
-                    </div>
-                )}
+                <div className="grid sm:grid-cols-2 gap-3">
+                    {templates.length > 0 && (
+                        <div>
+                            <Label>Start from template</Label>
+                            <Select value="" onValueChange={applyTemplate}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="email-template-picker"><SelectValue placeholder="Pick a template…" /></SelectTrigger>
+                                <SelectContent>{templates.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
+                            </Select>
+                        </div>
+                    )}
+                    {signatures.length > 0 && (
+                        <div>
+                            <Label>Insert signature</Label>
+                            <Select value="" onValueChange={insertSignature}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="email-signature-picker"><SelectValue placeholder="Append a signature…" /></SelectTrigger>
+                                <SelectContent>{signatures.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} {s.kind === "org" ? "(shared)" : "(personal)"}</SelectItem>)}</SelectContent>
+                            </Select>
+                        </div>
+                    )}
+                </div>
                 <div>
                     <Label>Subject *</Label>
                     <Input value={subject} onChange={(e) => setSubject(e.target.value)} className="rounded-xl mt-1.5" placeholder="Hi {{first_name}}, news from your chapter" data-testid="email-subject" />
                 </div>
                 <div>
-                    <Label>Body HTML *</Label>
-                    <Textarea rows={12} value={body_html} onChange={(e) => setBody(e.target.value)} className="rounded-xl mt-1.5 font-mono text-xs" data-testid="email-body" />
-                    <div className="text-xs text-muted-foreground mt-1">Variables: <code>{"{{name}}"}</code>, <code>{"{{first_name}}"}</code>, <code>{"{{last_name}}"}</code>, <code>{"{{line_name}}"}</code>, <code>{"{{email}}"}</code></div>
+                    <Label>Body *</Label>
+                    <div className="mt-1.5">
+                        <RichEditor value={body_html} onChange={setBody} placeholder="Write your message — press Enter for new lines, use toolbar for images." minHeight={300} />
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1.5">Variables: <code>{"{{name}}"}</code>, <code>{"{{first_name}}"}</code>, <code>{"{{last_name}}"}</code>, <code>{"{{line_name}}"}</code>, <code>{"{{email}}"}</code></div>
                 </div>
                 <div className="grid sm:grid-cols-3 gap-3">
                     <div>
@@ -1440,7 +1478,7 @@ function ComposeBlast() {
                             <Label>Chapter</Label>
                             <Select value={chapter_id} onValueChange={setChapterId}>
                                 <SelectTrigger className="rounded-xl mt-1.5"><SelectValue placeholder="Pick" /></SelectTrigger>
-                                <SelectContent>{chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                                <SelectContent>{chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                             </Select>
                         </div>
                     )}
@@ -1462,7 +1500,7 @@ function ComposeBlast() {
                             Sample: {preview.sample_recipient.name} &lt;{preview.sample_recipient.email}&gt;
                         </div>
                         <div className="font-bold mt-3 mb-2">{preview.subject}</div>
-                        <div className="border rounded-xl p-3 bg-white max-h-96 overflow-auto" dangerouslySetInnerHTML={{ __html: preview.html }} />
+                        <div className="border rounded-xl p-3 bg-white max-h-96 overflow-auto prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: preview.html }} />
                     </div>
                 ) : (
                     <div className="text-sm text-muted-foreground">Click <strong>Preview</strong> to render against a sample recipient.</div>
@@ -1471,6 +1509,10 @@ function ComposeBlast() {
         </div>
     );
 }
+
+// Official chapter filter — used in member-facing chapter pickers.
+const OFFICIAL_CHAPTER_NAMES = ["Texas", "Florida", "Tri-South", "DMV"];
+const officialOnly = (c) => OFFICIAL_CHAPTER_NAMES.includes(c.name);
 
 function EmailTemplates() {
     const [items, setItems] = useState([]);
@@ -1527,15 +1569,128 @@ function TemplateDialog({ template, onSaved, trigger }) {
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>{trigger}</DialogTrigger>
-            <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">{template ? "Edit template" : "New email template"}</DialogTitle></DialogHeader>
                 <div className="space-y-3 mt-2">
                     <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-xl mt-1.5" data-testid="template-name-input" /></div>
                     <div><Label>Subject</Label><Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     <div><Label>Description</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" placeholder="What this template is for" /></div>
-                    <div><Label>Body HTML</Label><Textarea rows={10} value={form.body_html} onChange={(e) => setForm({ ...form, body_html: e.target.value })} className="rounded-xl mt-1.5 font-mono text-xs" /></div>
+                    <div>
+                        <Label>Body</Label>
+                        <div className="mt-1.5">
+                            <RichEditor value={form.body_html} onChange={(html) => setForm((f) => ({ ...f, body_html: html }))} placeholder="Write the template body — add images, lists, links from the toolbar." minHeight={260} />
+                        </div>
+                    </div>
                 </div>
                 <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="template-save-btn">Save</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+/* -------- Email Signatures (personal + org) -------- */
+function EmailSignatures() {
+    const [items, setItems] = useState([]);
+    const load = () => api.get("/email/signatures").then(({ data }) => setItems(data));
+    useEffect(() => { load(); }, []);
+    async function del(id) {
+        if (!confirm("Delete this signature?")) return;
+        await api.delete(`/email/signatures/${id}`);
+        toast.success("Deleted");
+        load();
+    }
+    const personal = items.filter((s) => s.kind === "personal");
+    const org = items.filter((s) => s.kind === "org");
+    return (
+        <div className="space-y-8">
+            <div>
+                <div className="flex items-center justify-between mb-3">
+                    <div>
+                        <h3 className="font-heading text-xl font-bold">My signatures</h3>
+                        <p className="text-xs text-muted-foreground">Only you can see and edit these.</p>
+                    </div>
+                    <SignatureDialog kind="personal" onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-personal-sig-btn"><Plus className="h-4 w-4 mr-1" />New personal signature</Button>} />
+                </div>
+                <SignatureGrid items={personal} onSaved={load} onDelete={del} />
+            </div>
+            <div>
+                <div className="flex items-center justify-between mb-3">
+                    <div>
+                        <h3 className="font-heading text-xl font-bold">Shared signatures</h3>
+                        <p className="text-xs text-muted-foreground">Any admin can use these (President's closing, Chapter footer, etc.)</p>
+                    </div>
+                    <SignatureDialog kind="org" onSaved={load} trigger={<Button variant="outline" className="rounded-full" data-testid="new-org-sig-btn"><Plus className="h-4 w-4 mr-1" />New shared signature</Button>} />
+                </div>
+                <SignatureGrid items={org} onSaved={load} onDelete={del} />
+            </div>
+        </div>
+    );
+}
+
+function SignatureGrid({ items, onSaved, onDelete }) {
+    if (items.length === 0) return <div className="text-sm text-muted-foreground py-6 text-center bg-muted/30 rounded-2xl border-2 border-dashed border-border">No signatures yet — add your name, title, and a photo so members instantly recognize who wrote.</div>;
+    return (
+        <div className="grid md:grid-cols-2 gap-4">
+            {items.map((s) => (
+                <div key={s.id} className="bg-card border border-border rounded-2xl p-5" data-testid={`signature-${s.id}`}>
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="font-heading font-semibold text-lg">{s.name}</div>
+                        <div className="flex gap-1 shrink-0">
+                            <SignatureDialog signature={s} onSaved={onSaved} trigger={<Button variant="outline" size="sm" className="rounded-full">Edit</Button>} />
+                            <Button variant="ghost" size="icon" onClick={() => onDelete(s.id)} data-testid={`delete-signature-${s.id}`}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                        </div>
+                    </div>
+                    <div className="mt-3 border rounded-xl p-3 bg-slate-50 max-h-48 overflow-auto prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: s.body_html }} />
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function SignatureDialog({ signature, kind, onSaved, trigger }) {
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({ name: "", body_html: "", kind: kind || "personal" });
+    useEffect(() => {
+        if (open) {
+            setForm(signature
+                ? { name: signature.name, body_html: signature.body_html, kind: signature.kind }
+                : { name: "", body_html: "<p><strong>Your Name</strong><br>Title · Chapter</p><p>email@aop.org · 555-0100</p>", kind: kind || "personal" }
+            );
+        }
+    }, [open, signature, kind]);
+
+    async function save() {
+        if (!form.name.trim()) { toast.error("Name required"); return; }
+        try {
+            if (signature) {
+                await api.put(`/email/signatures/${signature.id}`, { name: form.name, body_html: form.body_html });
+            } else {
+                await api.post("/email/signatures", form);
+            }
+            toast.success("Saved");
+            setOpen(false);
+            onSaved();
+        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    }
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>{trigger}</DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">{signature ? "Edit signature" : `New ${form.kind === "org" ? "shared" : "personal"} signature`}</DialogTitle></DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div>
+                        <Label>Signature name</Label>
+                        <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. President closing, My default" className="rounded-xl mt-1.5" data-testid="signature-name-input" />
+                    </div>
+                    <div>
+                        <Label>Signature content</Label>
+                        <div className="mt-1.5">
+                            <RichEditor value={form.body_html} onChange={(html) => setForm((f) => ({ ...f, body_html: html }))} placeholder="Type your name, title, contact info. Click the image button to add a photo or logo." minHeight={220} />
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1.5">Tip: drag a photo into the editor for a portrait, or paste from your clipboard.</div>
+                    </div>
+                </div>
+                <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="signature-save-btn">Save signature</Button></DialogFooter>
             </DialogContent>
         </Dialog>
     );

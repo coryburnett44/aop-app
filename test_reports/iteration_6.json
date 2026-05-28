@@ -1,0 +1,43 @@
+{
+  "summary": "Phase E (Fixed AOP chapters + Rich email editor + Email signatures + Inline image upload) — comprehensive backend + frontend testing for Alpha Omega Phi. Backend: 12/12 pytest pass in /app/backend/tests/test_phase_e.py. Frontend: all Phase E asks verified — Email tab has 4 sub-tabs (compose/templates/signatures/history), Compose body uses TipTap rich editor with data-testid='rich-editor' and 14 toolbar buttons (bold/italic/strike/H2/quote/ul/ol/align-left/center/right/link/image/undo/redo), Enter produces new <p> paragraphs, file-picker upload inserts <img> inline with a valid /api/files/email/{user_id}/{file_id}/{filename} src, Insert signature dropdown appends sig HTML to body, Signatures sub-tab supports New personal + New shared with rich-editor body, ChapterDialog uses a Select limited to the 4 official names, New-member and Edit-member chapter dropdowns show ONLY Texas/Florida/Tri-South/DMV, /profile chapter picker shows ONLY the 4 official chapters (labels include region/state suffix), and the Template dialog uses the rich editor (no raw HTML textarea).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/email/upload-image", "issue": "Spec requested HTTP 415 for non-image rejection; implementation returns 400 with detail 'Only images allowed (jpg, png, gif, webp)'. Functionally correct but status code differs. Also, image-type validation is based only on filename extension — a file with a .png extension but non-image content type/bytes would still be accepted (no MIME or magic-byte sniffing)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_e.py",
+    "/app/test_reports/pytest/phase_e_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Change POST /api/email/upload-image rejection status from 400 to 415 to match the spec for unsupported media types.",
+    "(Optional, hardening) Validate uploaded image by sniffing magic bytes (e.g., Pillow.Image.open) rather than trusting filename extension, since current logic accepts any file named *.png even if content is not actually an image.",
+    "(Code-review) server.py is 3444 lines — keep deferring router split (already flagged in iteration_5)."
+  ],
+  "critical_code_review_comments": [
+    "/api/email/upload-image buffers the full image into memory before flushing to object storage (chunks list joined to bytes). For the 25 MB cap this is acceptable, but inherits the same anti-pattern flagged in Phase D chat upload — stream to storage instead.",
+    "Image validation in email_upload_image only checks the file extension; file.content_type is not validated against IMAGE_EXT and no magic-byte sniff is performed. A renamed binary blob would pass the gate.",
+    "RichEditor.jsx parent-sync useEffect compares editor.getHTML() to value and calls setContent(value, false) when they differ — this is fine for template/signature pickers but suppresses transactions, which means redo history is cleared. Acceptable trade-off for a composer.",
+    "reconcile_chapters runs on every startup and is idempotent; it only updates region/state for the 4 canonical chapters (does not normalise legacy chapter names). Good design for member-link preservation, but admins must still manually clean up legacy chapters from the Chapters admin tab — confirm this is the intended UX.",
+    "OFFICIAL_CHAPTER_NAMES is duplicated as a frontend constant (/pages/Admin.jsx L1514) and as AOP_CHAPTERS in backend (server.py L3283). Risk of drift — consider exposing it via GET /api/chapters/official or hard-asserting via tests."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_e.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 phase E pytest pass)",
+    "frontend": "100% on all 13 Phase E frontend asks (4 sub-tabs, rich editor + 14 toolbar buttons, Enter->paragraph, file-picker image upload visible inline, drag/drop wired via TipTap handlers, signature picker appends to body, personal+org sig CRUD UI, chapter dialog Select with 4 options, member-tab inline + nm + em chapter dropdowns limited to 4, profile chapter limited to 4, template dialog uses rich editor)"
+  },
+  "test_credentials": "admin@clubhaven.app/Admin123! and member@clubhaven.app/Member123! both verified.",
+  "seed_data_creation": "Test created and cleaned up: (a) TEST_personal_sig + TEST_org_sig signatures (all deleted in test_delete_signature), (b) TEST_email_image.png uploaded to email/{admin_id}/{file_id}/ in object storage and registered in db.chat_files (blob retained, harmless), (c) one TEST_inline.png uploaded via UI smoke test (also retained in storage, harmless). UI created+deleted one TEST_UI_personal_sig signature. No legacy/seeded data touched.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase E is solid. To regress quickly: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest backend/tests/test_phase_e.py -v. For UI smoke, login as admin -> /admin -> Email tab -> verify the 4 sub-tabs, rich editor toolbar, signature CRUD, then Chapters/Members/Profile chapter pickers. Drag-and-drop image upload is wired in TipTap's handleDrop (RichEditor.jsx L51) and paste is wired in handlePaste (L38) — could not exercise drag-and-drop via Playwright DataTransfer API in this run, but the file-picker path uses the same uploadAndInsert() function and that path was verified end-to-end (inline <img> with valid /api/files/email/... src rendered in the editor). Legacy chapters like 'Alpha Beta', 'Gamma Delta' remain in db.chapters and ARE visible in the Admin -> Chapters tab list (for cleanup) but DO NOT appear in any member-facing picker, as required.",
+  "rca of the issue": "No critical bugs found. Two minor backend observations only: (1) Non-image rejection uses 400 instead of 415 (spec preference); (2) image validation is extension-only, not content-sniffed. Both are non-blocking and listed as optional hardening."
+}

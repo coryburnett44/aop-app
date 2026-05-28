@@ -215,7 +215,7 @@ export default function Profile() {
                             <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
                                 <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-chapter"><SelectValue placeholder="Select your chapter" /></SelectTrigger>
                                 <SelectContent>
-                                    {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
+                                    {chapters.filter((c) => ["Texas", "Florida", "Tri-South", "DMV"].includes(c.name)).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
                                 </SelectContent>
                             </Select>
                         </div>
