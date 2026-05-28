@@ -262,29 +262,18 @@ def admin_tab_dep(tab: str):
     return _dep
 
 async def chapter_scope_user_ids(admin: dict) -> Optional[list]:
-    """Returns the list of user_ids in the admin's chapter scope, or None if no scoping applies."""
-    role = admin_role_of(admin)
-    # Governor Manager is ALWAYS scoped. Operations & Membership Managers are
-    # scoped only when assigned to a specific chapter (full admins with no chapter remain unscoped).
-    if role == "governor_manager":
-        cid = admin.get("chapter_id")
-        if not cid:
-            return []
-        cursor = db.users.find({"chapter_id": cid}, {"id": 1, "_id": 0})
-        return [u["id"] async for u in cursor]
-    if role in ("operations_manager", "membership_manager") and admin.get("chapter_id"):
-        cid = admin["chapter_id"]
-        cursor = db.users.find({"chapter_id": cid}, {"id": 1, "_id": 0})
-        return [u["id"] async for u in cursor]
-    return None
+    """For Governor Managers, return the list of user_ids in their chapter.
+    Returns None for everyone else (no scoping applied)."""
+    if admin_role_of(admin) != "governor_manager":
+        return None
+    cid = admin.get("chapter_id")
+    if not cid:
+        return []  # Governor without chapter sees nothing
+    cursor = db.users.find({"chapter_id": cid}, {"id": 1, "_id": 0})
+    return [u["id"] async for u in cursor]
 
 def is_chapter_scoped(admin: dict) -> bool:
-    role = admin_role_of(admin)
-    if role == "governor_manager":
-        return True
-    if role in ("operations_manager", "membership_manager"):
-        return bool(admin.get("chapter_id"))
-    return False
+    return admin_role_of(admin) == "governor_manager"
 
 @api.get("/admin/permissions")
 async def admin_permissions(user: dict = Depends(require_admin)):
