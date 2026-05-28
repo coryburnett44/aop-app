@@ -1,0 +1,42 @@
+{
+  "summary": "Phase F testing — Admin role-based tab gating + Governor Manager chapter scoping + Member Card ribbons + Hours HTML5 validation. Backend: 23/24 pytest pass in /app/backend/tests/test_phase_f.py (1 documented failure exposing a real server-side gating gap on /api/email/templates). All data-scoping requirements pass (admin/permissions, admin/stats, hours, reports/members, reports/hours, reports/donations, causes/{id}/donations, transactions). Frontend: All 4 Phase F asks verified end-to-end via Playwright — (1) Governor sees only 4 tabs [dashboard, hours, causes, reports] with chapter-scoped banner; (2) Full admin sees all 13 tabs; (3) Member Card shows email/chapter/member type/joined/membership expires/Ribbons & Achievements section with explicit 'Secure data (passwords, payment methods, transactions) is intentionally hidden.' disclaimer — NO actual transaction/payment data exposed; (4) Hours form has 7 HTML5 required fields, empty submit blocked (invalidCount=7, dialog stays open), valid submit produces toast 'Hours logged — pending admin review' and the entry shows up in the list as PENDING.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/email/templates (and likely all other admin write/read endpoints)", "issue": "Governor Manager (admin_role=governor_manager) can READ /api/email/templates via direct API call (returns 200) even though the Email tab is hidden in the UI. Server-side enforcement uses require_admin (any admin) instead of require_admin_tab('email'). Same exposure pattern exists for /api/news, /api/pages, /api/chapters, /api/admin/tiers, etc. — only the data-scoping endpoints were hardened in this phase. Recommend switching read/write endpoints for restricted tabs to require_admin_tab(tab_name) for defense in depth."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_f.py",
+    "/app/test_reports/pytest/phase_f_results.xml"
+  ],
+  "action_items": [
+    "(Security hardening) Replace require_admin with require_admin_tab(<tab>) on backend endpoints serving restricted tabs (email/news/pages/chapters/tiers/events/awards/gear/members) so that Governor/Operations/Membership managers cannot bypass UI gating via direct API calls. Currently only /api/admin/permissions, /api/admin/stats, /api/hours, /api/reports/*, /api/causes/{id}/donations, /api/transactions enforce chapter scope.",
+    "(Minor) Member Card disclaimer text contains the words 'payment' and 'transactions' (only inside the explanatory hidden-data notice, no actual data leaks). If a stricter substring search by QA is required, consider rewording the disclaimer to e.g. 'Sensitive financial details are intentionally hidden.'"
+  ],
+  "critical_code_review_comments": [
+    "Server-side admin-role gating is implemented (ADMIN_ROLE_TABS + require_admin_tab) but only used by /api/admin/permissions. All other admin endpoints still use require_admin, so the Governor/Membership/Operations manager roles enforce restrictions only client-side. This is a defense-in-depth gap.",
+    "chapter_scope_user_ids returns [] for a Governor with no chapter_id — silently hides everything. Consider raising a 403 with a clear message to prevent confusing empty states.",
+    "/api/admin/permissions returns scoped_chapter_id only for governor_manager; for membership_manager/operations_manager the field is None. If those roles are ever scoped in future, the response shape will silently change — consider always returning the field as null for forward-compat (already does this — fine).",
+    "Member Card (Admin.jsx L1098-1180) hardcodes 'Secure data ... is intentionally hidden.' — the disclaimer is good UX, but the words 'payment' and 'transaction' appear in plain text, which can confuse a naive substring scan. Cosmetic only.",
+    "Hours form (Hours.jsx L46-145): the <form onSubmit> wrapper + required attributes give native HTML5 validation as designed. All 7 user-input fields are required (hours, date, agency, activity, host name, host email, host phone). event_type defaults to 'aop_event' — not user-visible/required. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_f.py (new)"
+  ],
+  "success_rate": {
+    "backend": "95.8% (23/24 phase F pytest pass; 1 failure documents real backend gating gap on /api/email/templates)",
+    "frontend": "100% on all 4 Phase F frontend asks (governor tab gating, full admin tab gating, Member Card ribbons + no payment data, Hours HTML5 validation + valid submit)"
+  },
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123!, governor.tx@clubhaven.app/Governor123! — all verified working",
+  "seed_data_creation": "Created one TEST_ volunteer hours entry (2.5h Test Org / Test work) by member@clubhaven.app during the Hours HTML5 validation smoke test. Status: PENDING (not auto-cleaned; harmless — admin can approve/reject from /admin -> Hours).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "To regress quickly: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest backend/tests/test_phase_f.py -v. Governor Texas chapter has 3 users; full admin sees 12 (count went from 11 to 12 because of the test hours entry's host being unrelated — total_members is from db.users count, not affected). Backend gating gap on /api/email/templates is documented as a single failed pytest case (TestGovernorRestrictedTabs::test_gov_blocked_on_tab[/api/email/templates]) — intentional to surface the issue, not a flaky test.",
+  "rca of the issue": "Single backend finding: Phase F added chapter scoping (chapter_scope_user_ids + is_chapter_scoped) to the data endpoints listed in the spec, but did NOT change require_admin -> require_admin_tab on the endpoints belonging to restricted tabs. Result: Governor Manager's API access is correctly chapter-scoped for hours/reports/transactions/stats/causes-donations, but they can still GET /api/email/templates (and probably /api/chapters, /api/admin/tiers, etc.) because those still use require_admin (any admin) gating. UI tab hiding works correctly — this is purely an API-layer hardening gap. Reproduction: login as governor.tx@clubhaven.app, then `curl -b cookies.txt $BACKEND/api/email/templates` returns 200 with template list. Mitigation: swap require_admin to require_admin_tab(\"email\") (and respective tab names) on the affected endpoints."
+}

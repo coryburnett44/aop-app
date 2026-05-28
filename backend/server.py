@@ -245,6 +245,20 @@ async def require_admin_tab(tab: str, user: dict = Depends(get_current_user)) ->
         raise HTTPException(status_code=403, detail=f"Your admin role does not have access to {tab}")
     return user
 
+async def chapter_scope_user_ids(admin: dict) -> Optional[list]:
+    """For Governor Managers, return the list of user_ids in their chapter.
+    Returns None for full admins (no scoping applied)."""
+    if admin_role_of(admin) != "governor_manager":
+        return None
+    cid = admin.get("chapter_id")
+    if not cid:
+        return []  # Governor without chapter sees nothing
+    cursor = db.users.find({"chapter_id": cid}, {"id": 1, "_id": 0})
+    return [u["id"] async for u in cursor]
+
+def is_chapter_scoped(admin: dict) -> bool:
+    return admin_role_of(admin) == "governor_manager"
+
 @api.get("/admin/permissions")
 async def admin_permissions(user: dict = Depends(require_admin)):
     """Return the tabs the current admin can access — used by frontend to gate UI."""
@@ -1356,10 +1370,13 @@ async def log_hours(body: HoursLogIn, user: dict = Depends(get_current_user)):
     return hours_out(doc)
 
 @api.get("/hours")
-async def list_hours(status_filter: Optional[str] = None, _: dict = Depends(require_admin)):
+async def list_hours(status_filter: Optional[str] = None, admin: dict = Depends(require_admin)):
     query = {}
     if status_filter:
         query["status"] = status_filter
+    if is_chapter_scoped(admin):
+        ids = await chapter_scope_user_ids(admin)
+        query["user_id"] = {"$in": ids or []}
     cursor = db.volunteer_hours.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
     items = await cursor.to_list(500)
     return [hours_out(h) for h in items]
@@ -1593,12 +1610,15 @@ async def admin_create_transaction(body: TransactionIn, admin: dict = Depends(re
     return tx_out(doc)
 
 @api.get("/transactions")
-async def admin_list_transactions(user_id: Optional[str] = None, type_filter: Optional[str] = None, _: dict = Depends(require_admin)):
+async def admin_list_transactions(user_id: Optional[str] = None, type_filter: Optional[str] = None, admin: dict = Depends(require_admin)):
     query = {}
     if user_id:
         query["user_id"] = user_id
     if type_filter:
         query["type"] = type_filter
+    if is_chapter_scoped(admin):
+        ids = await chapter_scope_user_ids(admin)
+        query["user_id"] = {"$in": ids or []}
     cursor = db.transactions.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
     items = await cursor.to_list(500)
     return [tx_out(t) for t in items]
@@ -1664,22 +1684,39 @@ async def my_activity(user: dict = Depends(get_current_user)):
 ANNUAL_DUES_USD = 60.0
 
 @api.get("/admin/stats")
-async def admin_stats(_: dict = Depends(require_admin)):
+async def admin_stats(admin: dict = Depends(require_admin)):
     now = now_utc()
     now_iso = iso(now)
     thirty_days_iso = iso(now + timedelta(days=30))
     month_start_iso = iso(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
 
+    # Chapter-scoping (Governor Manager sees only their chapter)
+    scoped = is_chapter_scoped(admin)
+    scope_cid = admin.get("chapter_id") if scoped else None
+    user_q_extra: dict = {"chapter_id": scope_cid} if scoped else {}
+    if scoped:
+        scoped_user_ids = await chapter_scope_user_ids(admin) or []
+        hours_q_extra: dict = {"user_id": {"$in": scoped_user_ids}}
+    else:
+        scoped_user_ids = None
+        hours_q_extra = {}
+
+    def uq(extra: dict) -> dict:
+        return {**extra, **user_q_extra}
+
     # Members
-    total_members = await db.users.count_documents({})
-    new_this_month = await db.users.count_documents({"created_at": {"$gte": month_start_iso}})
-    expiring_soon = await db.users.count_documents({
+    total_members = await db.users.count_documents(uq({}))
+    new_this_month = await db.users.count_documents(uq({"created_at": {"$gte": month_start_iso}}))
+    expiring_soon = await db.users.count_documents(uq({
         "membership_expires_at": {"$gte": now_iso, "$lte": thirty_days_iso}
-    })
-    expired = await db.users.count_documents({"membership_expires_at": {"$lt": now_iso}})
+    }))
+    expired = await db.users.count_documents(uq({"membership_expires_at": {"$lt": now_iso}}))
     active_members = total_members - expired
 
-    tier_cursor = db.users.aggregate([{"$group": {"_id": "$membership_tier", "count": {"$sum": 1}}}])
+    tier_cursor = db.users.aggregate([
+        {"$match": user_q_extra} if scoped else {"$match": {}},
+        {"$group": {"_id": "$membership_tier", "count": {"$sum": 1}}},
+    ])
     by_tier = [{"tier": (d["_id"] or "standard"), "count": d["count"]} async for d in tier_cursor]
 
     # Member growth — last 6 calendar months
@@ -1693,12 +1730,12 @@ async def admin_stats(_: dict = Depends(require_admin)):
             y -= 1
         m_start = current_first.replace(year=y, month=m)
         next_m = (m_start + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        c = await db.users.count_documents({
+        c = await db.users.count_documents(uq({
             "created_at": {"$gte": iso(m_start), "$lt": iso(next_m)}
-        })
+        }))
         growth.append({"month": m_start.strftime("%b"), "members": c})
 
-    # Events
+    # Events (not chapter-scoped — events are org-wide)
     total_events = await db.events.count_documents({})
     upcoming_events = await db.events.count_documents({"start_at": {"$gte": now_iso}})
     past_events = total_events - upcoming_events
@@ -1716,13 +1753,13 @@ async def admin_stats(_: dict = Depends(require_admin)):
 
     # Dues (no Stripe yet — estimate)
     active_revenue = round(active_members * ANNUAL_DUES_USD, 2)
-    renewals_this_month = await db.users.count_documents({
+    renewals_this_month = await db.users.count_documents(uq({
         "membership_expires_at": {"$gte": iso(now + timedelta(days=360)), "$lte": iso(now + timedelta(days=370))}
-    })
+    }))
 
     # Expiring memberships list
     exp_cursor = db.users.find(
-        {"membership_expires_at": {"$gte": now_iso, "$lte": thirty_days_iso}},
+        uq({"membership_expires_at": {"$gte": now_iso, "$lte": thirty_days_iso}}),
         {"_id": 0, "password_hash": 0}
     ).sort("membership_expires_at", 1).limit(10)
     expiring_list = [{
@@ -1735,10 +1772,13 @@ async def admin_stats(_: dict = Depends(require_admin)):
     total_chapters = await db.chapters.count_documents({})
     total_tiers = await db.tiers.count_documents({})
     total_awards = await db.awards.count_documents({})
-    total_grants = await db.award_grants.count_documents({})
-    pending_hours = await db.volunteer_hours.count_documents({"status": "pending"})
+    if scoped:
+        total_grants = await db.award_grants.count_documents({"user_id": {"$in": scoped_user_ids}})
+    else:
+        total_grants = await db.award_grants.count_documents({})
+    pending_hours = await db.volunteer_hours.count_documents({**hours_q_extra, "status": "pending"})
     approved_hours_agg = db.volunteer_hours.aggregate([
-        {"$match": {"status": "approved"}},
+        {"$match": {**hours_q_extra, "status": "approved"}},
         {"$group": {"_id": None, "total": {"$sum": "$hours"}}},
     ])
     approved_hours_total = 0
@@ -1757,11 +1797,11 @@ async def admin_stats(_: dict = Depends(require_admin)):
     seven_days_ago_iso = iso(now - timedelta(days=7))
     grace_cutoff_iso = iso(now - timedelta(days=GRACE_PERIOD_DAYS))
     hours_queue_cursor = db.volunteer_hours.find(
-        {"status": "pending"}, {"_id": 0}
+        {**hours_q_extra, "status": "pending"}, {"_id": 0}
     ).sort("created_at", 1).limit(10)
     hours_to_review = [hours_out(h) async for h in hours_queue_cursor]
     grace_cursor = db.users.find(
-        {"membership_expires_at": {"$gte": grace_cutoff_iso, "$lt": now_iso}},
+        uq({"membership_expires_at": {"$gte": grace_cutoff_iso, "$lt": now_iso}}),
         {"_id": 0, "password_hash": 0},
     ).sort("membership_expires_at", 1).limit(10)
     in_grace = [{
@@ -1770,7 +1810,7 @@ async def admin_stats(_: dict = Depends(require_admin)):
         "tier": u.get("membership_tier"),
     } async for u in grace_cursor]
     new_cursor = db.users.find(
-        {"created_at": {"$gte": seven_days_ago_iso}},
+        uq({"created_at": {"$gte": seven_days_ago_iso}}),
         {"_id": 0, "password_hash": 0},
     ).sort("created_at", -1).limit(10)
     new_members = [{
@@ -2313,9 +2353,13 @@ async def pledge_donation(cause_id: str, body: PledgeIn, user: dict = Depends(ge
     return {"transaction_id": tx["id"], "status": "pending"}
 
 @api.get("/causes/{cause_id}/donations")
-async def cause_donations(cause_id: str, _: dict = Depends(require_admin)):
+async def cause_donations(cause_id: str, admin: dict = Depends(require_admin)):
+    q = {"cause_id": cause_id, "type": "donation"}
+    if is_chapter_scoped(admin):
+        ids = await chapter_scope_user_ids(admin)
+        q["user_id"] = {"$in": ids or []}
     items = await db.transactions.find(
-        {"cause_id": cause_id, "type": "donation"},
+        q,
         {"_id": 0},
     ).sort("created_at", -1).to_list(500)
     return items
@@ -2407,7 +2451,7 @@ async def report_members(
     chapter_id: Optional[str] = None,
     tier_id: Optional[str] = None,
     role: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    admin: dict = Depends(require_admin),
 ):
     q: dict = {}
     if chapter_id:
@@ -2416,6 +2460,8 @@ async def report_members(
         q["tier_id"] = tier_id
     if role:
         q["role"] = role
+    if is_chapter_scoped(admin):
+        q["chapter_id"] = admin.get("chapter_id") or "__none__"
     cursor = db.users.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1)
     users = await cursor.to_list(2000)
     out = [public_user(u) for u in users]
@@ -2430,7 +2476,7 @@ async def report_hours(
     event_type: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    admin: dict = Depends(require_admin),
 ):
     q: dict = {}
     if status_filter:
@@ -2445,6 +2491,9 @@ async def report_hours(
             q["date"]["$gte"] = from_date
         if to_date:
             q["date"]["$lte"] = to_date
+    if is_chapter_scoped(admin):
+        ids = await chapter_scope_user_ids(admin)
+        q["user_id"] = {"$in": ids or []}
     cursor = db.volunteer_hours.find(q, {"_id": 0}).sort("date", -1).limit(2000)
     items = await cursor.to_list(2000)
     return [hours_out(h) for h in items]
@@ -2453,13 +2502,16 @@ async def report_hours(
 async def report_donations(
     cause_id: Optional[str] = None,
     status_filter: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    admin: dict = Depends(require_admin),
 ):
     q: dict = {"type": "donation"}
     if cause_id:
         q["cause_id"] = cause_id
     if status_filter:
         q["status"] = status_filter
+    if is_chapter_scoped(admin):
+        ids = await chapter_scope_user_ids(admin)
+        q["user_id"] = {"$in": ids or []}
     items = await db.transactions.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return items
 

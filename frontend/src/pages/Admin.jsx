@@ -22,13 +22,14 @@ export default function Admin() {
         api.get("/admin/permissions").then(({ data }) => setPerms(data)).catch(() => setPerms({ tabs: [], admin_role: "" }));
     }, []);
 
-    if (!perms) return <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10 text-muted-foreground">Loading…</div>;
-    const allowed = (t) => perms.tabs.includes(t);
     // Default to first allowed tab if current tab isn't allowed
     useEffect(() => {
-        if (perms.tabs.length && !perms.tabs.includes(tab)) setTab(perms.tabs[0]);
+        if (perms && perms.tabs.length && !perms.tabs.includes(tab)) setTab(perms.tabs[0]);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [perms.tabs.join(",")]);
+    }, [perms]);
+
+    if (!perms) return <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10 text-muted-foreground">Loading…</div>;
+    const allowed = (t) => perms.tabs.includes(t);
 
     return (
         <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10">
@@ -1098,9 +1099,11 @@ function StatusPill({ status }) {
 function MemberCardDialog({ member, chapters, tiers, trigger }) {
     const [open, setOpen] = useState(false);
     const [details, setDetails] = useState(member);
+    const [grants, setGrants] = useState([]);
     useEffect(() => {
         if (open) {
             api.get(`/members/${member.id}`).then(({ data }) => setDetails(data)).catch(() => {});
+            api.get(`/members/${member.id}/awards`).then(({ data }) => setGrants(data || [])).catch(() => setGrants([]));
         }
     }, [open, member.id]);
     const chapter = chapters?.find((c) => c.id === details.chapter_id);
@@ -1110,7 +1113,7 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
             <DialogTrigger asChild>
                 {trigger || <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" data-testid={`view-member-${member.id}`}>View</Button>}
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">Member card</DialogTitle></DialogHeader>
                 <div className="flex items-center gap-4 mt-1">
                     <div className="w-16 h-16 rounded-full bg-primary/15 text-primary grid place-items-center font-heading font-black text-2xl">
@@ -1134,6 +1137,7 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                     <DetailRow label="Birthdate" value={details.birthdate ? format(parseISO(details.birthdate.length === 10 ? `${details.birthdate}T00:00:00` : details.birthdate), "MMM d, yyyy") : ""} />
                     <DetailRow label="Branch of service" value={details.branch_of_service} />
                     <DetailRow label="Chapter" value={chapter?.name} />
+                    <DetailRow label="Member type" value={tier?.name} />
                     <DetailRow label="Joined" value={details.created_at ? format(parseISO(details.created_at), "MMM d, yyyy") : ""} />
                     <DetailRow label="Membership expires" value={details.membership_expires_at ? format(parseISO(details.membership_expires_at), "MMM d, yyyy") : ""} />
                     {details.bio && (
@@ -1142,6 +1146,31 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                             <p className="text-sm leading-relaxed">{details.bio}</p>
                         </div>
                     )}
+                    <div className="pt-3 border-t">
+                        <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">
+                            Ribbons & Achievements <span className="text-foreground/80">({grants.length})</span>
+                        </div>
+                        {grants.length === 0 ? (
+                            <div className="text-xs text-muted-foreground italic">No ribbons earned yet.</div>
+                        ) : (
+                            <div className="flex flex-wrap gap-2" data-testid={`member-card-${member.id}-ribbons`}>
+                                {grants.map((g) => (
+                                    <div
+                                        key={g.id}
+                                        title={g.granted_at ? format(parseISO(g.granted_at), "MMM d, yyyy") : ""}
+                                        className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold bg-primary/10 text-primary border border-primary/20"
+                                        data-testid={`ribbon-${g.id}`}
+                                    >
+                                        <span className="w-2 h-2 rounded-full bg-primary"></span>
+                                        {g.award_name || g.name || "Ribbon"}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    <div className="pt-2 text-[10px] text-muted-foreground italic">
+                        Secure data (passwords, payment methods, transactions) is intentionally hidden.
+                    </div>
                 </div>
             </DialogContent>
         </Dialog>

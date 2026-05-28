@@ -59,7 +59,8 @@ function LogHoursDialog() {
 
     function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
 
-    async function save() {
+    async function save(e) {
+        if (e) e.preventDefault();
         if (!form.hours || !form.date || !form.activity.trim() || !form.agency_name.trim() || !form.host_name.trim() || !form.host_email.trim() || !form.host_phone.trim()) {
             toast.error("Every field is required");
             return;
@@ -94,15 +95,15 @@ function LogHoursDialog() {
             </Button>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">Log volunteer hours</DialogTitle></DialogHeader>
-                <div className="space-y-4 mt-2">
+                <form onSubmit={save} className="space-y-4 mt-2" data-testid="log-hours-form">
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <Label>Hours *</Label>
-                            <Input type="number" step="0.25" value={form.hours} onChange={(e) => set("hours", e.target.value)} placeholder="e.g. 2.5" className="rounded-xl mt-1.5" data-testid="hours-amount-input" />
+                            <Input required type="number" step="0.25" min="0.25" value={form.hours} onChange={(e) => set("hours", e.target.value)} placeholder="e.g. 2.5" className="rounded-xl mt-1.5" data-testid="hours-amount-input" />
                         </div>
                         <div>
                             <Label>Date *</Label>
-                            <Input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="rounded-xl mt-1.5" data-testid="hours-date-input" />
+                            <Input required type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="rounded-xl mt-1.5" data-testid="hours-date-input" />
                         </div>
                     </div>
                     <div>
@@ -119,24 +120,24 @@ function LogHoursDialog() {
                     </div>
                     <div>
                         <Label>Agency / Organization name *</Label>
-                        <Input value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" required />
+                        <Input required value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" />
                     </div>
                     <div>
                         <Label>What did you do? *</Label>
-                        <Textarea rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" required />
+                        <Textarea required rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" />
                     </div>
                     <div className="border-t pt-3">
                         <Label className="text-xs uppercase tracking-wider text-muted-foreground">Host / Point of contact *</Label>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1.5">
-                            <Input value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder="Host name *" className="rounded-xl" data-testid="hours-host-name-input" required />
-                            <Input type="email" value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder="Host email *" className="rounded-xl" data-testid="hours-host-email-input" required />
-                            <Input value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder="Host phone *" className="rounded-xl" data-testid="hours-host-phone-input" required />
+                            <Input required value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder="Host name *" className="rounded-xl" data-testid="hours-host-name-input" />
+                            <Input required type="email" value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder="Host email *" className="rounded-xl" data-testid="hours-host-email-input" />
+                            <Input required value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder="Host phone *" className="rounded-xl" data-testid="hours-host-phone-input" />
                         </div>
                     </div>
-                    <Button onClick={save} disabled={busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-submit-btn">
+                    <Button type="submit" disabled={busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-submit-btn">
                         {busy ? "Saving…" : "Submit for approval"}
                     </Button>
-                </div>
+                </form>
             </DialogContent>
         </Dialog>
     );
