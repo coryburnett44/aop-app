@@ -158,30 +158,43 @@ export default function Profile() {
                 <div className="flex flex-wrap items-center justify-between gap-4">
                     <div>
                         <div className="text-xs uppercase tracking-wider font-semibold">{user.membership_tier} membership</div>
-                        <div className="font-heading text-2xl font-bold mt-1">
-                            {user.within_grace ? <span className="text-destructive">In grace period — renew soon</span> : daysLeft > 0 ? `${daysLeft} days remaining` : "Expired"}
-                        </div>
-                        <div className="text-sm text-muted-foreground mt-1">
-                            Expires {user.membership_expires_at && format(parseISO(user.membership_expires_at), "MMM d, yyyy")}
-                            {user.within_grace && " · 30-day grace active"}
-                        </div>
+                        {user.is_lifetime_member ? (
+                            <>
+                                <div className="font-heading text-2xl font-bold mt-1 text-primary" data-testid="membership-lifetime-label">Lifetime member</div>
+                                <div className="text-sm text-muted-foreground mt-1">No renewal required — your membership never expires.</div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="font-heading text-2xl font-bold mt-1">
+                                    {user.within_grace ? <span className="text-destructive">In grace period — renew soon</span> : daysLeft > 0 ? `${daysLeft} days remaining` : "Expired"}
+                                </div>
+                                <div className="text-sm text-muted-foreground mt-1">
+                                    Expires {user.membership_expires_at && format(parseISO(user.membership_expires_at), "MMM d, yyyy")}
+                                    {user.within_grace && " · 30-day grace active"}
+                                </div>
+                            </>
+                        )}
                     </div>
-                    <Button onClick={renew} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="renew-btn">
-                        Renew for 1 year
-                    </Button>
+                    {!user.is_lifetime_member && (
+                        <Button onClick={renew} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="renew-btn">
+                            Renew for 1 year
+                        </Button>
+                    )}
                 </div>
-                <div className="mt-4 pt-4 border-t border-border/40">
-                    <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Pay dues with PayPal</div>
-                    <PayPalCheckout
-                        purpose="dues"
-                        amount={60}
-                        note="Annual dues"
-                        onComplete={async () => {
-                            const { data } = await api.get("/auth/me").catch(() => ({ data: null }));
-                            if (data) setUser(data);
-                        }}
-                    />
-                </div>
+                {!user.is_lifetime_member && (
+                    <div className="mt-4 pt-4 border-t border-border/40">
+                        <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Pay dues with PayPal</div>
+                        <PayPalCheckout
+                            purpose="dues"
+                            amount={60}
+                            note="Annual dues"
+                            onComplete={async () => {
+                                const { data } = await api.get("/auth/me").catch(() => ({ data: null }));
+                                if (data) setUser(data);
+                            }}
+                        />
+                    </div>
+                )}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">

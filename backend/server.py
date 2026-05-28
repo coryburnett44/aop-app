@@ -87,13 +87,14 @@ def clear_auth_cookies(response: Response):
     response.delete_cookie("refresh_token", path="/")
 
 def public_user(u: dict) -> dict:
+    is_lifetime = bool(u.get("is_lifetime_member"))
     exp = u.get("membership_expires_at")
     try:
         exp_dt = datetime.fromisoformat(exp) if exp else None
     except Exception:
         exp_dt = None
     now = now_utc()
-    is_expired = bool(exp_dt and exp_dt < now)
+    is_expired = (not is_lifetime) and bool(exp_dt and exp_dt < now)
     within_grace = bool(is_expired and exp_dt and (now - exp_dt).days <= GRACE_PERIOD_DAYS)
     # Computed status (manual override wins if set)
     manual = u.get("status_override")
@@ -101,6 +102,8 @@ def public_user(u: dict) -> dict:
         status = manual
     elif u.get("deceased_at"):
         status = "deceased"
+    elif is_lifetime:
+        status = "active"  # life members never expire
     elif is_expired and not within_grace:
         status = "expired"
     elif within_grace:
@@ -139,8 +142,9 @@ def public_user(u: dict) -> dict:
         "avatar_url": u.get("avatar_url", ""),
         "membership_tier": u.get("membership_tier", "standard"),
         "tier_id": u.get("tier_id"),
+        "is_lifetime_member": is_lifetime,
         "chapter_id": u.get("chapter_id"),
-        "membership_expires_at": u.get("membership_expires_at"),
+        "membership_expires_at": None if is_lifetime else u.get("membership_expires_at"),
         "is_expired": is_expired,
         "within_grace": within_grace,
         "email_verified": u.get("email_verified", False),
@@ -1425,6 +1429,7 @@ def tier_out(t: dict) -> dict:
         "order": t.get("order", 0),
         "color": t.get("color", "#E86A58"),
         "annual_dues": t.get("annual_dues", 60.0),
+        "is_lifetime": bool(t.get("is_lifetime")),
         "description": t.get("description", ""),
         "member_count": t.get("member_count", 0),
     }
@@ -1517,6 +1522,9 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
         tier = await db.tiers.find_one({"id": body.tier_id}, {"_id": 0})
         if tier:
             doc["membership_tier"] = tier.get("name", "standard")
+            doc["is_lifetime_member"] = bool(tier.get("is_lifetime"))
+            if tier.get("is_lifetime"):
+                doc["membership_expires_at"] = None
     await db.users.insert_one(doc)
     # Send welcome email with temp password (best-effort; doesn't block creation if email fails)
     try:
@@ -1531,10 +1539,10 @@ async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, admin: di
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Member not found")
-    # Only full admins may change role / admin_role
-    if (body.role is not None and body.role != existing.get("role")) or (body.admin_role is not None and body.admin_role != existing.get("admin_role")):
+    # Only full admins may change role / admin_role / tier
+    if (body.role is not None and body.role != existing.get("role")) or (body.admin_role is not None and body.admin_role != existing.get("admin_role")) or (body.tier_id is not None and body.tier_id != existing.get("tier_id")):
         if admin_role_of(admin) != "full":
-            raise HTTPException(status_code=403, detail="Only full Admins may change member roles")
+            raise HTTPException(status_code=403, detail="Only full Admins may change member roles or tiers")
     updates = {k: v for k, v in body.model_dump().items() if v is not None and k not in ("new_password", "member_status")}
     # Status override (member_status maps to status_override; "active" with no expiry issues means clear override)
     if body.member_status is not None:
@@ -1564,11 +1572,14 @@ async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, admin: di
         composed = " ".join(p for p in parts if p).strip()
         if composed:
             updates["name"] = composed
-    # Tier change -> sync display tier
+    # Tier change -> sync display tier + lifetime flag + clear expiration for life members
     if "tier_id" in updates and updates["tier_id"]:
         tier = await db.tiers.find_one({"id": updates["tier_id"]}, {"_id": 0})
         if tier:
             updates["membership_tier"] = tier.get("name", "standard")
+            updates["is_lifetime_member"] = bool(tier.get("is_lifetime"))
+            if tier.get("is_lifetime"):
+                updates["membership_expires_at"] = None
     # Date field
     if "membership_expires_at" in updates and isinstance(updates["membership_expires_at"], datetime):
         updates["membership_expires_at"] = iso(updates["membership_expires_at"])
@@ -1618,23 +1629,44 @@ async def assign_chapter(user_id: str, body: AssignChapterIn, _: dict = Depends(
     return public_user(u)
 
 @api.put("/members/{user_id}/tier")
-async def assign_tier(user_id: str, body: AssignTierIn, _: dict = Depends(admin_tab_dep("members"))):
-    updates = {"tier_id": body.tier_id}
+async def assign_tier(user_id: str, body: AssignTierIn, admin: dict = Depends(admin_tab_dep("members"))):
+    # Only full admins may change a member's tier
+    if admin_role_of(admin) != "full":
+        raise HTTPException(status_code=403, detail="Only full Admins may change member tiers")
+    updates: dict = {"tier_id": body.tier_id}
+    is_lifetime = False
     if body.tier_id:
         tier = await db.tiers.find_one({"id": body.tier_id}, {"_id": 0})
         if tier:
             updates["membership_tier"] = tier.get("name", "standard")
-    if body.extend_days:
-        u = await db.users.find_one({"id": user_id})
-        if u:
-            cur = u.get("membership_expires_at")
+            is_lifetime = bool(tier.get("is_lifetime"))
+    updates["is_lifetime_member"] = is_lifetime
+    if is_lifetime:
+        # Life members never expire — clear any existing expiration
+        updates["membership_expires_at"] = None
+    else:
+        # If transitioning from lifetime → non-lifetime, re-establish an expiration
+        u_doc = await db.users.find_one({"id": user_id}, {"_id": 0})
+        if u_doc and (u_doc.get("is_lifetime_member") or not u_doc.get("membership_expires_at")):
+            base = now_utc()
+            join_iso = u_doc.get("join_date")
             try:
-                base = datetime.fromisoformat(cur) if cur else now_utc()
+                if join_iso:
+                    base = max(base, datetime.fromisoformat(join_iso))
             except Exception:
-                base = now_utc()
-            if base < now_utc():
-                base = now_utc()
-            updates["membership_expires_at"] = iso(base + timedelta(days=body.extend_days))
+                pass
+            updates["membership_expires_at"] = iso(base + timedelta(days=365))
+        if body.extend_days:
+            u = await db.users.find_one({"id": user_id})
+            if u:
+                cur = updates.get("membership_expires_at") or u.get("membership_expires_at")
+                try:
+                    base = datetime.fromisoformat(cur) if cur else now_utc()
+                except Exception:
+                    base = now_utc()
+                if base < now_utc():
+                    base = now_utc()
+                updates["membership_expires_at"] = iso(base + timedelta(days=body.extend_days))
     await db.users.update_one({"id": user_id}, {"$set": updates})
     u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not u:
@@ -4158,16 +4190,16 @@ async def reconcile_chapters():
 
 # ---------- AOP canonical Tiers ----------
 AOP_TIERS = [
-    {"name": "Regular Member", "order": 1, "color": "#22C55E", "annual_dues": 100.0,
+    {"name": "Regular Member", "order": 1, "color": "#22C55E", "annual_dues": 100.0, "is_lifetime": False,
      "description": "Full membership in the Organization."},
-    {"name": "Associate Member", "order": 2, "color": "#3B82F6", "annual_dues": 100.0,
+    {"name": "Associate Member", "order": 2, "color": "#3B82F6", "annual_dues": 100.0, "is_lifetime": False,
      "description": "Member who has a family member serving or who has served in the military."},
-    {"name": "Honorary Member", "order": 3, "color": "#F59E0B", "annual_dues": 100.0,
+    {"name": "Honorary Member", "order": 3, "color": "#F59E0B", "annual_dues": 100.0, "is_lifetime": False,
      "description": "Member selected by the Founders or National Leadership to be a member due to their dedication. Exempted from Intake."},
-    {"name": "Silver Life Member", "order": 4, "color": "#9CA3AF", "annual_dues": 0.0,
-     "description": "Member who served a minimum of four years in the organization and is the elite member of the organization."},
-    {"name": "Gold Life Member", "order": 5, "color": "#D4AF37", "annual_dues": 0.0,
-     "description": "Member who served a minimum of 15 years in the organization and is the elite member of the organization."},
+    {"name": "Silver Life Member", "order": 4, "color": "#9CA3AF", "annual_dues": 0.0, "is_lifetime": True,
+     "description": "Member who served a minimum of four years in the organization and is the elite member of the organization. Lifetime membership — no renewal."},
+    {"name": "Gold Life Member", "order": 5, "color": "#D4AF37", "annual_dues": 0.0, "is_lifetime": True,
+     "description": "Member who served a minimum of 15 years in the organization and is the elite member of the organization. Lifetime membership — no renewal."},
 ]
 AOP_TIER_NAMES = [t["name"] for t in AOP_TIERS]
 
@@ -4191,6 +4223,23 @@ async def reconcile_tiers():
             await db.users.update_many({"tier_id": t["id"]}, {"$set": {"tier_id": default_id}})
         await db.tiers.delete_one({"id": t["id"]})
         logger.info(f"Removed legacy tier and migrated members: {t['name']}")
+    # Backfill: ensure existing members on lifetime tiers have is_lifetime_member=true and no expiration.
+    lifetime_tiers = await db.tiers.find({"is_lifetime": True}, {"_id": 0, "id": 1}).to_list(20)
+    lifetime_tier_ids = [t["id"] for t in lifetime_tiers]
+    if lifetime_tier_ids:
+        res = await db.users.update_many(
+            {"tier_id": {"$in": lifetime_tier_ids}},
+            {"$set": {"is_lifetime_member": True, "membership_expires_at": None}},
+        )
+        if res.modified_count:
+            logger.info(f"Backfilled {res.modified_count} lifetime members (cleared expiration)")
+    # Inverse: ensure non-lifetime members don't carry a stray is_lifetime_member=true
+    non_lifetime_tier_ids = await db.tiers.distinct("id", {"$or": [{"is_lifetime": {"$ne": True}}, {"is_lifetime": {"$exists": False}}]})
+    if non_lifetime_tier_ids:
+        await db.users.update_many(
+            {"tier_id": {"$in": non_lifetime_tier_ids}, "is_lifetime_member": True},
+            {"$set": {"is_lifetime_member": False}},
+        )
 
 
 # ---------- AOP canonical Awards ----------

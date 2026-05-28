@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -415,6 +416,8 @@ function ApplicationsPanel({ onApproved }) {
 }
 
 function MembersAdmin() {
+    const { user: me } = useAuth();
+    const isFullAdmin = (me?.admin_role || "full") === "full";
     const [members, setMembers] = useState([]);
     const [chapters, setChapters] = useState([]);
     const [tiers, setTiers] = useState([]);
@@ -510,7 +513,7 @@ function MembersAdmin() {
                                     </Select>
                                 </td>
                                 <td className="px-4 py-3">
-                                    <Select value={m.tier_id || ""} onValueChange={(v) => setTier(m, v)}>
+                                    <Select value={m.tier_id || ""} onValueChange={(v) => setTier(m, v)} disabled={!isFullAdmin}>
                                         <SelectTrigger className="h-8 rounded-full text-xs w-32" data-testid={`member-${m.id}-tier`}>
                                             <SelectValue placeholder={tierName(m.tier_id)} />
                                         </SelectTrigger>
@@ -523,13 +526,21 @@ function MembersAdmin() {
                                     <StatusPill status={m.status} />
                                 </td>
                                 <td className="px-4 py-3 text-muted-foreground text-xs">
-                                    {m.membership_expires_at ? format(parseISO(m.membership_expires_at), "MMM d, yyyy") : "—"}
-                                    {m.within_grace && <span className="ml-2 text-[10px] bg-destructive/15 text-destructive rounded-full px-2 py-0.5">grace</span>}
+                                    {m.is_lifetime_member ? (
+                                        <span className="text-primary font-semibold">Lifetime</span>
+                                    ) : (
+                                        <>
+                                            {m.membership_expires_at ? format(parseISO(m.membership_expires_at), "MMM d, yyyy") : "—"}
+                                            {m.within_grace && <span className="ml-2 text-[10px] bg-destructive/15 text-destructive rounded-full px-2 py-0.5">grace</span>}
+                                        </>
+                                    )}
                                 </td>
                                 <td className="px-4 py-3 text-right whitespace-nowrap">
                                     <MemberCardDialog member={m} chapters={chapters} tiers={tiers} />
-                                    <Button size="sm" variant="outline" className="rounded-full h-7 text-xs mx-1" onClick={() => extendMembership(m, 365)} data-testid={`extend-${m.id}`}>+1yr</Button>
-                                    <EditMemberDialog member={m} chapters={chapters} tiers={tiers} onSaved={load} />
+                                    {!m.is_lifetime_member && (
+                                        <Button size="sm" variant="outline" className="rounded-full h-7 text-xs mx-1" onClick={() => extendMembership(m, 365)} data-testid={`extend-${m.id}`}>+1yr</Button>
+                                    )}
+                                    <EditMemberDialog member={m} chapters={chapters} tiers={tiers} isFullAdmin={isFullAdmin} onSaved={load} />
                                     <Button size="sm" variant="outline" className="rounded-full h-7 text-xs ml-1" onClick={() => toggleRole(m)} data-testid={`toggle-role-${m.id}`}>
                                         {m.role === "admin" ? "Demote" : "Promote"}
                                     </Button>
@@ -650,7 +661,7 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
     );
 }
 
-function EditMemberDialog({ member, chapters, tiers, onSaved }) {
+function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved }) {
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({});
     const [busy, setBusy] = useState(false);
@@ -746,9 +757,12 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                         <div>
                             <Label>Membership expires (auto from join date)</Label>
                             <div className="rounded-xl mt-1.5 px-3 py-2 bg-muted/40 text-sm text-muted-foreground" data-testid="em-expires-preview">
-                                {form.join_date
-                                    ? format(new Date(new Date(`${form.join_date}T00:00:00Z`).getTime() + 365 * 86400000), "MMM d, yyyy")
-                                    : (member.membership_expires_at ? format(parseISO(member.membership_expires_at), "MMM d, yyyy") : "—")}
+                                {(() => {
+                                    const selectedTier = tiers.find((t) => t.id === form.tier_id);
+                                    if (selectedTier?.is_lifetime) return <span className="text-primary font-semibold">Lifetime · no expiration</span>;
+                                    if (form.join_date) return format(new Date(new Date(`${form.join_date}T00:00:00Z`).getTime() + 365 * 86400000), "MMM d, yyyy");
+                                    return member.membership_expires_at ? format(parseISO(member.membership_expires_at), "MMM d, yyyy") : "—";
+                                })()}
                             </div>
                         </div>
                     </div>
@@ -782,8 +796,8 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                             </Select>
                         </div>
                         <div>
-                            <Label>Tier</Label>
-                            <Select value={form.tier_id || ""} onValueChange={(v) => setForm({ ...form, tier_id: v })}>
+                            <Label>Tier {!isFullAdmin && <span className="text-xs font-normal text-muted-foreground">(only full Admins can change)</span>}</Label>
+                            <Select value={form.tier_id || ""} onValueChange={(v) => setForm({ ...form, tier_id: v })} disabled={!isFullAdmin}>
                                 <SelectTrigger className="rounded-xl mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
                                 <SelectContent>{tiers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
                             </Select>
@@ -1235,7 +1249,14 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                     <DetailRow label="Chapter" value={chapter?.name} />
                     <DetailRow label="Member type" value={tier?.name} />
                     <DetailRow label="Date joined" value={details.join_date ? format(parseISO(details.join_date), "MMM d, yyyy") : (details.created_at ? format(parseISO(details.created_at), "MMM d, yyyy") : "")} />
-                    <DetailRow label="Membership expires" value={details.membership_expires_at ? format(parseISO(details.membership_expires_at), "MMM d, yyyy") : ""} />
+                    {details.is_lifetime_member ? (
+                        <div className="flex justify-between gap-3 py-1.5 border-b last:border-0 border-border/40">
+                            <span className="text-xs uppercase tracking-wider font-semibold text-muted-foreground">Membership</span>
+                            <span className="text-sm font-bold text-primary">Lifetime · no renewal</span>
+                        </div>
+                    ) : (
+                        <DetailRow label="Membership expires" value={details.membership_expires_at ? format(parseISO(details.membership_expires_at), "MMM d, yyyy") : ""} />
+                    )}
                     {details.bio && (
                         <div className="pt-2 border-t">
                             <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-1">Bio</div>
