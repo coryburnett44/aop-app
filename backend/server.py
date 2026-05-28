@@ -245,6 +245,17 @@ async def require_admin_tab(tab: str, user: dict = Depends(get_current_user)) ->
         raise HTTPException(status_code=403, detail=f"Your admin role does not have access to {tab}")
     return user
 
+def admin_tab_dep(tab: str):
+    """FastAPI dependency factory: returns a Depends-able callable that requires
+    the calling user to be an admin with access to the given tab."""
+    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+        if user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin only")
+        if not admin_can(user, tab):
+            raise HTTPException(status_code=403, detail=f"Your admin role does not have access to {tab}")
+        return user
+    return _dep
+
 async def chapter_scope_user_ids(admin: dict) -> Optional[list]:
     """For Governor Managers, return the list of user_ids in their chapter.
     Returns None for full admins (no scoping applied)."""
@@ -674,7 +685,7 @@ async def upcoming_birthdays(days: int = 30, limit: int = 25):
     return out[:limit]
 
 @api.put("/members/{user_id}/status")
-async def set_member_status(user_id: str, body: StatusOverrideIn, _: dict = Depends(require_admin)):
+async def set_member_status(user_id: str, body: StatusOverrideIn, _: dict = Depends(admin_tab_dep("members"))):
     updates: dict = {}
     if body.status is not None:
         updates["status_override"] = body.status
@@ -790,7 +801,7 @@ async def get_event(event_id: str):
     return event_out(e)
 
 @api.post("/events")
-async def create_event(body: EventIn, _: dict = Depends(require_admin)):
+async def create_event(body: EventIn, _: dict = Depends(admin_tab_dep("events"))):
     eid = str(uuid.uuid4())
     doc = body.model_dump()
     doc["start_at"] = iso(doc["start_at"]) if doc.get("start_at") else None
@@ -800,7 +811,7 @@ async def create_event(body: EventIn, _: dict = Depends(require_admin)):
     return event_out(doc)
 
 @api.put("/events/{event_id}")
-async def update_event(event_id: str, body: EventUpdateIn, _: dict = Depends(require_admin)):
+async def update_event(event_id: str, body: EventUpdateIn, _: dict = Depends(admin_tab_dep("events"))):
     updates = {}
     for k, v in body.model_dump().items():
         if v is None:
@@ -817,7 +828,7 @@ async def update_event(event_id: str, body: EventUpdateIn, _: dict = Depends(req
     return event_out(e)
 
 @api.delete("/events/{event_id}")
-async def delete_event(event_id: str, _: dict = Depends(require_admin)):
+async def delete_event(event_id: str, _: dict = Depends(admin_tab_dep("events"))):
     await db.events.delete_one({"id": event_id})
     await db.rsvps.delete_many({"event_id": event_id})
     return {"ok": True}
@@ -884,7 +895,7 @@ async def get_news(news_id: str):
     return news_out(n)
 
 @api.post("/news")
-async def create_news(body: NewsIn, admin: dict = Depends(require_admin)):
+async def create_news(body: NewsIn, admin: dict = Depends(admin_tab_dep("news"))):
     nid = str(uuid.uuid4())
     doc = body.model_dump()
     doc.update({"id": nid, "author_name": admin.get("name", "Admin"), "created_at": iso(now_utc())})
@@ -892,7 +903,7 @@ async def create_news(body: NewsIn, admin: dict = Depends(require_admin)):
     return news_out(doc)
 
 @api.put("/news/{news_id}")
-async def update_news(news_id: str, body: NewsUpdateIn, _: dict = Depends(require_admin)):
+async def update_news(news_id: str, body: NewsUpdateIn, _: dict = Depends(admin_tab_dep("news"))):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if updates:
         await db.news.update_one({"id": news_id}, {"$set": updates})
@@ -902,7 +913,7 @@ async def update_news(news_id: str, body: NewsUpdateIn, _: dict = Depends(requir
     return news_out(n)
 
 @api.delete("/news/{news_id}")
-async def delete_news(news_id: str, _: dict = Depends(require_admin)):
+async def delete_news(news_id: str, _: dict = Depends(admin_tab_dep("news"))):
     await db.news.delete_one({"id": news_id})
     return {"ok": True}
 
@@ -929,7 +940,7 @@ async def get_page(slug: str):
     return page_out(p)
 
 @api.post("/pages")
-async def create_page(body: PageIn, _: dict = Depends(require_admin)):
+async def create_page(body: PageIn, _: dict = Depends(admin_tab_dep("pages"))):
     existing = await db.pages.find_one({"slug": body.slug})
     if existing:
         raise HTTPException(status_code=400, detail="Slug already exists")
@@ -939,7 +950,7 @@ async def create_page(body: PageIn, _: dict = Depends(require_admin)):
     return page_out(doc)
 
 @api.put("/pages/{slug}")
-async def update_page(slug: str, body: PageUpdateIn, _: dict = Depends(require_admin)):
+async def update_page(slug: str, body: PageUpdateIn, _: dict = Depends(admin_tab_dep("pages"))):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     updates["updated_at"] = iso(now_utc())
     await db.pages.update_one({"slug": slug}, {"$set": updates})
@@ -949,7 +960,7 @@ async def update_page(slug: str, body: PageUpdateIn, _: dict = Depends(require_a
     return page_out(p)
 
 @api.delete("/pages/{slug}")
-async def delete_page(slug: str, _: dict = Depends(require_admin)):
+async def delete_page(slug: str, _: dict = Depends(admin_tab_dep("pages"))):
     await db.pages.delete_one({"slug": slug})
     return {"ok": True}
 
@@ -1018,7 +1029,7 @@ async def list_chapters():
     return await with_chapter_counts(items)
 
 @api.post("/chapters")
-async def create_chapter(body: ChapterIn, _: dict = Depends(require_admin)):
+async def create_chapter(body: ChapterIn, _: dict = Depends(admin_tab_dep("chapters"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = iso(now_utc())
@@ -1027,7 +1038,7 @@ async def create_chapter(body: ChapterIn, _: dict = Depends(require_admin)):
     return chapter_out(doc)
 
 @api.put("/chapters/{chapter_id}")
-async def update_chapter(chapter_id: str, body: ChapterUpdateIn, _: dict = Depends(require_admin)):
+async def update_chapter(chapter_id: str, body: ChapterUpdateIn, _: dict = Depends(admin_tab_dep("chapters"))):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if updates:
         await db.chapters.update_one({"id": chapter_id}, {"$set": updates})
@@ -1038,7 +1049,7 @@ async def update_chapter(chapter_id: str, body: ChapterUpdateIn, _: dict = Depen
     return chapter_out(c)
 
 @api.delete("/chapters/{chapter_id}")
-async def delete_chapter(chapter_id: str, _: dict = Depends(require_admin)):
+async def delete_chapter(chapter_id: str, _: dict = Depends(admin_tab_dep("chapters"))):
     await db.chapters.delete_one({"id": chapter_id})
     await db.users.update_many({"chapter_id": chapter_id}, {"$unset": {"chapter_id": ""}})
     return {"ok": True}
@@ -1063,7 +1074,7 @@ async def list_tiers():
     return [tier_out(t) for t in items]
 
 @api.post("/tiers")
-async def create_tier(body: TierIn, _: dict = Depends(require_admin)):
+async def create_tier(body: TierIn, _: dict = Depends(admin_tab_dep("tiers"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     await db.tiers.insert_one(doc)
@@ -1071,7 +1082,7 @@ async def create_tier(body: TierIn, _: dict = Depends(require_admin)):
     return tier_out(doc)
 
 @api.put("/tiers/{tier_id}")
-async def update_tier(tier_id: str, body: TierUpdateIn, _: dict = Depends(require_admin)):
+async def update_tier(tier_id: str, body: TierUpdateIn, _: dict = Depends(admin_tab_dep("tiers"))):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if updates:
         await db.tiers.update_one({"id": tier_id}, {"$set": updates})
@@ -1082,14 +1093,14 @@ async def update_tier(tier_id: str, body: TierUpdateIn, _: dict = Depends(requir
     return tier_out(t)
 
 @api.delete("/tiers/{tier_id}")
-async def delete_tier(tier_id: str, _: dict = Depends(require_admin)):
+async def delete_tier(tier_id: str, _: dict = Depends(admin_tab_dep("tiers"))):
     await db.tiers.delete_one({"id": tier_id})
     await db.users.update_many({"tier_id": tier_id}, {"$unset": {"tier_id": ""}})
     return {"ok": True}
 
 # ---------- Member admin operations ----------
 @api.post("/admin/members")
-async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(require_admin)):
+async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin_tab_dep("members"))):
     email = body.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -1134,7 +1145,7 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(requi
     return public_user(doc)
 
 @api.put("/members/{user_id}")
-async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, _: dict = Depends(require_admin)):
+async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, _: dict = Depends(admin_tab_dep("members"))):
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -1183,7 +1194,7 @@ async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, _: dict =
     return public_user(u)
 
 @api.delete("/members/{user_id}")
-async def admin_delete_member(user_id: str, admin: dict = Depends(require_admin)):
+async def admin_delete_member(user_id: str, admin: dict = Depends(admin_tab_dep("members"))):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
     await db.users.delete_one({"id": user_id})
@@ -1194,7 +1205,7 @@ async def admin_delete_member(user_id: str, admin: dict = Depends(require_admin)
     return {"ok": True}
 
 @api.put("/members/{user_id}/role")
-async def update_member_role(user_id: str, body: RoleUpdateIn, _: dict = Depends(require_admin)):
+async def update_member_role(user_id: str, body: RoleUpdateIn, _: dict = Depends(admin_tab_dep("members"))):
     await db.users.update_one({"id": user_id}, {"$set": {"role": body.role}})
     u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not u:
@@ -1202,7 +1213,7 @@ async def update_member_role(user_id: str, body: RoleUpdateIn, _: dict = Depends
     return public_user(u)
 
 @api.put("/members/{user_id}/chapter")
-async def assign_chapter(user_id: str, body: AssignChapterIn, _: dict = Depends(require_admin)):
+async def assign_chapter(user_id: str, body: AssignChapterIn, _: dict = Depends(admin_tab_dep("members"))):
     update = {"chapter_id": body.chapter_id} if body.chapter_id else {"chapter_id": None}
     await db.users.update_one({"id": user_id}, {"$set": update})
     u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
@@ -1211,7 +1222,7 @@ async def assign_chapter(user_id: str, body: AssignChapterIn, _: dict = Depends(
     return public_user(u)
 
 @api.put("/members/{user_id}/tier")
-async def assign_tier(user_id: str, body: AssignTierIn, _: dict = Depends(require_admin)):
+async def assign_tier(user_id: str, body: AssignTierIn, _: dict = Depends(admin_tab_dep("members"))):
     updates = {"tier_id": body.tier_id}
     if body.tier_id:
         tier = await db.tiers.find_one({"id": body.tier_id}, {"_id": 0})
@@ -1253,7 +1264,7 @@ async def list_awards():
     return [award_out(a) for a in items]
 
 @api.post("/awards")
-async def create_award(body: AwardIn, _: dict = Depends(require_admin)):
+async def create_award(body: AwardIn, _: dict = Depends(admin_tab_dep("awards"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = iso(now_utc())
@@ -1261,7 +1272,7 @@ async def create_award(body: AwardIn, _: dict = Depends(require_admin)):
     return award_out(doc)
 
 @api.put("/awards/{award_id}")
-async def update_award(award_id: str, body: AwardUpdateIn, _: dict = Depends(require_admin)):
+async def update_award(award_id: str, body: AwardUpdateIn, _: dict = Depends(admin_tab_dep("awards"))):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if updates:
         await db.awards.update_one({"id": award_id}, {"$set": updates})
@@ -1271,13 +1282,13 @@ async def update_award(award_id: str, body: AwardUpdateIn, _: dict = Depends(req
     return award_out(a)
 
 @api.delete("/awards/{award_id}")
-async def delete_award(award_id: str, _: dict = Depends(require_admin)):
+async def delete_award(award_id: str, _: dict = Depends(admin_tab_dep("awards"))):
     await db.awards.delete_one({"id": award_id})
     await db.award_grants.delete_many({"award_id": award_id})
     return {"ok": True}
 
 @api.post("/awards/{award_id}/grant")
-async def grant_award(award_id: str, body: AwardGrantIn, admin: dict = Depends(require_admin)):
+async def grant_award(award_id: str, body: AwardGrantIn, admin: dict = Depends(admin_tab_dep("awards"))):
     award = await db.awards.find_one({"id": award_id}, {"_id": 0})
     if not award:
         raise HTTPException(status_code=404, detail="Award not found")
@@ -1306,7 +1317,7 @@ async def grant_award(award_id: str, body: AwardGrantIn, admin: dict = Depends(r
     return out
 
 @api.delete("/awards/grants/{grant_id}")
-async def revoke_award(grant_id: str, _: dict = Depends(require_admin)):
+async def revoke_award(grant_id: str, _: dict = Depends(admin_tab_dep("awards"))):
     res = await db.award_grants.delete_one({"id": grant_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Grant not found")
@@ -1388,7 +1399,7 @@ async def my_hours(user: dict = Depends(get_current_user)):
     return [hours_out(h) for h in items]
 
 @api.put("/hours/{hours_id}/review")
-async def review_hours(hours_id: str, body: HoursReviewIn, admin: dict = Depends(require_admin)):
+async def review_hours(hours_id: str, body: HoursReviewIn, admin: dict = Depends(admin_tab_dep("hours"))):
     await db.volunteer_hours.update_one(
         {"id": hours_id},
         {"$set": {
@@ -2218,7 +2229,7 @@ async def get_gear(item_id: str):
     return gear_out(g)
 
 @api.post("/gear")
-async def create_gear(body: GearItemIn, _: dict = Depends(require_admin)):
+async def create_gear(body: GearItemIn, _: dict = Depends(admin_tab_dep("gear"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = iso(now_utc())
@@ -2226,7 +2237,7 @@ async def create_gear(body: GearItemIn, _: dict = Depends(require_admin)):
     return gear_out(doc)
 
 @api.put("/gear/{item_id}")
-async def update_gear(item_id: str, body: GearItemUpdateIn, _: dict = Depends(require_admin)):
+async def update_gear(item_id: str, body: GearItemUpdateIn, _: dict = Depends(admin_tab_dep("gear"))):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if updates:
         await db.gear.update_one({"id": item_id}, {"$set": updates})
@@ -2236,7 +2247,7 @@ async def update_gear(item_id: str, body: GearItemUpdateIn, _: dict = Depends(re
     return gear_out(g)
 
 @api.delete("/gear/{item_id}")
-async def delete_gear(item_id: str, _: dict = Depends(require_admin)):
+async def delete_gear(item_id: str, _: dict = Depends(admin_tab_dep("gear"))):
     await db.gear.delete_one({"id": item_id})
     return {"ok": True}
 
@@ -2304,7 +2315,7 @@ async def get_cause(cause_id: str):
     return cause_out(c)
 
 @api.post("/causes")
-async def create_cause(body: CauseIn, _: dict = Depends(require_admin)):
+async def create_cause(body: CauseIn, _: dict = Depends(admin_tab_dep("causes"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["raised_amount"] = 0.0
@@ -2314,7 +2325,7 @@ async def create_cause(body: CauseIn, _: dict = Depends(require_admin)):
     return cause_out(doc)
 
 @api.put("/causes/{cause_id}")
-async def update_cause(cause_id: str, body: CauseUpdateIn, _: dict = Depends(require_admin)):
+async def update_cause(cause_id: str, body: CauseUpdateIn, _: dict = Depends(admin_tab_dep("causes"))):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if updates:
         await db.causes.update_one({"id": cause_id}, {"$set": updates})
@@ -2324,7 +2335,7 @@ async def update_cause(cause_id: str, body: CauseUpdateIn, _: dict = Depends(req
     return cause_out(c)
 
 @api.delete("/causes/{cause_id}")
-async def delete_cause(cause_id: str, _: dict = Depends(require_admin)):
+async def delete_cause(cause_id: str, _: dict = Depends(admin_tab_dep("causes"))):
     await db.causes.delete_one({"id": cause_id})
     return {"ok": True}
 
@@ -2353,7 +2364,7 @@ async def pledge_donation(cause_id: str, body: PledgeIn, user: dict = Depends(ge
     return {"transaction_id": tx["id"], "status": "pending"}
 
 @api.get("/causes/{cause_id}/donations")
-async def cause_donations(cause_id: str, admin: dict = Depends(require_admin)):
+async def cause_donations(cause_id: str, admin: dict = Depends(admin_tab_dep("causes"))):
     q = {"cause_id": cause_id, "type": "donation"}
     if is_chapter_scoped(admin):
         ids = await chapter_scope_user_ids(admin)
@@ -2400,7 +2411,7 @@ class CheckInIn(BaseModel):
     note: str = ""
 
 @api.post("/events/{event_id}/check-in")
-async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(require_admin)):
+async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(admin_tab_dep("events"))):
     event = await db.events.find_one({"id": event_id})
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -2434,12 +2445,12 @@ async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(require
     return out
 
 @api.get("/events/{event_id}/check-ins")
-async def list_checkins(event_id: str, _: dict = Depends(require_admin)):
+async def list_checkins(event_id: str, _: dict = Depends(admin_tab_dep("events"))):
     items = await db.checkins.find({"event_id": event_id}, {"_id": 0}).sort("checked_in_at", -1).to_list(2000)
     return items
 
 @api.delete("/events/{event_id}/check-ins/{checkin_id}")
-async def remove_checkin(event_id: str, checkin_id: str, _: dict = Depends(require_admin)):
+async def remove_checkin(event_id: str, checkin_id: str, _: dict = Depends(admin_tab_dep("events"))):
     await db.checkins.delete_one({"id": checkin_id, "event_id": event_id})
     return {"ok": True}
 
@@ -2451,7 +2462,7 @@ async def report_members(
     chapter_id: Optional[str] = None,
     tier_id: Optional[str] = None,
     role: Optional[str] = None,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(admin_tab_dep("reports")),
 ):
     q: dict = {}
     if chapter_id:
@@ -2476,7 +2487,7 @@ async def report_hours(
     event_type: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(admin_tab_dep("reports")),
 ):
     q: dict = {}
     if status_filter:
@@ -2502,7 +2513,7 @@ async def report_hours(
 async def report_donations(
     cause_id: Optional[str] = None,
     status_filter: Optional[str] = None,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(admin_tab_dep("reports")),
 ):
     q: dict = {"type": "donation"}
     if cause_id:
@@ -2516,7 +2527,7 @@ async def report_donations(
     return items
 
 @api.get("/reports/personnel-brief/{user_id}")
-async def personnel_brief(user_id: str, _: dict = Depends(require_admin)):
+async def personnel_brief(user_id: str, _: dict = Depends(admin_tab_dep("reports"))):
     """Compiles everything for a printable member brief."""
     u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not u:
@@ -2828,12 +2839,12 @@ def template_out(t: dict) -> dict:
     }
 
 @api.get("/email/templates")
-async def list_email_templates(_: dict = Depends(require_admin)):
+async def list_email_templates(_: dict = Depends(admin_tab_dep("email"))):
     items = await db.email_templates.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return [template_out(t) for t in items]
 
 @api.post("/email/templates")
-async def create_email_template(body: EmailTemplateIn, _: dict = Depends(require_admin)):
+async def create_email_template(body: EmailTemplateIn, _: dict = Depends(admin_tab_dep("email"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = iso(now_utc())
@@ -2841,7 +2852,7 @@ async def create_email_template(body: EmailTemplateIn, _: dict = Depends(require
     return template_out(doc)
 
 @api.put("/email/templates/{tid}")
-async def update_email_template(tid: str, body: EmailTemplateUpdateIn, _: dict = Depends(require_admin)):
+async def update_email_template(tid: str, body: EmailTemplateUpdateIn, _: dict = Depends(admin_tab_dep("email"))):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if updates:
         await db.email_templates.update_one({"id": tid}, {"$set": updates})
@@ -2851,7 +2862,7 @@ async def update_email_template(tid: str, body: EmailTemplateUpdateIn, _: dict =
     return template_out(t)
 
 @api.delete("/email/templates/{tid}")
-async def delete_email_template(tid: str, _: dict = Depends(require_admin)):
+async def delete_email_template(tid: str, _: dict = Depends(admin_tab_dep("email"))):
     await db.email_templates.delete_one({"id": tid})
     return {"ok": True}
 
@@ -2889,7 +2900,7 @@ def render_template(body_html: str, recipient: dict) -> str:
 
 
 @api.post("/email/preview")
-async def email_preview(body: EmailBlastIn, user: dict = Depends(require_admin)):
+async def email_preview(body: EmailBlastIn, user: dict = Depends(admin_tab_dep("email"))):
     """Render the blast for the current admin user as preview (no send)."""
     recipients = await resolve_segment(body)
     sample = recipients[0] if recipients else user
@@ -2903,7 +2914,7 @@ async def email_preview(body: EmailBlastIn, user: dict = Depends(require_admin))
 
 
 @api.post("/email/blast")
-async def send_email_blast(body: EmailBlastIn, user: dict = Depends(require_admin)):
+async def send_email_blast(body: EmailBlastIn, user: dict = Depends(admin_tab_dep("email"))):
     if not RESEND_API_KEY:
         raise HTTPException(status_code=503, detail="Email service not configured")
     recipients = await resolve_segment(body)
@@ -2955,7 +2966,7 @@ async def send_email_blast(body: EmailBlastIn, user: dict = Depends(require_admi
 
 
 @api.get("/email/blasts")
-async def list_email_blasts(_: dict = Depends(require_admin)):
+async def list_email_blasts(_: dict = Depends(admin_tab_dep("email"))):
     items = await db.email_blasts.find({}, {"_id": 0}).sort("sent_at", -1).limit(100).to_list(100)
     return items
 
@@ -3524,7 +3535,7 @@ def signature_out(s: dict) -> dict:
     }
 
 @api.get("/email/signatures")
-async def list_signatures(user: dict = Depends(require_admin)):
+async def list_signatures(user: dict = Depends(admin_tab_dep("email"))):
     """Return signatures visible to the current admin: their personal sigs + all org sigs."""
     cursor = db.email_signatures.find(
         {"$or": [{"kind": "org"}, {"kind": "personal", "owner_id": user["id"]}]},
@@ -3534,7 +3545,7 @@ async def list_signatures(user: dict = Depends(require_admin)):
     return [signature_out(s) for s in items]
 
 @api.post("/email/signatures")
-async def create_signature(body: SignatureIn, user: dict = Depends(require_admin)):
+async def create_signature(body: SignatureIn, user: dict = Depends(admin_tab_dep("email"))):
     doc = {
         "id": str(uuid.uuid4()),
         "name": body.name,
@@ -3547,7 +3558,7 @@ async def create_signature(body: SignatureIn, user: dict = Depends(require_admin
     return signature_out(doc)
 
 @api.put("/email/signatures/{sid}")
-async def update_signature(sid: str, body: SignatureUpdateIn, user: dict = Depends(require_admin)):
+async def update_signature(sid: str, body: SignatureUpdateIn, user: dict = Depends(admin_tab_dep("email"))):
     s = await db.email_signatures.find_one({"id": sid})
     if not s:
         raise HTTPException(status_code=404, detail="Signature not found")
@@ -3560,7 +3571,7 @@ async def update_signature(sid: str, body: SignatureUpdateIn, user: dict = Depen
     return signature_out(s2)
 
 @api.delete("/email/signatures/{sid}")
-async def delete_signature(sid: str, user: dict = Depends(require_admin)):
+async def delete_signature(sid: str, user: dict = Depends(admin_tab_dep("email"))):
     s = await db.email_signatures.find_one({"id": sid})
     if not s:
         raise HTTPException(status_code=404, detail="Signature not found")
@@ -3572,7 +3583,7 @@ async def delete_signature(sid: str, user: dict = Depends(require_admin)):
 
 # ---------- Rich email image upload (reuses chat_files resolver) ----------
 @api.post("/email/upload-image")
-async def email_upload_image(file: UploadFile = File(...), user: dict = Depends(require_admin)):
+async def email_upload_image(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("email"))):
     """Upload an inline image for use in email composer / signatures.
     Reuses the chat_files collection so /api/files/{path} resolves it."""
     chunks = []

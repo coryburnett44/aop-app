@@ -1,0 +1,37 @@
+{
+  "summary": "Phase F follow-up — defense-in-depth server-side admin sub-role tab gating. Wrote new pytest at /app/backend/tests/test_phase_f_followup.py with 65 tests covering every endpoint listed in the spec. ALL 65 PASS. Governor Manager (governor.tx@clubhaven.app) correctly receives 403 on all restricted-tab endpoints (email templates/blasts/signatures/blast/preview/upload-image, news CRUD, pages CRUD, chapters CRUD, tiers CRUD, events CRUD + check-ins, awards CRUD + grant/revoke, members admin CRUD + role/chapter/tier/status, gear CRUD). Governor still gets 200 on their 4 allowed tabs (dashboard via /api/admin/stats, hours list + review, causes CRUD, reports/members|hours|donations|personnel-brief, causes/{id}/donations). Full admin sees 200 on every endpoint — no regression. Auth endpoints (/api/auth/login, /api/auth/me, /api/admin/permissions) verified working. Previously documented gap (test_phase_f.py::test_gov_blocked_on_tab[/api/email/templates]) is now PASSING — the real fix is confirmed end-to-end. require_admin_tab / admin_tab_dep dependency factory at server.py:241-257 is now applied consistently across email, news, pages, chapters, tiers, events (+check-ins), awards (+grant/revoke), gear, members (admin_create/update/delete/role/chapter/tier/status), causes (create/update/delete), reports (members/hours/donations/personnel-brief), and hours (review).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_f_followup.py",
+    "/app/backend/tests/test_phase_f.py",
+    "/app/test_reports/pytest/phase_f_followup_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "admin_tab_dep(tab) factory at server.py:248-257 duplicates require_admin_tab at server.py:241-246 — minor DRY: require_admin_tab is unused (grep shows no callers) and could be deleted, or admin_tab_dep could be implemented as a thin wrapper that calls require_admin_tab. Cosmetic.",
+    "Member admin endpoints live at /api/members/{id}* (PUT/DELETE/role/chapter/tier/status) while creation is at /api/admin/members. This asymmetric routing is confusing — consider unifying under /api/admin/members/* for consistency. Not a security issue (gating works correctly via admin_tab_dep('members') on both paths), but the review request listed /api/admin/members/{id}/* paths which do not exist — the gating is on /api/members/{id}/* instead.",
+    "POST event check-in is /api/events/{id}/check-in (singular), while LIST and DELETE use /api/events/{id}/check-ins (plural). Inconsistent but functional. Both paths are correctly gated via admin_tab_dep('events').",
+    "chapter_scope_user_ids still returns [] for governor without chapter_id — silently hides everything. Suggested in iteration 7 to raise 403 instead; not addressed in this iteration but out of scope for the follow-up."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_f_followup.py (new — 65 parametrized tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (65/65 phase F follow-up pass + 16/16 phase F pass, 8 skipped for non-existent /api/admin/* paths)",
+    "frontend": "not tested per scope (Phase F frontend was already 100%)"
+  },
+  "test_credentials": "admin@clubhaven.app/Admin123!, governor.tx@clubhaven.app/Governor123! — both verified working",
+  "seed_data_creation": "None — all tests use 'nonexistent' IDs so gating runs before route would actually mutate data. The full-admin smoke test (TestFullAdminNoRegression::test_admin_create_news_then_delete) creates and immediately deletes one TEST_phaseF_news entry.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "To re-run: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest backend/tests/test_phase_f_followup.py backend/tests/test_phase_f.py -v. The Phase F gap on /api/email/templates documented in iteration 7 is now fixed. Real member-admin write routes are /api/members/{id}* (NOT /api/admin/members/{id}*) — the review request spec listed the latter but server uses the former. Tests assert 403 (not status-code-in-tuple) to guarantee the gating dep fires before any route logic.",
+  "rca of the issue": "Iteration 7 surfaced that admin sub-role gating (e.g. governor_manager) was only enforced on /api/admin/permissions; all other admin endpoints used require_admin (any admin), so a Governor Manager could hit /api/email/templates etc. via direct curl and get 200. This iteration verifies E1's fix: admin_tab_dep('<tab>') is now consistently applied across all restricted-tab endpoints. 65 parametrized tests confirm Governor gets 403 on every restricted endpoint and 200 on every allowed endpoint, while full admin gets 200 everywhere. The previously-failing pytest case test_phase_f.py::TestGovernorRestrictedTabs::test_gov_blocked_on_tab[/api/email/templates] now passes."
+}
