@@ -117,6 +117,7 @@ def public_user(u: dict) -> dict:
         "last_name": u.get("last_name", ""),
         "line_name": u.get("line_name", ""),
         "role": u.get("role", "member"),
+        "admin_role": u.get("admin_role", "full") if u.get("role") == "admin" else None,
         "bio": u.get("bio", ""),
         "city": u.get("city", ""),
         "phone": u.get("phone", ""),
@@ -221,6 +222,40 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(status_code=403, detail="Admin only")
     return user
 
+# Admin sub-role permissions — UI tabs an admin can access.
+# "full" admin has access to everything.
+ADMIN_ROLE_TABS: dict[str, set[str]] = {
+    "full": {"dashboard", "members", "chapters", "tiers", "events", "hours", "awards", "gear", "causes", "reports", "email", "news", "pages"},
+    "membership_manager": {"dashboard", "members", "chapters", "tiers", "events", "awards", "reports", "email"},
+    "operations_manager": {"dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news"},
+    "governor_manager": {"dashboard", "hours", "causes", "reports"},
+}
+
+def admin_role_of(u: dict) -> str:
+    return (u.get("admin_role") or "full") if u.get("role") == "admin" else ""
+
+def admin_can(user: dict, tab: str) -> bool:
+    role = admin_role_of(user)
+    return tab in ADMIN_ROLE_TABS.get(role, set())
+
+async def require_admin_tab(tab: str, user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    if not admin_can(user, tab):
+        raise HTTPException(status_code=403, detail=f"Your admin role does not have access to {tab}")
+    return user
+
+@api.get("/admin/permissions")
+async def admin_permissions(user: dict = Depends(require_admin)):
+    """Return the tabs the current admin can access — used by frontend to gate UI."""
+    role = admin_role_of(user)
+    return {
+        "admin_role": role,
+        "tabs": sorted(ADMIN_ROLE_TABS.get(role, set())),
+        "chapter_scoped": role == "governor_manager",
+        "scoped_chapter_id": user.get("chapter_id") if role == "governor_manager" else None,
+    }
+
 # ---------- Models ----------
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -274,13 +309,13 @@ class ChapterUpdateIn(BaseModel):
 
 class HoursLogIn(BaseModel):
     hours: float = Field(gt=0, le=1000)
-    activity: str = ""
+    activity: str = Field(min_length=2)
     date: datetime
     event_type: Literal["aop_related", "other"] = "other"
-    agency_name: str = ""
-    host_name: str = ""
-    host_email: str = ""
-    host_phone: str = ""
+    agency_name: str = Field(min_length=1)
+    host_name: str = Field(min_length=1)
+    host_email: EmailStr
+    host_phone: str = Field(min_length=4)
     event_id: Optional[str] = None
     # legacy
     description: Optional[str] = None
@@ -309,6 +344,7 @@ class AdminCreateMemberIn(BaseModel):
     birthdate: str = ""
     branch_of_service: str = ""
     role: Literal["member", "admin"] = "member"
+    admin_role: Optional[Literal["full", "membership_manager", "operations_manager", "governor_manager"]] = None
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
     member_status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
@@ -330,6 +366,7 @@ class AdminUpdateMemberIn(BaseModel):
     interests: Optional[List[str]] = None
     avatar_url: Optional[str] = None
     role: Optional[Literal["member", "admin"]] = None
+    admin_role: Optional[Literal["full", "membership_manager", "operations_manager", "governor_manager"]] = None
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
     membership_expires_at: Optional[datetime] = None
@@ -1070,6 +1107,7 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(requi
         "tier_id": body.tier_id,
         "chapter_id": body.chapter_id,
         "status_override": body.member_status,
+        "admin_role": (body.admin_role or "full") if body.role == "admin" else None,
         "membership_expires_at": iso(created + timedelta(days=365)),
         "email_verified": True,
         "created_at": iso(created),
@@ -1834,6 +1872,8 @@ async def startup():
     await seed_data()
     await seed_phase_b()
     await reconcile_chapters()
+    await reconcile_tiers()
+    await reconcile_awards()
 
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")
@@ -3289,14 +3329,24 @@ AOP_CHAPTERS = [
 
 async def reconcile_chapters():
     """Ensure the four canonical AOP chapters exist with the right region/state.
-    Existing chapters with names matching AOP_CHAPTERS are updated; other chapters
-    are left intact so member references survive."""
+    Existing chapters with names matching AOP_CHAPTERS are updated; others are
+    deleted unless they have members assigned (those are kept to preserve refs)."""
+    legacy_to_remove = ["Alpha Beta", "Epsilon Theta", "Gamma Delta", "Texas Bravo"]
+    for legacy_name in legacy_to_remove:
+        legacy = await db.chapters.find_one({"name": legacy_name})
+        if not legacy:
+            continue
+        # Null-out chapter on any members assigned to this legacy chapter
+        await db.users.update_many({"chapter_id": legacy["id"]}, {"$unset": {"chapter_id": ""}})
+        await db.chapters.delete_one({"id": legacy["id"]})
+        logger.info(f"Removed legacy chapter: {legacy_name}")
+
     for spec in AOP_CHAPTERS:
         existing = await db.chapters.find_one({"name": spec["name"]})
         if existing:
             await db.chapters.update_one(
                 {"id": existing["id"]},
-                {"$set": {"region": spec["region"], "state": spec["state"]}},
+                {"$set": {"region": spec["region"], "state": spec["state"], "description": spec["description"]}},
             )
         else:
             doc = {
@@ -3308,6 +3358,97 @@ async def reconcile_chapters():
                 "created_at": iso(now_utc()),
             }
             await db.chapters.insert_one(doc)
+
+
+# ---------- AOP canonical Tiers ----------
+AOP_TIERS = [
+    {"name": "Regular Member", "order": 1, "color": "#22C55E", "annual_dues": 100.0,
+     "description": "Full membership in the Organization."},
+    {"name": "Associate Member", "order": 2, "color": "#3B82F6", "annual_dues": 100.0,
+     "description": "Member who has a family member serving or who has served in the military."},
+    {"name": "Honorary Member", "order": 3, "color": "#F59E0B", "annual_dues": 100.0,
+     "description": "Member selected by the Founders or National Leadership to be a member due to their dedication. Exempted from Intake."},
+    {"name": "Silver Life Member", "order": 4, "color": "#9CA3AF", "annual_dues": 0.0,
+     "description": "Member who served a minimum of four years in the organization and is the elite member of the organization."},
+    {"name": "Gold Life Member", "order": 5, "color": "#D4AF37", "annual_dues": 0.0,
+     "description": "Member who served a minimum of 15 years in the organization and is the elite member of the organization."},
+]
+AOP_TIER_NAMES = [t["name"] for t in AOP_TIERS]
+
+async def reconcile_tiers():
+    """Replace tiers with the canonical AOP list. Members on legacy tiers get
+    migrated to 'Regular Member' (the closest default)."""
+    # First make sure canonical tiers exist (so we have a default to migrate to)
+    for spec in AOP_TIERS:
+        existing = await db.tiers.find_one({"name": spec["name"]})
+        if existing:
+            await db.tiers.update_one({"id": existing["id"]}, {"$set": spec})
+        else:
+            doc = {**spec, "id": str(uuid.uuid4()), "created_at": iso(now_utc())}
+            await db.tiers.insert_one(doc)
+    default_tier = await db.tiers.find_one({"name": "Regular Member"})
+    default_id = default_tier["id"] if default_tier else None
+    # Now remove legacy tiers — migrate any members first
+    legacy = await db.tiers.find({"name": {"$nin": AOP_TIER_NAMES}}, {"_id": 0}).to_list(200)
+    for t in legacy:
+        if default_id:
+            await db.users.update_many({"tier_id": t["id"]}, {"$set": {"tier_id": default_id}})
+        await db.tiers.delete_one({"id": t["id"]})
+        logger.info(f"Removed legacy tier and migrated members: {t['name']}")
+
+
+# ---------- AOP canonical Awards ----------
+AOP_AWARDS = [
+    {"order": 1, "name": "Life Membership Ribbon", "icon": "ribbon", "color": "#9CA3AF",
+     "description": "Life Membership Award Ribbon is the highest achievement award in the organization. It is for members who are financially current in paying dues for four consistent years, and have been a significant part of the organization. They are in the top 15% of all members in the organization. These members were nominated by the Founders or designated personnel based on their service in the organization. They completed taskings within one year after their acceptance of becoming a life member, according to the Bylaws. These members are considered the elite members of the organization."},
+    {"order": 2, "name": "Founder's Lifetime Achievement Ribbon", "icon": "ribbon", "color": "#D4AF37",
+     "description": "The Founder's Award is the second highest achievement award in the organization. It is presented to a member who has been an exceptional leader and positive member of the organization. This member demonstrated an aptitude for, and commitment to professional growth and provided leadership that is impactful, effective, motivational, and consistent. The member encouraged personal and professional development in preparation for future leadership opportunities. The member provided effective and sustained service to AOP and its membership and has significantly enhanced its mission and goals. They made executive decisions that resulted in a positive impact in the organization. This person has made tremendous leaps and bounds to improve the quality of the organization."},
+    {"order": 3, "name": "Pauline Tate Dedication Ribbon", "icon": "ribbon", "color": "#C8102E",
+     "description": "The Pauline Tate Dedication Award is the third highest award in the organization. It is a special award for a member that goes beyond the call of duty meeting the expectations of the mission. They presented ideas to enhance the progress of the organization. Hard work pays off by the fruit of their labor. They are the member of many tasks and completes them knowing they put their all into it. This person is loyal to the commitment they signed up for. This award is very special to the organization because you can see the desire in their eyes that they want the organization to thrive in society."},
+    {"order": 4, "name": "Member's Ribbon", "icon": "ribbon", "color": "#0A2463",
+     "description": "The Member's Ribbon is awarded to the member who has been an exceptional leader and positive member of the organization. They provided effective and sustained service to AOP and its membership and has significantly enhanced its mission and goals. The member has also been an active member of the organization and completed their minimum community service hours within the year."},
+    {"order": 5, "name": "Recruitment Ribbon", "icon": "ribbon", "color": "#22C55E",
+     "description": "The Recruitment Ribbon is awarded to the member who recruited the most members to join the organization within any given year. The recruits must have completed the Intake Course and attended the Induction Ceremony."},
+    {"order": 6, "name": "Master Instructor Ribbon", "icon": "ribbon", "color": "#7C3AED",
+     "description": "The Master Instructor Ribbon is awarded to the member who instructed 15 or more Intake Courses with a graduation rate of 90% or higher."},
+    {"order": 7, "name": "Instructor Ribbon", "icon": "ribbon", "color": "#A78BFA",
+     "description": "The Instructor Ribbon is awarded to the member who instructed five (5) or more Intake Courses with a graduation rate of 85% or higher."},
+    {"order": 8, "name": "National Leadership Ribbon", "icon": "ribbon", "color": "#1E3A8A",
+     "description": "The National Leadership Ribbon is awarded to the members who served actively and honorably in a national leadership position for one term. The positions considered are President, Vice President, Secretary, Treasurer, Directors, or Chiefs."},
+    {"order": 9, "name": "State Leadership Ribbon", "icon": "ribbon", "color": "#3B82F6",
+     "description": "The State Leadership Ribbon is awarded to the members who served actively and honorably in a state leadership position for one term. The positions considered are Governor, Lieutenant Governor, Secretary, Treasurer, and Manager positions, such as Membership, Community Service, or Marketing."},
+    {"order": 10, "name": "Community Service Ribbon", "icon": "ribbon", "color": "#10B981",
+     "description": "The Community Service Ribbon is awarded to the members with the most organization-related community service hours in a year."},
+    {"order": 11, "name": "Fundraiser Ribbon", "icon": "ribbon", "color": "#F59E0B",
+     "description": "The Fundraiser Ribbon is awarded to the member who raised the most money during a National Fundraiser event in any given year."},
+    {"order": 12, "name": "Joint Planning Ribbon", "icon": "ribbon", "color": "#06B6D4",
+     "description": "The Joint Planning Ribbon is awarded to the members who was part of a committee or board to plan a joint event that involves organizations within the Federation of Military Greek Letter Organizations."},
+    {"order": 13, "name": "Organization Planning Ribbon", "icon": "ribbon", "color": "#0891B2",
+     "description": "The Organization Planning Ribbon is awarded to the members who was part of a planning committee within the organization to plan a conference or major event."},
+    {"order": 14, "name": "Service Ribbon", "icon": "ribbon", "color": "#64748B",
+     "description": "The Service Ribbon is awarded to AOP members who have actively served in the organization for one year. Afterwards, the ribbon is awarded for every five (5) years of consecutive service within the organization. There cannot be a break-in-service within the five years."},
+    {"order": 15, "name": "Alpha Omega Phi Ribbon", "icon": "ribbon", "color": "#C8102E",
+     "description": "The Alpha Omega Phi Ribbon is automatically awarded to members who completed the Intake Course and attended the Induction / Commitment Ceremony."},
+    {"order": 16, "name": "Federation Ribbon", "icon": "ribbon", "color": "#A16207",
+     "description": "The Federation Participation Ribbon is awarded to AOP members who attended a Federation event."},
+]
+AOP_AWARD_NAMES = [a["name"] for a in AOP_AWARDS]
+
+async def reconcile_awards():
+    """Replace the awards catalog with the canonical AOP list.
+    Legacy awards (and their grants) are deleted — these were demo seed data."""
+    legacy = await db.awards.find({"name": {"$nin": AOP_AWARD_NAMES}}, {"_id": 0}).to_list(200)
+    for a in legacy:
+        await db.award_grants.delete_many({"award_id": a["id"]})
+        await db.awards.delete_one({"id": a["id"]})
+        logger.info(f"Removed legacy award and grants: {a['name']}")
+    for spec in AOP_AWARDS:
+        existing = await db.awards.find_one({"name": spec["name"]})
+        if existing:
+            await db.awards.update_one({"id": existing["id"]}, {"$set": spec})
+        else:
+            doc = {**spec, "id": str(uuid.uuid4()), "created_at": iso(now_utc())}
+            await db.awards.insert_one(doc)
 
 
 # ---------- Email Signatures (personal + org-wide) ----------

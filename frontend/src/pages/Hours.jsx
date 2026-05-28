@@ -60,8 +60,8 @@ function LogHoursDialog() {
     function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
 
     async function save() {
-        if (!form.hours || !form.date || !form.activity.trim()) {
-            toast.error("Hours, date, and activity description are required");
+        if (!form.hours || !form.date || !form.activity.trim() || !form.agency_name.trim() || !form.host_name.trim() || !form.host_email.trim() || !form.host_phone.trim()) {
+            toast.error("Every field is required");
             return;
         }
         setBusy(true);
@@ -118,19 +118,19 @@ function LogHoursDialog() {
                         </Select>
                     </div>
                     <div>
-                        <Label>Agency / Organization name</Label>
-                        <Input value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" />
+                        <Label>Agency / Organization name *</Label>
+                        <Input value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" required />
                     </div>
                     <div>
                         <Label>What did you do? *</Label>
-                        <Textarea rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" />
+                        <Textarea rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" required />
                     </div>
                     <div className="border-t pt-3">
-                        <Label className="text-xs uppercase tracking-wider text-muted-foreground">Host / Point of contact (optional)</Label>
+                        <Label className="text-xs uppercase tracking-wider text-muted-foreground">Host / Point of contact *</Label>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1.5">
-                            <Input value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder="Host name" className="rounded-xl" data-testid="hours-host-name-input" />
-                            <Input value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder="Host email" className="rounded-xl" data-testid="hours-host-email-input" />
-                            <Input value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder="Host phone" className="rounded-xl" data-testid="hours-host-phone-input" />
+                            <Input value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder="Host name *" className="rounded-xl" data-testid="hours-host-name-input" required />
+                            <Input type="email" value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder="Host email *" className="rounded-xl" data-testid="hours-host-email-input" required />
+                            <Input value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder="Host phone *" className="rounded-xl" data-testid="hours-host-phone-input" required />
                         </div>
                     </div>
                     <Button onClick={save} disabled={busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-submit-btn">

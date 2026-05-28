@@ -16,13 +16,30 @@ import RichEditor from "../components/RichEditor";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
+    const [perms, setPerms] = useState(null);
+
+    useEffect(() => {
+        api.get("/admin/permissions").then(({ data }) => setPerms(data)).catch(() => setPerms({ tabs: [], admin_role: "" }));
+    }, []);
+
+    if (!perms) return <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10 text-muted-foreground">Loading…</div>;
+    const allowed = (t) => perms.tabs.includes(t);
+    // Default to first allowed tab if current tab isn't allowed
+    useEffect(() => {
+        if (perms.tabs.length && !perms.tabs.includes(tab)) setTab(perms.tabs[0]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [perms.tabs.join(",")]);
 
     return (
         <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10">
             <div className="flex items-end justify-between mb-8">
                 <div>
                     <h1 className="font-heading text-4xl font-bold tracking-tight">Admin console</h1>
-                    <p className="text-muted-foreground mt-2">Members, chapters, tiers, events, hours, awards, and content.</p>
+                    <p className="text-muted-foreground mt-2">
+                        {perms.admin_role && perms.admin_role !== "full" ? (
+                            <>You're logged in as <strong className="capitalize">{perms.admin_role.replace(/_/g, " ")}</strong>{perms.chapter_scoped ? " · chapter-scoped" : ""}.</>
+                        ) : "Members, chapters, tiers, events, hours, awards, and content."}
+                    </p>
                 </div>
                 <div className="inline-flex items-center gap-2 bg-secondary/30 rounded-full px-4 py-1.5 text-xs font-semibold">
                     <Sparkles className="h-4 w-4" /> AI tools available
@@ -31,34 +48,34 @@ export default function Admin() {
 
             <Tabs value={tab} onValueChange={setTab}>
                 <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
-                    <TabsTrigger value="dashboard" className="rounded-full" data-testid="admin-tab-dashboard"><LayoutDashboard className="h-4 w-4 mr-1.5" />Dashboard</TabsTrigger>
-                    <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>
-                    <TabsTrigger value="chapters" className="rounded-full" data-testid="admin-tab-chapters"><Building2 className="h-4 w-4 mr-1.5" />Chapters</TabsTrigger>
-                    <TabsTrigger value="tiers" className="rounded-full" data-testid="admin-tab-tiers"><Layers className="h-4 w-4 mr-1.5" />Tiers</TabsTrigger>
-                    <TabsTrigger value="events" className="rounded-full" data-testid="admin-tab-events"><Calendar className="h-4 w-4 mr-1.5" />Events</TabsTrigger>
-                    <TabsTrigger value="hours" className="rounded-full" data-testid="admin-tab-hours"><Clock className="h-4 w-4 mr-1.5" />Hours</TabsTrigger>
-                    <TabsTrigger value="awards" className="rounded-full" data-testid="admin-tab-awards"><Trophy className="h-4 w-4 mr-1.5" />Awards</TabsTrigger>
-                    <TabsTrigger value="gear" className="rounded-full" data-testid="admin-tab-gear"><ShoppingBag className="h-4 w-4 mr-1.5" />Gear</TabsTrigger>
-                    <TabsTrigger value="causes" className="rounded-full" data-testid="admin-tab-causes"><Heart className="h-4 w-4 mr-1.5" />Causes</TabsTrigger>
-                    <TabsTrigger value="reports" className="rounded-full" data-testid="admin-tab-reports"><BarChart3 className="h-4 w-4 mr-1.5" />Reports</TabsTrigger>
-                    <TabsTrigger value="email" className="rounded-full" data-testid="admin-tab-email"><Mail className="h-4 w-4 mr-1.5" />Email</TabsTrigger>
-                    <TabsTrigger value="news" className="rounded-full" data-testid="admin-tab-news"><Newspaper className="h-4 w-4 mr-1.5" />News</TabsTrigger>
-                    <TabsTrigger value="pages" className="rounded-full" data-testid="admin-tab-pages"><FileText className="h-4 w-4 mr-1.5" />Pages</TabsTrigger>
+                    {allowed("dashboard") && <TabsTrigger value="dashboard" className="rounded-full" data-testid="admin-tab-dashboard"><LayoutDashboard className="h-4 w-4 mr-1.5" />Dashboard</TabsTrigger>}
+                    {allowed("members") && <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>}
+                    {allowed("chapters") && <TabsTrigger value="chapters" className="rounded-full" data-testid="admin-tab-chapters"><Building2 className="h-4 w-4 mr-1.5" />Chapters</TabsTrigger>}
+                    {allowed("tiers") && <TabsTrigger value="tiers" className="rounded-full" data-testid="admin-tab-tiers"><Layers className="h-4 w-4 mr-1.5" />Tiers</TabsTrigger>}
+                    {allowed("events") && <TabsTrigger value="events" className="rounded-full" data-testid="admin-tab-events"><Calendar className="h-4 w-4 mr-1.5" />Events</TabsTrigger>}
+                    {allowed("hours") && <TabsTrigger value="hours" className="rounded-full" data-testid="admin-tab-hours"><Clock className="h-4 w-4 mr-1.5" />Hours</TabsTrigger>}
+                    {allowed("awards") && <TabsTrigger value="awards" className="rounded-full" data-testid="admin-tab-awards"><Trophy className="h-4 w-4 mr-1.5" />Awards</TabsTrigger>}
+                    {allowed("gear") && <TabsTrigger value="gear" className="rounded-full" data-testid="admin-tab-gear"><ShoppingBag className="h-4 w-4 mr-1.5" />Gear</TabsTrigger>}
+                    {allowed("causes") && <TabsTrigger value="causes" className="rounded-full" data-testid="admin-tab-causes"><Heart className="h-4 w-4 mr-1.5" />Causes</TabsTrigger>}
+                    {allowed("reports") && <TabsTrigger value="reports" className="rounded-full" data-testid="admin-tab-reports"><BarChart3 className="h-4 w-4 mr-1.5" />Reports</TabsTrigger>}
+                    {allowed("email") && <TabsTrigger value="email" className="rounded-full" data-testid="admin-tab-email"><Mail className="h-4 w-4 mr-1.5" />Email</TabsTrigger>}
+                    {allowed("news") && <TabsTrigger value="news" className="rounded-full" data-testid="admin-tab-news"><Newspaper className="h-4 w-4 mr-1.5" />News</TabsTrigger>}
+                    {allowed("pages") && <TabsTrigger value="pages" className="rounded-full" data-testid="admin-tab-pages"><FileText className="h-4 w-4 mr-1.5" />Pages</TabsTrigger>}
                 </TabsList>
 
-                <TabsContent value="dashboard" className="mt-6"><AdminDashboard /></TabsContent>
-                <TabsContent value="members" className="mt-6"><MembersAdmin /></TabsContent>
-                <TabsContent value="chapters" className="mt-6"><ChaptersAdmin /></TabsContent>
-                <TabsContent value="tiers" className="mt-6"><TiersAdmin /></TabsContent>
-                <TabsContent value="events" className="mt-6"><EventsAdmin /></TabsContent>
-                <TabsContent value="hours" className="mt-6"><HoursAdmin /></TabsContent>
-                <TabsContent value="awards" className="mt-6"><AwardsAdmin /></TabsContent>
-                <TabsContent value="gear" className="mt-6"><GearAdmin /></TabsContent>
-                <TabsContent value="causes" className="mt-6"><CausesAdmin /></TabsContent>
-                <TabsContent value="reports" className="mt-6"><Reports /></TabsContent>
-                <TabsContent value="email" className="mt-6"><EmailBlastAdmin /></TabsContent>
-                <TabsContent value="news" className="mt-6"><NewsAdmin /></TabsContent>
-                <TabsContent value="pages" className="mt-6"><PagesAdmin /></TabsContent>
+                {allowed("dashboard") && <TabsContent value="dashboard" className="mt-6"><AdminDashboard scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
+                {allowed("members") && <TabsContent value="members" className="mt-6"><MembersAdmin /></TabsContent>}
+                {allowed("chapters") && <TabsContent value="chapters" className="mt-6"><ChaptersAdmin /></TabsContent>}
+                {allowed("tiers") && <TabsContent value="tiers" className="mt-6"><TiersAdmin /></TabsContent>}
+                {allowed("events") && <TabsContent value="events" className="mt-6"><EventsAdmin /></TabsContent>}
+                {allowed("hours") && <TabsContent value="hours" className="mt-6"><HoursAdmin scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
+                {allowed("awards") && <TabsContent value="awards" className="mt-6"><AwardsAdmin /></TabsContent>}
+                {allowed("gear") && <TabsContent value="gear" className="mt-6"><GearAdmin /></TabsContent>}
+                {allowed("causes") && <TabsContent value="causes" className="mt-6"><CausesAdmin scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
+                {allowed("reports") && <TabsContent value="reports" className="mt-6"><Reports scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
+                {allowed("email") && <TabsContent value="email" className="mt-6"><EmailBlastAdmin /></TabsContent>}
+                {allowed("news") && <TabsContent value="news" className="mt-6"><NewsAdmin /></TabsContent>}
+                {allowed("pages") && <TabsContent value="pages" className="mt-6"><PagesAdmin /></TabsContent>}
             </Tabs>
         </div>
     );
@@ -684,7 +701,7 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                         <div>
                             <Label>Role</Label>
                             <Select value={form.role || "member"} onValueChange={(v) => setForm({ ...form, role: v })}>
-                                <SelectTrigger className="rounded-xl mt-1.5"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="em-role"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="member">Member</SelectItem>
                                     <SelectItem value="admin">Admin</SelectItem>
@@ -692,6 +709,25 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                             </Select>
                         </div>
                     </div>
+                    {form.role === "admin" && (
+                        <div>
+                            <Label>Admin permissions</Label>
+                            <Select value={form.admin_role || "full"} onValueChange={(v) => setForm({ ...form, admin_role: v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="em-admin-role"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="full">Admin (full access)</SelectItem>
+                                    <SelectItem value="membership_manager">Membership Manager</SelectItem>
+                                    <SelectItem value="operations_manager">Operations Manager</SelectItem>
+                                    <SelectItem value="governor_manager">Governor Manager (chapter-scoped)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <div className="text-xs text-muted-foreground mt-1.5">
+                                Membership Manager: dashboard, members, chapters, tiers, events, awards, reports, email.<br />
+                                Operations Manager: dashboard, members, chapters, events, hours, causes, reports, news.<br />
+                                Governor Manager: only their own chapter — dashboard, hours, causes, reports.
+                            </div>
+                        </div>
+                    )}
                     <div><Label>Bio</Label><Textarea rows={3} value={form.bio || ""} onChange={(e) => setForm({ ...form, bio: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     <div><Label>Reset password (optional)</Label><Input type="password" value={form.new_password || ""} onChange={(e) => setForm({ ...form, new_password: e.target.value })} className="rounded-xl mt-1.5" placeholder="Leave blank to keep current" data-testid="em-new-password" /></div>
                 </div>
