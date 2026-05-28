@@ -663,6 +663,8 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                 middle_name: member.middle_name || "",
                 last_name: member.last_name || "",
                 line_name: member.line_name || "",
+                intake_line: member.intake_line || "",
+                intake_completed_at: member.intake_completed_at || "",
                 username: member.username || "",
                 phone: member.phone || "",
                 city: member.city || "",
@@ -722,6 +724,10 @@ function EditMemberDialog({ member, chapters, tiers, onSaved }) {
                     <div className="grid grid-cols-2 gap-3">
                         <div><Label>Line name</Label><Input value={form.line_name || ""} onChange={(e) => setForm({ ...form, line_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-line" /></div>
                         <div><Label>Phone</Label><Input value={form.phone || ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><Label>Intake line</Label><Input value={form.intake_line || ""} onChange={(e) => setForm({ ...form, intake_line: e.target.value })} className="rounded-xl mt-1.5" placeholder="Spring '24 — A1" data-testid="em-intake-line" /></div>
+                        <div><Label>Intake completion date <span className="text-xs text-muted-foreground font-normal">(Month/Year)</span></Label><Input type="month" value={form.intake_completed_at || ""} onChange={(e) => setForm({ ...form, intake_completed_at: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-intake-completed-at" /></div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div><Label>Address</Label><Input value={form.address || ""} onChange={(e) => setForm({ ...form, address: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-address" /></div>
