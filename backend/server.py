@@ -2808,35 +2808,6 @@ async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(admin_t
     out.pop("_id", None)
     return out
 
-@api.post("/events/{event_id}/self-check-in")
-async def self_check_in(event_id: str, user: dict = Depends(get_current_user)):
-    """Members can self-check-in to record their attendance — useful for events
-    that have already ended where the admin didn't process check-ins at the door.
-    Idempotent: returns the existing record if already checked in."""
-    event = await db.events.find_one({"id": event_id})
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    existing = await db.checkins.find_one({"event_id": event_id, "user_id": user["id"]}, {"_id": 0})
-    if existing:
-        return existing
-    doc = {
-        "id": str(uuid.uuid4()),
-        "event_id": event_id,
-        "event_title": event.get("title", ""),
-        "user_id": user["id"],
-        "user_name": user.get("name", ""),
-        "ticket_type": "general",
-        "note": "self-check-in",
-        "checked_in_by": user["id"],
-        "checked_in_by_name": user.get("name", ""),
-        "checked_in_at": iso(now_utc()),
-        "self_reported": True,
-    }
-    await db.checkins.insert_one(doc)
-    out = dict(doc)
-    out.pop("_id", None)
-    return out
-
 @api.get("/events/{event_id}/check-ins")
 async def list_checkins(event_id: str, _: dict = Depends(admin_tab_dep("events"))):
     items = await db.checkins.find({"event_id": event_id}, {"_id": 0}).sort("checked_in_at", -1).to_list(2000)
