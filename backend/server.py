@@ -4150,30 +4150,60 @@ class EmailTestSendIn(BaseModel):
     to_email: str
     subject: Optional[str] = None
     body_html: Optional[str] = None
+    template_id: Optional[str] = None
 
 
 @api.post("/email/test-send")
 async def email_test_send(body: EmailTestSendIn, admin: dict = Depends(admin_tab_dep("email"))):
     """Send a one-off test email so admins can validate Resend deliverability
-    without having to approve a real applicant or queue a blast."""
+    without having to approve a real applicant or queue a blast. If template_id
+    is provided, the template's subject + body_html are used (with {{variables}}
+    rendered against the admin's own profile as the sample recipient)."""
     to_email = (body.to_email or "").strip()
     if not to_email or "@" not in to_email:
         raise HTTPException(status_code=400, detail="A valid recipient email is required.")
     if not RESEND_API_KEY:
         raise HTTPException(status_code=503, detail="Resend API key not configured on the server (RESEND_API_KEY).")
-    subject = (body.subject or "Alpha Omega Phi — Test email").strip() or "Alpha Omega Phi — Test email"
     import html as _h
+    subject = (body.subject or "").strip()
+    html_body = (body.body_html or "").strip()
+    template_name = ""
+    if body.template_id:
+        tpl = await db.email_templates.find_one({"id": body.template_id})
+        if not tpl:
+            raise HTTPException(status_code=404, detail="Template not found")
+        if not subject:
+            subject = tpl.get("subject", "")
+        if not html_body:
+            html_body = tpl.get("body_html", "")
+        template_name = tpl.get("name", "")
+    # Render {{variables}} against the admin so the preview looks realistic
+    sample = await db.users.find_one({"id": admin["id"]}, {"_id": 0, "password_hash": 0}) or admin
+    if subject:
+        for key, val in {
+            "name": sample.get("name", ""),
+            "first_name": sample.get("first_name", ""),
+            "last_name": sample.get("last_name", ""),
+            "line_name": sample.get("line_name", ""),
+            "email": sample.get("email", ""),
+        }.items():
+            subject = subject.replace("{{" + key + "}}", val or "")
+    if html_body:
+        html_body = render_template(html_body, sample)
+    if not subject:
+        subject = "Alpha Omega Phi — Test email"
     admin_name = _h.escape(admin.get("name") or "an admin")
-    html_body = body.body_html if (body.body_html and body.body_html.strip()) else (
-        f"""
-        <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
-          <h1 style="color:#C8102E;margin:0 0 12px;font-size:24px">Resend deliverability check</h1>
-          <p style="line-height:1.6">This is a test email sent by <strong>{admin_name}</strong> from the Alpha Omega Phi member portal to confirm that Resend is configured correctly and emails reach inboxes.</p>
-          <p style="line-height:1.6">If you can read this in your inbox, the integration is working.</p>
-          <p style="font-size:12px;color:#888;margin-top:24px">Sender: <code>{_h.escape(RESEND_FROM)}</code></p>
-        </div>
-        """
-    )
+    if not html_body:
+        html_body = (
+            f"""
+            <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
+              <h1 style="color:#C8102E;margin:0 0 12px;font-size:24px">Resend deliverability check</h1>
+              <p style="line-height:1.6">This is a test email sent by <strong>{admin_name}</strong> from the Alpha Omega Phi member portal to confirm that Resend is configured correctly and emails reach inboxes.</p>
+              <p style="line-height:1.6">If you can read this in your inbox, the integration is working.</p>
+              <p style="font-size:12px;color:#888;margin-top:24px">Sender: <code>{_h.escape(RESEND_FROM)}</code></p>
+            </div>
+            """
+        )
     try:
         resp = await asyncio.to_thread(resend_sdk.Emails.send, {
             "from": RESEND_FROM,
@@ -4187,12 +4217,14 @@ async def email_test_send(body: EmailTestSendIn, admin: dict = Depends(admin_tab
             message_id = (resp or {}).get("id", "") if isinstance(resp, dict) else getattr(resp, "id", "")
         except Exception:
             message_id = ""
-        logger.info(f"Test email sent by {admin.get('email')} to {to_email} from {RESEND_FROM}")
+        logger.info(f"Test email sent by {admin.get('email')} to {to_email} from {RESEND_FROM} (template={template_name or 'none'})")
         return {
             "ok": True,
             "detail": "Test email accepted by Resend.",
             "to": to_email,
             "from": RESEND_FROM,
+            "subject": subject,
+            "template_name": template_name,
             "message_id": message_id,
         }
     except Exception as e:
@@ -4203,6 +4235,8 @@ async def email_test_send(body: EmailTestSendIn, admin: dict = Depends(admin_tab
             "detail": msg,
             "to": to_email,
             "from": RESEND_FROM,
+            "subject": subject,
+            "template_name": template_name,
         }
 
 

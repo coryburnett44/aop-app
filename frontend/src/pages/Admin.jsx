@@ -1550,8 +1550,16 @@ function EmailBlastAdmin() {
 function EmailTestSend() {
     const [toEmail, setToEmail] = useState("");
     const [subject, setSubject] = useState("");
+    const [templateId, setTemplateId] = useState("");
+    const [templates, setTemplates] = useState([]);
     const [busy, setBusy] = useState(false);
     const [lastResult, setLastResult] = useState(null);
+
+    useEffect(() => {
+        api.get("/email/templates").then(({ data }) => setTemplates(data || [])).catch(() => setTemplates([]));
+    }, []);
+
+    const selectedTemplate = templates.find((t) => t.id === templateId);
 
     async function send() {
         if (!toEmail.trim() || !toEmail.includes("@")) {
@@ -1561,10 +1569,10 @@ function EmailTestSend() {
         setBusy(true);
         setLastResult(null);
         try {
-            const { data } = await api.post("/email/test-send", {
-                to_email: toEmail.trim(),
-                subject: subject.trim() || undefined,
-            });
+            const payload = { to_email: toEmail.trim() };
+            if (subject.trim()) payload.subject = subject.trim();
+            if (templateId) payload.template_id = templateId;
+            const { data } = await api.post("/email/test-send", payload);
             setLastResult(data);
             if (data.ok) {
                 toast.success(`Test email accepted by Resend (to ${data.to}).`);
@@ -1598,11 +1606,30 @@ function EmailTestSend() {
                 <p className="text-xs text-muted-foreground mt-1.5">Tip: Send to a separate inbox (Gmail, Yahoo, Outlook) to confirm external deliverability.</p>
             </div>
             <div>
-                <Label>Subject <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                <Label>Use a saved template <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                <Select value={templateId || "__none__"} onValueChange={(v) => setTemplateId(v === "__none__" ? "" : v)}>
+                    <SelectTrigger className="rounded-xl mt-1.5" data-testid="test-email-template-select">
+                        <SelectValue placeholder="No template — send the deliverability check" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="__none__">No template — send the deliverability check</SelectItem>
+                        {templates.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+                {selectedTemplate && (
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                        Template subject: <em>{selectedTemplate.subject || "(none)"}</em>. Variables like <code>{"{{first_name}}"}</code> will render with <strong>your</strong> profile values so the preview is realistic.
+                    </p>
+                )}
+            </div>
+            <div>
+                <Label>Subject override <span className="text-xs text-muted-foreground font-normal">(optional — leave blank to use the template's subject)</span></Label>
                 <Input
                     value={subject}
                     onChange={(e) => setSubject(e.target.value)}
-                    placeholder="Alpha Omega Phi — Test email"
+                    placeholder={selectedTemplate?.subject || "Alpha Omega Phi — Test email"}
                     className="rounded-xl mt-1.5"
                     data-testid="test-email-subject-input"
                 />
@@ -1617,7 +1644,9 @@ function EmailTestSend() {
                 >
                     <div className="font-semibold mb-1">{lastResult.ok ? "Resend accepted the test." : "Resend rejected the test."}</div>
                     <div className="text-xs leading-relaxed">{lastResult.detail}</div>
-                    {lastResult.from && <div className="text-xs mt-2 opacity-80">From: <code>{lastResult.from}</code></div>}
+                    {lastResult.template_name && <div className="text-xs mt-2 opacity-80">Template: <code>{lastResult.template_name}</code></div>}
+                    {lastResult.subject && <div className="text-xs opacity-80">Subject: <code>{lastResult.subject}</code></div>}
+                    {lastResult.from && <div className="text-xs opacity-80">From: <code>{lastResult.from}</code></div>}
                     {lastResult.to && <div className="text-xs opacity-80">To: <code>{lastResult.to}</code></div>}
                     {lastResult.message_id && <div className="text-xs opacity-80">Message id: <code>{lastResult.message_id}</code></div>}
                 </div>
