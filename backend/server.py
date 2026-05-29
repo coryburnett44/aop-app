@@ -2347,6 +2347,8 @@ async def startup():
     await db.applications.create_index("id", unique=True)
     await db.applications.create_index([("status", 1), ("created_at", -1)])
     await db.password_set_tokens.create_index("token", unique=True)
+    await db.omega_tributes.create_index("id", unique=True)
+    await db.omega_tributes.create_index("user_id", unique=True)
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -2597,15 +2599,236 @@ async def seed_data():
 # ============================================================
 
 # ---------- Omega Chapter (in memoriam) ----------
+# Templates (frontend renders the corresponding layout).
+OMEGA_TEMPLATES = ["classic", "biography", "portrait", "memorial-card"]
+# Background styles (frontend maps to CSS gradients / textures).
+OMEGA_BACKGROUNDS = ["navy-radial", "ivory-soft", "patriot-stripe", "marble", "midnight", "parchment"]
+
+
+class OmegaTributeIn(BaseModel):
+    user_id: str
+    template: Literal["classic", "biography", "portrait", "memorial-card"] = "classic"
+    background: Literal["navy-radial", "ivory-soft", "patriot-stripe", "marble", "midnight", "parchment"] = "navy-radial"
+    cover_image: str = ""  # storage URL for tribute photo (separate from member avatar)
+    synopsis: str = ""  # short paragraph (used in 'classic' / 'memorial-card')
+    biography: str = ""  # longer rich text (used in 'biography')
+    epitaph: str = ""  # short quote/line displayed prominently
+    born_at: str = ""  # YYYY-MM-DD
+    passed_at: str = ""  # YYYY-MM-DD
+    location: str = ""  # city/state where they were laid to rest, optional
+
+
+class OmegaTributeUpdateIn(BaseModel):
+    template: Optional[Literal["classic", "biography", "portrait", "memorial-card"]] = None
+    background: Optional[Literal["navy-radial", "ivory-soft", "patriot-stripe", "marble", "midnight", "parchment"]] = None
+    cover_image: Optional[str] = None
+    synopsis: Optional[str] = None
+    biography: Optional[str] = None
+    epitaph: Optional[str] = None
+    born_at: Optional[str] = None
+    passed_at: Optional[str] = None
+    location: Optional[str] = None
+
+
+def tribute_out(t: dict, member: Optional[dict] = None) -> dict:
+    out = {
+        "id": t["id"],
+        "user_id": t["user_id"],
+        "template": t.get("template", "classic"),
+        "background": t.get("background", "navy-radial"),
+        "cover_image": t.get("cover_image", ""),
+        "synopsis": t.get("synopsis", ""),
+        "biography": t.get("biography", ""),
+        "epitaph": t.get("epitaph", ""),
+        "born_at": t.get("born_at", ""),
+        "passed_at": t.get("passed_at", ""),
+        "location": t.get("location", ""),
+        "created_at": t.get("created_at"),
+        "created_by_name": t.get("created_by_name", ""),
+        "updated_at": t.get("updated_at"),
+    }
+    if member:
+        out["member"] = {
+            "id": member["id"],
+            "name": member.get("name", ""),
+            "email": member.get("email", ""),
+            "line_name": member.get("line_name", ""),
+            "branch_of_service": member.get("branch_of_service", ""),
+            "city": member.get("city", ""),
+            "state": member.get("state", ""),
+            "country": member.get("country", ""),
+            "avatar_url": member.get("avatar_url", ""),
+            "join_date": member.get("join_date", ""),
+            "intake_line": member.get("intake_line", ""),
+            "deceased_at": member.get("deceased_at", ""),
+        }
+    return out
+
+
 @api.get("/omega")
 async def omega_chapter():
-    """Members who have passed away (status=deceased or status_override=deceased)."""
-    cursor = db.users.find(
+    """Returns the Omega list — users who are deceased PLUS any explicit tributes,
+    merged so the frontend can render either the legacy auto-card or the new template-based tribute."""
+    # 1) Fetch deceased members
+    member_cursor = db.users.find(
         {"$or": [{"status_override": "deceased"}, {"deceased_at": {"$nin": [None, ""]}}]},
         {"_id": 0, "password_hash": 0},
     ).sort("deceased_at", -1)
-    items = await cursor.to_list(500)
-    return [public_user(u) for u in items]
+    members = await member_cursor.to_list(500)
+    # 2) Fetch tributes
+    tribute_cursor = db.omega_tributes.find({}, {"_id": 0}).sort("created_at", -1)
+    tributes = await tribute_cursor.to_list(500)
+    tributes_by_uid = {t["user_id"]: t for t in tributes}
+    # 3) Merge — every deceased member gets an entry; tributes provide template+synopsis
+    out = []
+    seen = set()
+    for m in members:
+        seen.add(m["id"])
+        t = tributes_by_uid.get(m["id"])
+        if t:
+            out.append({"type": "tribute", **tribute_out(t, m)})
+        else:
+            # Legacy member-only card
+            pu = public_user(m)
+            out.append({
+                "type": "member",
+                "id": m["id"],
+                "user_id": m["id"],
+                "template": "classic",
+                "background": "navy-radial",
+                "cover_image": "",
+                "synopsis": "",
+                "biography": "",
+                "epitaph": "",
+                "born_at": "",
+                "passed_at": m.get("deceased_at", ""),
+                "location": pu.get("city", ""),
+                "member": {
+                    "id": m["id"],
+                    "name": pu.get("name", ""),
+                    "email": pu.get("email", ""),
+                    "line_name": pu.get("line_name", ""),
+                    "branch_of_service": pu.get("branch_of_service", ""),
+                    "city": pu.get("city", ""),
+                    "state": pu.get("state", ""),
+                    "country": pu.get("country", ""),
+                    "avatar_url": pu.get("avatar_url", ""),
+                    "join_date": pu.get("join_date", ""),
+                    "intake_line": pu.get("intake_line", ""),
+                    "deceased_at": pu.get("deceased_at", ""),
+                },
+            })
+    # 4) Tributes for non-deceased members (admin published a tribute manually without setting status)
+    for t in tributes:
+        if t["user_id"] in seen:
+            continue
+        m = await db.users.find_one({"id": t["user_id"]}, {"_id": 0, "password_hash": 0})
+        if not m:
+            continue
+        out.append({"type": "tribute", **tribute_out(t, m)})
+    # Sort: most recent passed_at / deceased_at first
+    def sort_key(x):
+        return x.get("passed_at") or (x.get("member") or {}).get("deceased_at") or ""
+    out.sort(key=sort_key, reverse=True)
+    return out
+
+
+@api.get("/omega/options")
+async def omega_options(_: dict = Depends(get_current_user)):
+    """Frontend uses this to populate the template + background pickers."""
+    return {"templates": OMEGA_TEMPLATES, "backgrounds": OMEGA_BACKGROUNDS}
+
+
+@api.post("/omega/tributes")
+async def create_tribute(body: OmegaTributeIn, admin: dict = Depends(admin_tab_dep("members"))):
+    """Admin creates a tribute for a member. Also flips the member's status to deceased
+    if not already so they appear in the Omega Chapter."""
+    member = await db.users.find_one({"id": body.user_id})
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    existing = await db.omega_tributes.find_one({"user_id": body.user_id})
+    if existing:
+        raise HTTPException(status_code=400, detail="A tribute already exists for this member — edit it instead.")
+    doc = {
+        "id": str(uuid.uuid4()),
+        **body.model_dump(),
+        "created_by": admin["id"],
+        "created_by_name": admin.get("name", ""),
+        "created_at": iso(now_utc()),
+        "updated_at": iso(now_utc()),
+    }
+    await db.omega_tributes.insert_one(doc)
+    # Mark deceased automatically if not already
+    if member.get("status_override") != "deceased":
+        set_doc = {"status_override": "deceased"}
+        if body.passed_at and not member.get("deceased_at"):
+            set_doc["deceased_at"] = body.passed_at
+        await db.users.update_one({"id": body.user_id}, {"$set": set_doc})
+    return tribute_out(doc, member)
+
+
+@api.put("/omega/tributes/{tribute_id}")
+async def update_tribute(tribute_id: str, body: OmegaTributeUpdateIn, admin: dict = Depends(admin_tab_dep("members"))):
+    existing = await db.omega_tributes.find_one({"id": tribute_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tribute not found")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    updates["updated_at"] = iso(now_utc())
+    updates["updated_by"] = admin["id"]
+    updates["updated_by_name"] = admin.get("name", "")
+    await db.omega_tributes.update_one({"id": tribute_id}, {"$set": updates})
+    t = await db.omega_tributes.find_one({"id": tribute_id}, {"_id": 0})
+    member = await db.users.find_one({"id": t["user_id"]}, {"_id": 0, "password_hash": 0})
+    return tribute_out(t, member)
+
+
+@api.delete("/omega/tributes/{tribute_id}")
+async def delete_tribute(tribute_id: str, _: dict = Depends(admin_tab_dep("members"))):
+    existing = await db.omega_tributes.find_one({"id": tribute_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tribute not found")
+    await db.omega_tributes.delete_one({"id": tribute_id})
+    return {"ok": True}
+
+
+@api.post("/omega/upload")
+async def upload_omega_cover(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("members"))):
+    """Admin uploads a tribute cover photo. Returns {url} that can be used as cover_image."""
+    chunks: list = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > 15 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Tribute image must be under 15 MB")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    fname = (file.filename or "tribute.jpg").replace("/", "_")
+    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
+    if ext not in IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
+    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
+    file_id = str(uuid.uuid4())
+    storage_path = f"omega/{file_id}/{fname}"
+
+    def _put():
+        return put_object(storage_path, data, content_type)
+    await asyncio.to_thread(_put)
+    rec = {
+        "id": file_id,
+        "filename": fname,
+        "storage_path": storage_path,
+        "content_type": content_type,
+        "size": total,
+        "kind": "image",
+        "uploaded_by": user["id"],
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.chat_files.insert_one(rec)
+    return {"url": f"/api/files/{storage_path}", "size": total}
 
 
 # ---------- AOP Gear (catalog) ----------
