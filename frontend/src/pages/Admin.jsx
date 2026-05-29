@@ -1531,17 +1531,98 @@ function EmailBlastAdmin() {
     const [view, setView] = useState("compose");
     return (
         <Tabs value={view} onValueChange={setView}>
-            <TabsList className="rounded-full bg-muted p-1">
+            <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
                 <TabsTrigger value="compose" className="rounded-full" data-testid="email-tab-compose"><Send className="h-4 w-4 mr-1.5" />Compose</TabsTrigger>
                 <TabsTrigger value="templates" className="rounded-full" data-testid="email-tab-templates"><FileText className="h-4 w-4 mr-1.5" />Templates</TabsTrigger>
                 <TabsTrigger value="signatures" className="rounded-full" data-testid="email-tab-signatures"><PenSquare className="h-4 w-4 mr-1.5" />Signatures</TabsTrigger>
                 <TabsTrigger value="history" className="rounded-full" data-testid="email-tab-history"><Clock className="h-4 w-4 mr-1.5" />History</TabsTrigger>
+                <TabsTrigger value="test-send" className="rounded-full" data-testid="email-tab-test-send"><Send className="h-4 w-4 mr-1.5" />Test send</TabsTrigger>
             </TabsList>
             <TabsContent value="compose" className="mt-6"><ComposeBlast /></TabsContent>
             <TabsContent value="templates" className="mt-6"><EmailTemplates /></TabsContent>
             <TabsContent value="signatures" className="mt-6"><EmailSignatures /></TabsContent>
             <TabsContent value="history" className="mt-6"><BlastHistory /></TabsContent>
+            <TabsContent value="test-send" className="mt-6"><EmailTestSend /></TabsContent>
         </Tabs>
+    );
+}
+
+function EmailTestSend() {
+    const [toEmail, setToEmail] = useState("");
+    const [subject, setSubject] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [lastResult, setLastResult] = useState(null);
+
+    async function send() {
+        if (!toEmail.trim() || !toEmail.includes("@")) {
+            toast.error("Enter a valid email address.");
+            return;
+        }
+        setBusy(true);
+        setLastResult(null);
+        try {
+            const { data } = await api.post("/email/test-send", {
+                to_email: toEmail.trim(),
+                subject: subject.trim() || undefined,
+            });
+            setLastResult(data);
+            if (data.ok) {
+                toast.success(`Test email accepted by Resend (to ${data.to}).`);
+            } else {
+                toast.error(`Resend rejected the test: ${data.detail || "unknown error"}`, { duration: 10000 });
+            }
+        } catch (e) {
+            const detail = e.response?.data?.detail || "Failed to send test email";
+            setLastResult({ ok: false, detail });
+            toast.error(detail);
+        }
+        setBusy(false);
+    }
+
+    return (
+        <div className="max-w-xl space-y-5" data-testid="email-test-send-panel">
+            <div className="bg-card border border-border rounded-2xl p-5">
+                <h3 className="font-heading text-xl font-bold mb-1">Send a test email</h3>
+                <p className="text-sm text-muted-foreground">Validate that Resend is configured and your verified sending domain is reaching inboxes — without having to approve a real applicant or queue a blast.</p>
+            </div>
+            <div>
+                <Label>Recipient email *</Label>
+                <Input
+                    type="email"
+                    value={toEmail}
+                    onChange={(e) => setToEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="rounded-xl mt-1.5"
+                    data-testid="test-email-to-input"
+                />
+                <p className="text-xs text-muted-foreground mt-1.5">Tip: Send to a separate inbox (Gmail, Yahoo, Outlook) to confirm external deliverability.</p>
+            </div>
+            <div>
+                <Label>Subject <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                <Input
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                    placeholder="Alpha Omega Phi — Test email"
+                    className="rounded-xl mt-1.5"
+                    data-testid="test-email-subject-input"
+                />
+            </div>
+            <Button onClick={send} disabled={busy || !toEmail.trim()} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="test-email-send-btn">
+                <Send className="h-4 w-4 mr-1.5" />{busy ? "Sending…" : "Send test email"}
+            </Button>
+            {lastResult && (
+                <div
+                    className={`rounded-2xl border p-4 text-sm ${lastResult.ok ? "border-green-300 bg-green-50 text-green-900" : "border-red-300 bg-red-50 text-red-900"}`}
+                    data-testid="test-email-result"
+                >
+                    <div className="font-semibold mb-1">{lastResult.ok ? "Resend accepted the test." : "Resend rejected the test."}</div>
+                    <div className="text-xs leading-relaxed">{lastResult.detail}</div>
+                    {lastResult.from && <div className="text-xs mt-2 opacity-80">From: <code>{lastResult.from}</code></div>}
+                    {lastResult.to && <div className="text-xs opacity-80">To: <code>{lastResult.to}</code></div>}
+                    {lastResult.message_id && <div className="text-xs opacity-80">Message id: <code>{lastResult.message_id}</code></div>}
+                </div>
+            )}
+        </div>
     );
 }
 

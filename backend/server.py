@@ -4146,6 +4146,68 @@ async def list_email_blasts(_: dict = Depends(admin_tab_dep("email"))):
     return items
 
 
+class EmailTestSendIn(BaseModel):
+    to_email: str
+    subject: Optional[str] = None
+    body_html: Optional[str] = None
+
+
+@api.post("/email/test-send")
+async def email_test_send(body: EmailTestSendIn, admin: dict = Depends(admin_tab_dep("email"))):
+    """Send a one-off test email so admins can validate Resend deliverability
+    without having to approve a real applicant or queue a blast."""
+    to_email = (body.to_email or "").strip()
+    if not to_email or "@" not in to_email:
+        raise HTTPException(status_code=400, detail="A valid recipient email is required.")
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=503, detail="Resend API key not configured on the server (RESEND_API_KEY).")
+    subject = (body.subject or "Alpha Omega Phi — Test email").strip() or "Alpha Omega Phi — Test email"
+    import html as _h
+    admin_name = _h.escape(admin.get("name") or "an admin")
+    html_body = body.body_html if (body.body_html and body.body_html.strip()) else (
+        f"""
+        <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
+          <h1 style="color:#C8102E;margin:0 0 12px;font-size:24px">Resend deliverability check</h1>
+          <p style="line-height:1.6">This is a test email sent by <strong>{admin_name}</strong> from the Alpha Omega Phi member portal to confirm that Resend is configured correctly and emails reach inboxes.</p>
+          <p style="line-height:1.6">If you can read this in your inbox, the integration is working.</p>
+          <p style="font-size:12px;color:#888;margin-top:24px">Sender: <code>{_h.escape(RESEND_FROM)}</code></p>
+        </div>
+        """
+    )
+    try:
+        resp = await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": RESEND_FROM,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body,
+            "tags": [{"name": "type", "value": "test_send"}],
+        })
+        message_id = ""
+        try:
+            message_id = (resp or {}).get("id", "") if isinstance(resp, dict) else getattr(resp, "id", "")
+        except Exception:
+            message_id = ""
+        logger.info(f"Test email sent by {admin.get('email')} to {to_email} from {RESEND_FROM}")
+        return {
+            "ok": True,
+            "detail": "Test email accepted by Resend.",
+            "to": to_email,
+            "from": RESEND_FROM,
+            "message_id": message_id,
+        }
+    except Exception as e:
+        msg = str(e)
+        logger.warning(f"Test email FAILED to {to_email} (from={RESEND_FROM}): {msg}")
+        return {
+            "ok": False,
+            "detail": msg,
+            "to": to_email,
+            "from": RESEND_FROM,
+        }
+
+
+
+
 @api.post("/email/webhook")
 async def resend_webhook(request: Request):
     """Accept Resend webhook events for opens, deliveries, bounces."""
