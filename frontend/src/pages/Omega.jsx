@@ -9,7 +9,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { format, parseISO } from "date-fns";
-import { Flame, Plus, Pencil, Trash2, Upload as UploadIcon } from "lucide-react";
+import { Flame, Plus, Pencil, Trash2, Upload as UploadIcon, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 
 const NAVY = "#0A2463";
@@ -84,12 +84,17 @@ export default function Omega() {
     const { user } = useAuth();
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [hero, setHero] = useState({ image_url: "", title: "", caption: "" });
     const isAdmin = user?.role === "admin";
 
     async function load() {
         try {
-            const { data } = await api.get("/omega");
+            const [{ data }, { data: h }] = await Promise.all([
+                api.get("/omega"),
+                api.get("/omega/hero").catch(() => ({ data: { image_url: "", title: "", caption: "" } })),
+            ]);
             setItems(data);
+            setHero(h || { image_url: "", title: "", caption: "" });
         } catch { /* ignore */ }
         setLoading(false);
     }
@@ -110,16 +115,32 @@ export default function Omega() {
                         Honoring the Trendsetters who answered their final call. Their service, sacrifice, and brotherhood live on in every member who follows.
                     </p>
                     {isAdmin && (
-                        <div className="mt-7 flex justify-center">
+                        <div className="mt-7 flex flex-wrap gap-3 justify-center">
                             <TributeBuilder onSaved={load} trigger={(
                                 <Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="add-tribute-btn">
                                     <Plus className="h-4 w-4 mr-1.5" /> Add tribute
                                 </Button>
                             )} />
+                            <HeroEditor hero={hero} onSaved={load} />
                         </div>
                     )}
                 </div>
             </section>
+
+            {/* Hero featured photo (admin-managed banner like the Omega Chapter clubexpress page) */}
+            {hero.image_url && (
+                <section className="max-w-5xl mx-auto px-6 lg:px-10 pt-10" data-testid="omega-hero-banner">
+                    <div className="rounded-3xl overflow-hidden border-4 shadow-warm bg-white" style={{ borderColor: NAVY }}>
+                        <img src={hero.image_url} alt={hero.title || "Omega Chapter featured"} className="w-full h-auto max-h-[520px] object-cover" />
+                        {(hero.title || hero.caption) && (
+                            <div className="p-5 sm:p-6 text-center">
+                                {hero.title && <h2 className="font-heading text-2xl sm:text-3xl font-black" style={{ color: NAVY }}>{hero.title}</h2>}
+                                {hero.caption && <p className="text-sm sm:text-base text-slate-600 mt-2 leading-relaxed max-w-3xl mx-auto whitespace-pre-wrap">{hero.caption}</p>}
+                            </div>
+                        )}
+                    </div>
+                </section>
+            )}
 
             <section className="max-w-6xl mx-auto px-6 lg:px-10 py-14">
                 {loading ? null : items.length === 0 ? (
@@ -514,6 +535,113 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
                         <Button variant="outline" onClick={() => setOpen(false)} className="rounded-full">Cancel</Button>
                         <Button onClick={save} disabled={busy || !form.user_id} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="tribute-save-btn">
                             {busy ? "Saving…" : (isEdit ? "Save changes" : "Publish tribute")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </>
+    );
+}
+
+
+// ---------- Hero Editor (admin-only — manages the featured banner image on /omega) ----------
+function HeroEditor({ hero, onSaved }) {
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({ image_url: "", title: "", caption: "" });
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        if (open) setForm({ image_url: hero.image_url || "", title: hero.title || "", caption: hero.caption || "" });
+    }, [open, hero]);
+
+    async function uploadImage(file) {
+        if (!file) return;
+        if (file.size > 15 * 1024 * 1024) { toast.error("Image must be under 15 MB"); return; }
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+            const { data } = await api.post("/omega/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+            setForm((f) => ({ ...f, image_url: data.url }));
+            toast.success("Photo uploaded");
+        } catch (e) { toast.error(e.response?.data?.detail || "Upload failed"); }
+    }
+
+    async function save() {
+        setBusy(true);
+        try {
+            await api.put("/omega/hero", form);
+            toast.success("Featured photo saved");
+            setOpen(false);
+            onSaved?.();
+        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        setBusy(false);
+    }
+
+    async function clearHero() {
+        if (!window.confirm("Remove the featured photo from the Omega Chapter page?")) return;
+        setBusy(true);
+        try {
+            await api.put("/omega/hero", { image_url: "", title: "", caption: "" });
+            toast.success("Featured photo removed");
+            setOpen(false);
+            onSaved?.();
+        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+        setBusy(false);
+    }
+
+    return (
+        <>
+            <Button onClick={() => setOpen(true)} variant="outline" className="rounded-full" data-testid="omega-hero-edit-btn">
+                <ImageIcon className="h-4 w-4 mr-1.5" /> {hero.image_url ? "Edit featured photo" : "Add featured photo"}
+            </Button>
+            <Dialog open={open} onOpenChange={setOpen}>
+                <DialogContent className="max-w-xl" data-testid="omega-hero-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading text-2xl">Omega Chapter featured photo</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 mt-2">
+                        {form.image_url && (
+                            <div className="rounded-xl overflow-hidden border border-border">
+                                <img src={form.image_url} alt="Preview" className="w-full max-h-80 object-cover" />
+                            </div>
+                        )}
+                        <div>
+                            <Label>Image URL or upload</Label>
+                            <div className="flex items-center gap-2 mt-1.5">
+                                <Input
+                                    type="text"
+                                    placeholder="https://… or upload below"
+                                    value={form.image_url}
+                                    onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
+                                    className="rounded-xl flex-1"
+                                    data-testid="omega-hero-url"
+                                />
+                                <label className="cursor-pointer">
+                                    <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
+                                        <span data-testid="omega-hero-upload"><UploadIcon className="h-3.5 w-3.5 mr-1" />Upload</span>
+                                    </Button>
+                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadImage(e.target.files?.[0])} />
+                                </label>
+                            </div>
+                        </div>
+                        <div>
+                            <Label>Title <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                            <Input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} className="rounded-xl mt-1.5" placeholder="e.g. In remembrance of Brother Neal Brooks" data-testid="omega-hero-title" />
+                        </div>
+                        <div>
+                            <Label>Caption <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                            <Textarea value={form.caption} onChange={(e) => setForm((f) => ({ ...f, caption: e.target.value }))} className="rounded-xl mt-1.5" rows={3} placeholder="A short caption shown beneath the photo." data-testid="omega-hero-caption" />
+                        </div>
+                    </div>
+                    <DialogFooter className="mt-4 flex-wrap gap-2">
+                        {hero.image_url && (
+                            <Button variant="outline" onClick={clearHero} disabled={busy} className="rounded-full text-destructive" data-testid="omega-hero-clear-btn">
+                                <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Remove
+                            </Button>
+                        )}
+                        <Button variant="outline" onClick={() => setOpen(false)} className="rounded-full">Cancel</Button>
+                        <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="omega-hero-save-btn">
+                            {busy ? "Saving…" : "Save featured photo"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

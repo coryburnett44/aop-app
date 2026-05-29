@@ -765,40 +765,47 @@ async def _send_set_password_email(email: str, name: str, token: str) -> bool:
         return False
 
 
-async def _send_approval_email(email: str, name: str) -> bool:
+async def _send_approval_email(email: str, name: str) -> tuple[bool, str]:
     """Sent when an admin approves an application. The applicant already chose
-    their password during apply, so we just tell them to log in."""
-    if not RESEND_API_KEY or not email:
-        return False
+    their password during apply, so we just welcome them and tell them to log in.
+    Returns (ok, detail) — detail is a human-readable failure reason when ok=False."""
+    if not RESEND_API_KEY:
+        return False, "Resend API key not configured on the server (RESEND_API_KEY)."
+    if not email:
+        return False, "Applicant has no email address on file."
     frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
     import html as _h
     safe_name = _h.escape(name or "")
     safe_email = _h.escape(email)
     body = f"""
     <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
-      <h1 style="color:#C8102E;margin:0 0 12px;font-size:28px">Welcome to Alpha Omega Phi, {safe_name}.</h1>
-      <p style="line-height:1.6">Your membership application has been <strong>approved</strong>. You can now sign in with the email and password you provided when you applied.</p>
+      <h1 style="color:#C8102E;margin:0 0 12px;font-size:28px">Welcome to Alpha Omega Phi, {safe_name}!</h1>
+      <p style="line-height:1.6">We are honored to welcome you to <strong>Alpha Omega Phi Military Fraternity &amp; Sorority, Inc.</strong> Your membership application has been <strong>approved</strong> and your member portal is now active.</p>
+      <p style="line-height:1.6">You can sign in right away using the email and password you chose when you applied.</p>
       <div style="background:#f7f5f0;border-radius:14px;padding:20px;margin:20px 0">
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:6px">Sign in</div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:6px">Your Sign-In</div>
         <div style="font-size:14px;margin:4px 0"><strong>Email:</strong> {safe_email}</div>
         <div style="font-size:14px;margin:4px 0"><strong>Password:</strong> The one you chose when applying.</div>
       </div>
       <p><a href="{frontend}/login" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Sign in to the portal</a></p>
-      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">Forgot your password? Reach out to your chapter Governor.</p>
+      <p style="line-height:1.6;margin-top:24px">Once you log in you can update your profile, RSVP to events, log volunteer hours, view chapter forms, and connect with other Trendsetters in the members-only chat.</p>
+      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">Forgot your password? Reach out to your chapter Governor for help.</p>
     </div>
     """
     try:
         await asyncio.to_thread(resend_sdk.Emails.send, {
             "from": RESEND_FROM,
             "to": [email],
-            "subject": "Alpha Omega Phi — your application was approved",
+            "subject": "Welcome to Alpha Omega Phi",
             "html": body,
             "tags": [{"name": "type", "value": "application_approved"}],
         })
-        return True
+        logger.info(f"Welcome (approval) email sent to {email} from {RESEND_FROM}")
+        return True, "sent"
     except Exception as e:
-        logger.warning(f"Approval email failed for {email}: {e}")
-        return False
+        msg = str(e)
+        logger.warning(f"Welcome (approval) email FAILED for {email} (from={RESEND_FROM}): {msg}")
+        return False, msg
 
 
 async def _send_rejection_email(email: str, name: str, note: str) -> bool:
@@ -891,8 +898,13 @@ async def review_application(app_id: str, body: ApplicationReviewIn, admin: dict
                 "user_id": uid,
             }},
         )
-        await _send_approval_email(app_doc["email"], composed_name)
-        return {"ok": True, "user_id": uid}
+        email_ok, email_detail = await _send_approval_email(app_doc["email"], composed_name)
+        return {
+            "ok": True,
+            "user_id": uid,
+            "welcome_email_sent": email_ok,
+            "welcome_email_detail": email_detail if not email_ok else "Welcome email sent.",
+        }
     # Reject
     await db.applications.update_one(
         {"id": app_id},
@@ -2346,6 +2358,9 @@ async def startup():
     await db.chat_notifications.create_index([("status", 1), ("due_at", 1)])
     await db.applications.create_index("id", unique=True)
     await db.applications.create_index([("status", 1), ("created_at", -1)])
+    await db.app_settings.create_index("key", unique=True)
+    await db.form_links.create_index("id", unique=True)
+    await db.form_links.create_index([("order", 1), ("created_at", 1)])
     await db.password_set_tokens.create_index("token", unique=True)
     await db.omega_tributes.create_index("id", unique=True)
     await db.omega_tributes.create_index("user_id", unique=True)
@@ -2854,6 +2869,163 @@ async def upload_omega_cover(file: UploadFile = File(...), user: dict = Depends(
     }
     await db.chat_files.insert_one(rec)
     return {"url": f"/api/files/{storage_path}", "size": total}
+
+
+# ---------- Omega Hero (featured banner image at top of /omega) ----------
+class OmegaHeroIn(BaseModel):
+    image_url: str = ""
+    title: str = ""
+    caption: str = ""
+
+
+@api.get("/omega/hero")
+async def get_omega_hero():
+    doc = await db.app_settings.find_one({"key": "omega_hero"}, {"_id": 0})
+    if not doc:
+        return {"image_url": "", "title": "", "caption": ""}
+    return {
+        "image_url": doc.get("image_url", ""),
+        "title": doc.get("title", ""),
+        "caption": doc.get("caption", ""),
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+@api.put("/omega/hero")
+async def set_omega_hero(body: OmegaHeroIn, admin: dict = Depends(admin_tab_dep("members"))):
+    await db.app_settings.update_one(
+        {"key": "omega_hero"},
+        {"$set": {
+            "key": "omega_hero",
+            "image_url": body.image_url,
+            "title": body.title,
+            "caption": body.caption,
+            "updated_at": iso(now_utc()),
+            "updated_by": admin.get("name", ""),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "image_url": body.image_url, "title": body.title, "caption": body.caption}
+
+
+# ---------- AOP Form Links (picture cards linking to a webpage on AOP Forms page) ----------
+class FormLinkIn(BaseModel):
+    title: str
+    description: str = ""
+    url: str
+    image_url: str = ""
+    order: int = 0
+
+
+class FormLinkUpdateIn(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    url: Optional[str] = None
+    image_url: Optional[str] = None
+    order: Optional[int] = None
+
+
+def _form_link_out(d: dict) -> dict:
+    return {
+        "id": d["id"],
+        "title": d.get("title", ""),
+        "description": d.get("description", ""),
+        "url": d.get("url", ""),
+        "image_url": d.get("image_url", ""),
+        "order": d.get("order", 0),
+        "created_at": d.get("created_at"),
+        "created_by_name": d.get("created_by_name", ""),
+    }
+
+
+@api.get("/form-links")
+async def list_form_links():
+    rows = await db.form_links.find({}, {"_id": 0}).sort([("order", 1), ("created_at", 1)]).to_list(200)
+    return [_form_link_out(r) for r in rows]
+
+
+@api.post("/form-links")
+async def create_form_link(body: FormLinkIn, admin: dict = Depends(admin_tab_dep("members"))):
+    if not body.title.strip() or not body.url.strip():
+        raise HTTPException(status_code=400, detail="Title and URL are required.")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "title": body.title.strip(),
+        "description": body.description.strip(),
+        "url": body.url.strip(),
+        "image_url": body.image_url.strip(),
+        "order": body.order,
+        "created_by": admin["id"],
+        "created_by_name": admin.get("name", ""),
+        "created_at": iso(now_utc()),
+        "updated_at": iso(now_utc()),
+    }
+    await db.form_links.insert_one(doc)
+    return _form_link_out(doc)
+
+
+@api.put("/form-links/{link_id}")
+async def update_form_link(link_id: str, body: FormLinkUpdateIn, _: dict = Depends(admin_tab_dep("members"))):
+    existing = await db.form_links.find_one({"id": link_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Form link not found")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "title" in updates and not str(updates["title"]).strip():
+        raise HTTPException(status_code=400, detail="Title cannot be blank.")
+    if "url" in updates and not str(updates["url"]).strip():
+        raise HTTPException(status_code=400, detail="URL cannot be blank.")
+    updates["updated_at"] = iso(now_utc())
+    await db.form_links.update_one({"id": link_id}, {"$set": updates})
+    out = await db.form_links.find_one({"id": link_id}, {"_id": 0})
+    return _form_link_out(out)
+
+
+@api.delete("/form-links/{link_id}")
+async def delete_form_link(link_id: str, _: dict = Depends(admin_tab_dep("members"))):
+    existing = await db.form_links.find_one({"id": link_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Form link not found")
+    await db.form_links.delete_one({"id": link_id})
+    return {"ok": True}
+
+
+@api.post("/form-links/upload")
+async def upload_form_link_image(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("members"))):
+    """Admin uploads a picture for a form-link card. Returns {url}."""
+    chunks: list = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Image must be under 10 MB")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    fname = (file.filename or "link.jpg").replace("/", "_")
+    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
+    if ext not in IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
+    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
+    file_id = str(uuid.uuid4())
+    storage_path = f"form-links/{file_id}/{fname}"
+    await asyncio.to_thread(put_object, storage_path, data, content_type)
+    rec = {
+        "id": file_id,
+        "filename": fname,
+        "storage_path": storage_path,
+        "content_type": content_type,
+        "size": total,
+        "kind": "image",
+        "uploaded_by": user["id"],
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.chat_files.insert_one(rec)
+    return {"url": f"/api/files/{storage_path}", "size": total}
+
+
 
 
 # ---------- AOP Gear (catalog) ----------
@@ -4444,9 +4616,11 @@ AOP_TIERS = [
      "description": "Member who has a family member serving or who has served in the military."},
     {"name": "Honorary Member", "order": 3, "color": "#F59E0B", "annual_dues": 100.0, "is_lifetime": False,
      "description": "Member selected by the Founders or National Leadership to be a member due to their dedication. Exempted from Intake."},
-    {"name": "Silver Life Member", "order": 4, "color": "#9CA3AF", "annual_dues": 0.0, "is_lifetime": True,
+    {"name": "Life Member Candidate", "order": 4, "color": "#A855F7", "annual_dues": 100.0, "is_lifetime": False,
+     "description": "Active member working toward Life Member status — must accumulate the required years of service. Standard annual dues apply during candidacy."},
+    {"name": "Silver Life Member", "order": 5, "color": "#9CA3AF", "annual_dues": 0.0, "is_lifetime": True,
      "description": "Member who served a minimum of four years in the organization and is the elite member of the organization. Lifetime membership — no renewal."},
-    {"name": "Gold Life Member", "order": 5, "color": "#D4AF37", "annual_dues": 0.0, "is_lifetime": True,
+    {"name": "Gold Life Member", "order": 6, "color": "#D4AF37", "annual_dues": 0.0, "is_lifetime": True,
      "description": "Member who served a minimum of 15 years in the organization and is the elite member of the organization. Lifetime membership — no renewal."},
 ]
 AOP_TIER_NAMES = [t["name"] for t in AOP_TIERS]

@@ -377,8 +377,16 @@ function ApplicationsPanel({ onApproved }) {
         const note = action === "reject" ? (prompt("Optional reason for rejection (sent in email):") || "") : "";
         setBusy({ ...busy, [id]: true });
         try {
-            await api.post(`/admin/applications/${id}/review`, { action, note });
-            toast.success(action === "approve" ? "Approved — set-password email sent" : "Application rejected");
+            const { data } = await api.post(`/admin/applications/${id}/review`, { action, note });
+            if (action === "approve") {
+                if (data?.welcome_email_sent) {
+                    toast.success("Approved — Welcome email delivered to the applicant.");
+                } else {
+                    toast.warning(`Approved, but welcome email did NOT send: ${data?.welcome_email_detail || "unknown error"}. Check Resend domain config.`, { duration: 8000 });
+                }
+            } else {
+                toast.success("Application rejected");
+            }
             await load();
             if (action === "approve") onApproved?.();
         } catch (e) {
