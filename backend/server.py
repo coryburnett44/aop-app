@@ -2599,28 +2599,47 @@ async def seed_data():
 # ============================================================
 
 # ---------- Omega Chapter (in memoriam) ----------
-# Templates (frontend renders the corresponding layout).
-OMEGA_TEMPLATES = ["classic", "biography", "portrait", "memorial-card"]
+# Templates the admin can pick when honoring a member (frontend renders the corresponding layout).
+# - biography     -> long-form bio with photo, dates, epitaph
+# - memorial-card -> formal portrait with name/dates centered + short tribute quote
+# - in-service    -> military brief: rank/branch/service dates + photo + summary
+OMEGA_TEMPLATES = ["biography", "memorial-card", "in-service"]
 # Background styles (frontend maps to CSS gradients / textures).
-OMEGA_BACKGROUNDS = ["navy-radial", "ivory-soft", "patriot-stripe", "marble", "midnight", "parchment"]
+OMEGA_BACKGROUNDS = [
+    "american-flag",
+    "navy-starfield",
+    "marble",
+    "sepia",
+    "solid-red",
+    "solid-navy",
+    "solid-white",
+]
 
 
 class OmegaTributeIn(BaseModel):
     user_id: str
-    template: Literal["classic", "biography", "portrait", "memorial-card"] = "classic"
-    background: Literal["navy-radial", "ivory-soft", "patriot-stripe", "marble", "midnight", "parchment"] = "navy-radial"
+    template: Literal["biography", "memorial-card", "in-service"] = "biography"
+    background: Literal[
+        "american-flag", "navy-starfield", "marble", "sepia",
+        "solid-red", "solid-navy", "solid-white",
+    ] = "navy-starfield"
     cover_image: str = ""  # storage URL for tribute photo (separate from member avatar)
-    synopsis: str = ""  # short paragraph (used in 'classic' / 'memorial-card')
+    synopsis: str = ""  # short paragraph (used in 'memorial-card' / 'in-service')
     biography: str = ""  # longer rich text (used in 'biography')
     epitaph: str = ""  # short quote/line displayed prominently
     born_at: str = ""  # YYYY-MM-DD
     passed_at: str = ""  # YYYY-MM-DD
     location: str = ""  # city/state where they were laid to rest, optional
+    rank: str = ""  # military rank (in-service template)
+    service_dates: str = ""  # free-text service dates e.g. "1998 — 2018"
 
 
 class OmegaTributeUpdateIn(BaseModel):
-    template: Optional[Literal["classic", "biography", "portrait", "memorial-card"]] = None
-    background: Optional[Literal["navy-radial", "ivory-soft", "patriot-stripe", "marble", "midnight", "parchment"]] = None
+    template: Optional[Literal["biography", "memorial-card", "in-service"]] = None
+    background: Optional[Literal[
+        "american-flag", "navy-starfield", "marble", "sepia",
+        "solid-red", "solid-navy", "solid-white",
+    ]] = None
     cover_image: Optional[str] = None
     synopsis: Optional[str] = None
     biography: Optional[str] = None
@@ -2628,14 +2647,16 @@ class OmegaTributeUpdateIn(BaseModel):
     born_at: Optional[str] = None
     passed_at: Optional[str] = None
     location: Optional[str] = None
+    rank: Optional[str] = None
+    service_dates: Optional[str] = None
 
 
 def tribute_out(t: dict, member: Optional[dict] = None) -> dict:
     out = {
         "id": t["id"],
         "user_id": t["user_id"],
-        "template": t.get("template", "classic"),
-        "background": t.get("background", "navy-radial"),
+        "template": t.get("template", "biography"),
+        "background": t.get("background", "navy-starfield"),
         "cover_image": t.get("cover_image", ""),
         "synopsis": t.get("synopsis", ""),
         "biography": t.get("biography", ""),
@@ -2643,6 +2664,8 @@ def tribute_out(t: dict, member: Optional[dict] = None) -> dict:
         "born_at": t.get("born_at", ""),
         "passed_at": t.get("passed_at", ""),
         "location": t.get("location", ""),
+        "rank": t.get("rank", ""),
+        "service_dates": t.get("service_dates", ""),
         "created_at": t.get("created_at"),
         "created_by_name": t.get("created_by_name", ""),
         "updated_at": t.get("updated_at"),
@@ -2694,8 +2717,8 @@ async def omega_chapter():
                 "type": "member",
                 "id": m["id"],
                 "user_id": m["id"],
-                "template": "classic",
-                "background": "navy-radial",
+                "template": "biography",
+                "background": "navy-starfield",
                 "cover_image": "",
                 "synopsis": "",
                 "biography": "",
@@ -2703,6 +2726,8 @@ async def omega_chapter():
                 "born_at": "",
                 "passed_at": m.get("deceased_at", ""),
                 "location": pu.get("city", ""),
+                "rank": "",
+                "service_dates": "",
                 "member": {
                     "id": m["id"],
                     "name": pu.get("name", ""),

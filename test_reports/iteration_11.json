@@ -1,0 +1,34 @@
+{
+  "summary": "Omega tab tribute templates + backgrounds testing (both backend + frontend). Backend pytest: 14/14 PASS — GET /api/omega/options returns exactly the 3 templates ['biography','memorial-card','in-service'] and 7 backgrounds ['american-flag','navy-starfield','marble','sepia','solid-red','solid-navy','solid-white']; POST /api/omega/tributes rejects ALL legacy templates ('classic','portrait','modern') and ALL legacy backgrounds ('navy-radial','midnight','ivory-soft','patriot-stripe','parchment') with 422; full create→update→delete CRUD verified; member auto-marked deceased on create; appears in GET /api/omega; duplicate create returns 400; member (401/403), governor_manager (403), and unauth (401/403) are all correctly gated from POST. Frontend: /omega admin → Add tribute button + TributeBuilder dialog renders correctly with member search, 3-option template dropdown (Biography / Memorial Card / In Service), 7-option background dropdown (American Flag / Navy Starfield / Marble / Sepia Parchment / Solid Red / Solid Navy / Solid White), and all expected inputs (rank, service-dates, cover-url, cover-upload, born, passed, location, epitaph, synopsis, biography, preview, save-btn). Live preview length changes with template switch (memorial-card 1834 → in-service 2791 bytes). After publishing, card appears with type-correct body; edit pre-populates form (rank='TEST_Major', service_dates='1995 — 2015', epitaph='TEST_UI_EPITAPH' confirmed); delete removes it. Member view of /omega: NO add/edit/delete controls (all None) while the tribute card itself IS visible — correct gating. Regression visits: /members, /calendar, /events, /gear, /donate, /chat all load without runtime errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "TributeBuilder Dialog", "issues": ["React dev-mode 'ResizeObserver loop completed with undelivered notifications' triggers Webpack error overlay covering the page when the dialog is closed quickly after dropdown interaction. Harmless in production but disruptive during dev — caused by Radix Select inside Dialog. Consider wrapping ResizeObserver callback in requestAnimationFrame or suppressing via dev-overlay config."]},
+      {"screen": "Multiple Radix Dialogs (including TributeBuilder)", "issues": ["Console warning: 'Missing Description or aria-describedby={undefined} for DialogContent' — known a11y warning, low-priority, also flagged in iterations 9 & 10."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_omega_tributes.py",
+    "/app/test_reports/pytest/omega_tributes_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is 4972 lines (grew from 4419 in iter-10) — still well over the 700-line guideline. Strong recommendation to split into modules (auth, members, omega, gear, donations, events, reports). Flagged repeatedly in iter-9, iter-10.",
+    "PUT /api/members/{id} silently ignores the field name 'status_override' (it only accepts 'member_status', which maps to status_override at line 1549). Confirmed during cleanup: payload {status_override: null} returned 200 with NO change to the document. Either accept both field names or reject unknown fields (Pydantic 'extra=forbid') so callers see a 422 instead of a silent no-op.",
+    "Omega tributes endpoint correctly excludes mongo _id via projection. Good.",
+    "create_tribute auto-flips member to deceased — but on DELETE of the tribute, status_override stays 'deceased'. If the admin made a tribute by mistake, deleting the tribute leaves the member flagged. Consider either (a) prompting admin on delete to also clear status, or (b) leaving the legacy member-only card to render — current behavior is option (b), which is acceptable but worth documenting.",
+    "OmegaTributeIn.background default is 'navy-starfield' but the user requested american-flag as 'style #1' — consider making the default 'american-flag' to better match the explicit user choice."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_omega_tributes.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% (all admin + member + regression flows verified)"},
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123!, governor.tx@clubhaven.app/Governor123! — all verified",
+  "seed_data_creation": "Backend test_create_update_delete: creates, updates, deletes a tribute on a member (maya.patel by default, falls back to any non-admin). Cleanup in finally block restores member_status='active' + deceased_at=''. Frontend UI test seeded one tribute on jordan.reed and explicitly cleaned it up via DELETE /api/omega/tributes/{id} and PUT /api/members/{id} member_status='active'. Verified omega list size returned to 0 post-cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: REACT_APP_BACKEND_URL=https://club-express-lite.preview.emergentagent.com python -m pytest /app/backend/tests/test_omega_tributes.py -v. The test file uses fixtures admin_session/member_session/governor_session and tribute_subject_id (auto-picks maya.patel or fallback). Cleanup uses PUT /api/members/{id} with body {member_status:'active', deceased_at:''} — NOT 'status_override'. Frontend tested via the public REACT_APP_BACKEND_URL. The dev-mode ResizeObserver overlay can interfere with rapid dropdown→escape sequences in Playwright; wait_for_timeout(500) after escape mitigates. /api/members/{id} silently ignores unknown fields — flagged in code review.",
+  "rca of the issue": "No bugs — review was a feature verification. All 10 review-request bullets verified end-to-end. Two design-issue notes (ResizeObserver dev overlay + missing aria-describedby) are pre-existing cosmetic warnings; do not block release."
+}

@@ -18,23 +18,29 @@ const RED = "#C8102E";
 // ---------- Background palette ----------
 // Frontend-only mapping so admins can preview without server round-trips.
 const BACKGROUNDS = {
-    "navy-radial": {
-        label: "Navy Radial",
-        css: `radial-gradient(circle at 30% 30%, ${NAVY}25 0%, transparent 60%), radial-gradient(circle at 70% 70%, ${RED}20 0%, transparent 60%), #FFFFFF`,
+    "american-flag": {
+        label: "American Flag",
+        css: `
+            linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.78) 100%),
+            repeating-linear-gradient(180deg, ${RED} 0px, ${RED} 22px, #FFFFFF 22px, #FFFFFF 44px),
+            radial-gradient(circle at 18% 20%, ${NAVY} 0%, ${NAVY} 32%, transparent 33%)
+        `,
         text: "#0A2463",
         accent: "#C8102E",
     },
-    "ivory-soft": {
-        label: "Ivory Soft",
-        css: "linear-gradient(135deg, #FAF7F0 0%, #F0E9D9 100%)",
-        text: "#3D2E1E",
-        accent: "#8B0000",
-    },
-    "patriot-stripe": {
-        label: "Patriot Stripe",
-        css: `repeating-linear-gradient(90deg, #FFFFFF 0px, #FFFFFF 40px, #F8F8F8 40px, #F8F8F8 41px), linear-gradient(180deg, transparent 0%, ${NAVY}10 100%)`,
-        text: "#0A2463",
-        accent: "#C8102E",
+    "navy-starfield": {
+        label: "Navy Starfield",
+        css: `
+            radial-gradient(2px 2px at 12% 18%, #FFFFFF 50%, transparent 51%),
+            radial-gradient(1.5px 1.5px at 28% 62%, #FFFFFF 50%, transparent 51%),
+            radial-gradient(2px 2px at 55% 30%, #FFFFFF 50%, transparent 51%),
+            radial-gradient(1px 1px at 72% 78%, #FFFFFF 50%, transparent 51%),
+            radial-gradient(2.5px 2.5px at 86% 22%, #FFFFFF 50%, transparent 51%),
+            radial-gradient(1.5px 1.5px at 40% 88%, #FFFFFF 50%, transparent 51%),
+            linear-gradient(135deg, #050B1F 0%, #0A2463 60%, #1B2845 100%)
+        `,
+        text: "#FFFFFF",
+        accent: "#E8C547",
     },
     marble: {
         label: "Marble",
@@ -42,25 +48,36 @@ const BACKGROUNDS = {
         text: "#1F2937",
         accent: "#0A2463",
     },
-    midnight: {
-        label: "Midnight",
-        css: "linear-gradient(135deg, #0A1428 0%, #1B2845 50%, #0A2463 100%)",
-        text: "#FFFFFF",
-        accent: "#E8C547",
-    },
-    parchment: {
-        label: "Parchment",
+    sepia: {
+        label: "Sepia Parchment",
         css: "linear-gradient(135deg, #F4ECD8 0%, #E9DDC0 100%), radial-gradient(circle at 20% 30%, rgba(139,90,43,0.08), transparent 50%)",
         text: "#3D2E1E",
         accent: "#8B0000",
     },
+    "solid-red": {
+        label: "Solid Red",
+        css: RED,
+        text: "#FFFFFF",
+        accent: "#FFFFFF",
+    },
+    "solid-navy": {
+        label: "Solid Navy",
+        css: NAVY,
+        text: "#FFFFFF",
+        accent: "#E8C547",
+    },
+    "solid-white": {
+        label: "Solid White",
+        css: "#FFFFFF",
+        text: "#0A2463",
+        accent: "#C8102E",
+    },
 };
 
 const TEMPLATES = {
-    classic: { label: "Classic Card", description: "Photo, name, line name, branch & service dates. Short synopsis." },
-    biography: { label: "Biography", description: "Long-form layout for a written biography with section dividers." },
-    portrait: { label: "Portrait", description: "Photo dominant, name overlaid. Minimal text — for visual impact." },
-    "memorial-card": { label: "Memorial Card", description: "Quote / epitaph centerpiece with dates and short tribute below." },
+    biography: { label: "Biography", description: "Long-form layout with cover photo, full synopsis, dates and epitaph." },
+    "memorial-card": { label: "Memorial Card", description: "Formal portrait with name & dates centered + a short tribute quote." },
+    "in-service": { label: "In Service", description: "Military brief: rank, branch and service dates with photo and summary." },
 };
 
 export default function Omega() {
@@ -124,8 +141,8 @@ export default function Omega() {
 
 // ---------- Card renderer (picks a template) ----------
 function TributeCard({ item, isAdmin, onChanged }) {
-    const bg = BACKGROUNDS[item.background] || BACKGROUNDS["navy-radial"];
-    const tpl = item.template || "classic";
+    const bg = BACKGROUNDS[item.background] || BACKGROUNDS["navy-starfield"];
+    const tpl = TEMPLATES[item.template] ? item.template : "biography";
     const member = item.member || {};
     const initials = (member.name || "").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
 
@@ -135,14 +152,13 @@ function TributeCard({ item, isAdmin, onChanged }) {
             style={{ background: bg.css, borderColor: `${bg.text}25`, color: bg.text }}
             data-testid={`omega-card-${item.user_id}`}
         >
-            <div className="absolute top-0 right-0 px-3 py-1 text-[10px] uppercase tracking-widest font-bold text-white z-10" style={{ backgroundColor: bg.accent }}>
+            <div className="absolute top-0 right-0 px-3 py-1 text-[10px] uppercase tracking-widest font-bold text-white z-10" style={{ backgroundColor: bg.accent, color: bg.accent === "#FFFFFF" ? bg.text : "#FFFFFF" }}>
                 Omega ✦
             </div>
 
-            {tpl === "portrait" && <PortraitBody item={item} member={member} initials={initials} bg={bg} />}
             {tpl === "biography" && <BiographyBody item={item} member={member} initials={initials} bg={bg} />}
             {tpl === "memorial-card" && <MemorialCardBody item={item} member={member} initials={initials} bg={bg} />}
-            {tpl === "classic" && <ClassicBody item={item} member={member} initials={initials} bg={bg} />}
+            {tpl === "in-service" && <InServiceBody item={item} member={member} initials={initials} bg={bg} />}
 
             {isAdmin && (
                 <div className="px-5 py-2 border-t flex justify-end gap-2" style={{ borderColor: `${bg.text}15`, background: `${bg.text}05` }}>
@@ -190,22 +206,36 @@ function CoverOrAvatar({ src, alt, initials, bg, size = "h-20 w-20" }) {
     );
 }
 
-function ClassicBody({ item, member, initials, bg }) {
+function InServiceBody({ item, member, initials, bg }) {
+    const dates = item.service_dates || [tryFormat(item.born_at), tryFormat(item.passed_at || member.deceased_at)].filter(Boolean).join(" — ");
     return (
-        <div className="p-6 flex-1 flex flex-col">
-            <div className="mx-auto">
-                <CoverOrAvatar src={item.cover_image || member.avatar_url} alt={member.name} initials={initials} bg={bg} />
+        <div className="flex-1 flex flex-col">
+            <div className="px-6 pt-6 pb-3 border-b text-center" style={{ borderColor: `${bg.text}20` }}>
+                <div className="text-[10px] uppercase tracking-[0.3em] font-bold mb-1 opacity-70">In Service · In Memoriam</div>
+                {item.rank && <div className="text-sm font-bold uppercase tracking-widest" style={{ color: bg.accent }}>{item.rank}</div>}
             </div>
-            <h3 className="font-heading font-bold text-xl mt-4 text-center" style={{ color: bg.text }}>{member.name}</h3>
-            {member.line_name && <div className="text-xs font-bold uppercase tracking-widest text-center mt-1" style={{ color: bg.accent }}>"{member.line_name}"</div>}
-            <div className="text-xs text-center mt-2 space-y-0.5 opacity-80">
-                {member.branch_of_service && <div>{member.branch_of_service}</div>}
-                {(member.city || member.state) && <div>{[member.city, member.state].filter(Boolean).join(", ")}</div>}
+            <div className="px-6 py-5 flex gap-4 items-start">
+                <CoverOrAvatar src={item.cover_image || member.avatar_url} alt={member.name} initials={initials} bg={bg} size="h-24 w-24" />
+                <div className="flex-1">
+                    <h3 className="font-heading font-black text-xl leading-tight" style={{ color: bg.text }}>{member.name}</h3>
+                    {member.line_name && <div className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: bg.accent }}>"{member.line_name}"</div>}
+                    <dl className="text-xs mt-3 space-y-1 opacity-90">
+                        {member.branch_of_service && <div className="flex gap-2"><dt className="font-bold uppercase tracking-wider opacity-70 min-w-[64px]">Branch</dt><dd>{member.branch_of_service}</dd></div>}
+                        {dates && <div className="flex gap-2"><dt className="font-bold uppercase tracking-wider opacity-70 min-w-[64px]">Service</dt><dd>{dates}</dd></div>}
+                        {(member.city || member.state) && <div className="flex gap-2"><dt className="font-bold uppercase tracking-wider opacity-70 min-w-[64px]">Home</dt><dd>{[member.city, member.state].filter(Boolean).join(", ")}</dd></div>}
+                        {item.location && <div className="flex gap-2"><dt className="font-bold uppercase tracking-wider opacity-70 min-w-[64px]">Interred</dt><dd>{item.location}</dd></div>}
+                    </dl>
+                </div>
             </div>
-            {item.synopsis && <p className="text-sm mt-4 leading-relaxed opacity-90 text-center italic">"{item.synopsis}"</p>}
-            <div className="mt-auto pt-4 border-t opacity-70 text-center text-xs" style={{ borderColor: `${bg.text}20` }}>
-                {item.passed_at && <>Entered Omega · {tryFormat(item.passed_at)}</>}
-                {!item.passed_at && member.deceased_at && <>Entered Omega · {tryFormat(member.deceased_at)}</>}
+            <div className="px-6 pb-5 flex-1">
+                {item.epitaph && <blockquote className="border-l-4 pl-3 italic text-sm mb-3 opacity-90" style={{ borderColor: bg.accent }}>"{item.epitaph}"</blockquote>}
+                {item.synopsis ? (
+                    <p className="text-sm leading-relaxed opacity-90 whitespace-pre-wrap">{item.synopsis}</p>
+                ) : item.biography ? (
+                    <p className="text-sm leading-relaxed opacity-90 whitespace-pre-wrap">{item.biography}</p>
+                ) : (
+                    <p className="text-sm italic opacity-60">Service summary pending.</p>
+                )}
             </div>
         </div>
     );
@@ -234,28 +264,6 @@ function BiographyBody({ item, member, initials, bg }) {
                 ) : (
                     <p className="text-sm italic opacity-60">A biography for {member.name} has not yet been written.</p>
                 )}
-            </div>
-        </div>
-    );
-}
-
-function PortraitBody({ item, member, initials, bg }) {
-    const src = item.cover_image || member.avatar_url;
-    return (
-        <div className="flex-1 flex flex-col relative">
-            <div className="aspect-square w-full overflow-hidden">
-                {src ? (
-                    <img src={src} alt={member.name} className="w-full h-full object-cover" />
-                ) : (
-                    <div className="w-full h-full flex items-center justify-center text-white" style={{ backgroundColor: bg.accent }}>
-                        <span className="font-heading font-black text-7xl">{initials}</span>
-                    </div>
-                )}
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 p-5 text-white" style={{ background: "linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.75) 100%)" }}>
-                <h3 className="font-heading font-black text-2xl leading-none">{member.name}</h3>
-                {member.line_name && <div className="text-[10px] font-bold uppercase tracking-widest mt-1 opacity-90">"{member.line_name}"</div>}
-                <div className="text-xs mt-2 opacity-90">{tryFormat(item.born_at)} {item.born_at && (item.passed_at || member.deceased_at) && "—"} {tryFormat(item.passed_at || member.deceased_at)}</div>
             </div>
         </div>
     );
@@ -296,8 +304,8 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
     const [busy, setBusy] = useState(false);
     const [form, setForm] = useState({
         user_id: existing?.user_id || presetUserId || "",
-        template: existing?.template || "classic",
-        background: existing?.background || "navy-radial",
+        template: existing?.template || "biography",
+        background: existing?.background || "navy-starfield",
         cover_image: existing?.cover_image || "",
         synopsis: existing?.synopsis || "",
         biography: existing?.biography || "",
@@ -305,6 +313,8 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
         born_at: existing?.born_at || "",
         passed_at: existing?.passed_at || "",
         location: existing?.location || "",
+        rank: existing?.rank || "",
+        service_dates: existing?.service_dates || "",
     });
 
     useEffect(() => {
@@ -361,7 +371,7 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
         type: "tribute",
         member: previewMember || { name: "Pick a member to preview", line_name: "" },
     };
-    const previewBg = BACKGROUNDS[form.background] || BACKGROUNDS["navy-radial"];
+    const previewBg = BACKGROUNDS[form.background] || BACKGROUNDS["navy-starfield"];
 
     return (
         <>
@@ -445,6 +455,17 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
 
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
+                                    <Label>Rank <span className="text-xs text-muted-foreground font-normal">(in-service)</span></Label>
+                                    <Input value={form.rank} onChange={(e) => set("rank", e.target.value)} className="rounded-xl mt-1.5" placeholder="e.g. Sgt. First Class" data-testid="tribute-rank" />
+                                </div>
+                                <div>
+                                    <Label>Service dates <span className="text-xs text-muted-foreground font-normal">(in-service)</span></Label>
+                                    <Input value={form.service_dates} onChange={(e) => set("service_dates", e.target.value)} className="rounded-xl mt-1.5" placeholder="e.g. 1998 — 2018" data-testid="tribute-service-dates" />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
                                     <Label>Born</Label>
                                     <Input type="date" value={form.born_at} onChange={(e) => set("born_at", e.target.value)} className="rounded-xl mt-1.5" data-testid="tribute-born" />
                                 </div>
@@ -483,10 +504,9 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
                                 style={{ background: previewBg.css, borderColor: `${previewBg.text}25`, color: previewBg.text }}
                                 data-testid="tribute-preview"
                             >
-                                {previewItem.template === "portrait" && <PortraitBody item={previewItem} member={previewItem.member} initials={(previewItem.member.name || "?").charAt(0).toUpperCase()} bg={previewBg} />}
                                 {previewItem.template === "biography" && <BiographyBody item={previewItem} member={previewItem.member} initials={(previewItem.member.name || "?").charAt(0).toUpperCase()} bg={previewBg} />}
                                 {previewItem.template === "memorial-card" && <MemorialCardBody item={previewItem} member={previewItem.member} initials={(previewItem.member.name || "?").charAt(0).toUpperCase()} bg={previewBg} />}
-                                {previewItem.template === "classic" && <ClassicBody item={previewItem} member={previewItem.member} initials={(previewItem.member.name || "?").charAt(0).toUpperCase()} bg={previewBg} />}
+                                {previewItem.template === "in-service" && <InServiceBody item={previewItem} member={previewItem.member} initials={(previewItem.member.name || "?").charAt(0).toUpperCase()} bg={previewBg} />}
                             </div>
                         </div>
                     </div>
