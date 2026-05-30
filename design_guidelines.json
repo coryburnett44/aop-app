@@ -1,0 +1,78 @@
+{
+  "theme": "light",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "design_philosophy": "Professional, clean, high-contrast corporate UI focusing on typography, clear data hierarchy, and frictionless usability for invoicing.",
+  "colors": {
+    "background": "#FAFAFA",
+    "surface": "#FFFFFF",
+    "primary": "#0F172A",
+    "primary_foreground": "#FFFFFF",
+    "secondary": "#F1F5F9",
+    "secondary_foreground": "#0F172A",
+    "border": "#E2E8F0",
+    "muted": "#F8FAFC",
+    "muted_foreground": "#64748B",
+    "accent_paid": "#10B981",
+    "accent_pending": "#F59E0B",
+    "accent_overdue": "#EF4444",
+    "accent_paypal": "#00457C"
+  },
+  "typography": {
+    "heading_font": "Chivo",
+    "body_font": "Inter",
+    "hierarchy": {
+      "h1_special": "text-5xl sm:text-6xl font-black tracking-tighter uppercase text-slate-900 leading-none",
+      "h1_subtitle": "text-base sm:text-lg font-normal tracking-normal normal-case text-slate-600 mt-2",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-slate-900",
+      "h3": "text-xl sm:text-2xl font-semibold tracking-tight text-slate-900",
+      "body": "text-base text-slate-700 leading-relaxed",
+      "small": "text-sm text-slate-500",
+      "label": "text-xs font-bold tracking-[0.1em] uppercase text-slate-500"
+    }
+  },
+  "spacing_and_layout": {
+    "container_padding": "p-8 md:p-12",
+    "gap_large": "gap-12 md:gap-16",
+    "gap_medium": "gap-6 md:gap-8",
+    "gap_small": "gap-3 md:gap-4",
+    "invoice_paper": "max-w-4xl mx-auto bg-white border border-slate-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-none sm:rounded-xl p-8 sm:p-16"
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-slate-900 text-white hover:bg-slate-800 hover:text-white transition-colors rounded-md px-6 py-3 font-medium",
+      "paypal": "bg-[#FFC439] text-[#003087] hover:bg-[#F2BA36] transition-colors rounded-md px-6 py-3 font-bold flex items-center justify-center gap-2",
+      "secondary": "bg-slate-100 text-slate-900 hover:bg-slate-200 transition-colors rounded-md px-6 py-3 font-medium",
+      "ghost": "hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors rounded-md px-4 py-2"
+    },
+    "inputs": "bg-white border border-slate-200 rounded-md px-4 py-2 focus:ring-2 focus:ring-slate-900 focus:border-transparent transition-shadow text-slate-900",
+    "tables": "w-full text-left border-collapse",
+    "table_th": "text-xs font-bold tracking-[0.1em] uppercase text-slate-500 border-b border-slate-200 pb-3",
+    "table_td": "py-4 border-b border-slate-100 text-slate-700",
+    "badges": {
+      "paid": "bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider",
+      "pending": "bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider",
+      "overdue": "bg-red-50 text-red-700 border border-red-200 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider"
+    }
+  },
+  "motion": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "fade_in": "animate-in fade-in duration-500"
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "instructions": "Use Phosphor Icons (Regular or Bold weight) for all UI icons. Keep sizes consistent (e.g., 20px or 24px) with current text size."
+  },
+  "media": {
+    "image_urls": []
+  },
+  "instructions_to_main_agent": [
+    "Build an invoice management dashboard with a sidebar and main content area.",
+    "Implement routing for: 1. Dashboard (list of invoices), 2. Create Invoice Form, 3. View/Pay Invoice (Public Shareable Link).",
+    "For the Invoice header (both in Create and View modes), strictly follow the requirement: Title MUST BE 'CORY BURNETT' in ALL CAPS using the h1_special typography class. Below it, place the subtitle 'or Overflow Investment Legacy' using the h1_subtitle class.",
+    "Ensure the invoice creation form allows adding dynamic line items (description, quantity, rate), and calculates the subtotal, tax, discount, and total automatically in USD.",
+    "Include customer information fields (Name, Email, Address) and invoice metadata (Invoice Number, Issue Date, Due Date).",
+    "On the Public View/Pay Invoice page, display a prominent 'Pay with PayPal' button.",
+    "Use Shadcn UI components heavily but customize them to match the Swiss & High-Contrast archetype (crisp borders, high contrast, minimal shadows).",
+    "Ensure all interactive elements have data-testid attributes for testing."
+  ]
+}
