@@ -49,21 +49,23 @@ export default function Admin() {
             </div>
 
             <Tabs value={tab} onValueChange={setTab}>
-                <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
-                    {allowed("dashboard") && <TabsTrigger value="dashboard" className="rounded-full" data-testid="admin-tab-dashboard"><LayoutDashboard className="h-4 w-4 mr-1.5" />Dashboard</TabsTrigger>}
-                    {allowed("members") && <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>}
-                    {allowed("chapters") && <TabsTrigger value="chapters" className="rounded-full" data-testid="admin-tab-chapters"><Building2 className="h-4 w-4 mr-1.5" />Chapters</TabsTrigger>}
-                    {allowed("tiers") && <TabsTrigger value="tiers" className="rounded-full" data-testid="admin-tab-tiers"><Layers className="h-4 w-4 mr-1.5" />Tiers</TabsTrigger>}
-                    {allowed("events") && <TabsTrigger value="events" className="rounded-full" data-testid="admin-tab-events"><Calendar className="h-4 w-4 mr-1.5" />Events</TabsTrigger>}
-                    {allowed("hours") && <TabsTrigger value="hours" className="rounded-full" data-testid="admin-tab-hours"><Clock className="h-4 w-4 mr-1.5" />Hours</TabsTrigger>}
-                    {allowed("awards") && <TabsTrigger value="awards" className="rounded-full" data-testid="admin-tab-awards"><Trophy className="h-4 w-4 mr-1.5" />Awards</TabsTrigger>}
-                    {allowed("gear") && <TabsTrigger value="gear" className="rounded-full" data-testid="admin-tab-gear"><ShoppingBag className="h-4 w-4 mr-1.5" />Gear</TabsTrigger>}
-                    {allowed("causes") && <TabsTrigger value="causes" className="rounded-full" data-testid="admin-tab-causes"><Heart className="h-4 w-4 mr-1.5" />Causes</TabsTrigger>}
-                    {allowed("reports") && <TabsTrigger value="reports" className="rounded-full" data-testid="admin-tab-reports"><BarChart3 className="h-4 w-4 mr-1.5" />Reports</TabsTrigger>}
-                    {allowed("email") && <TabsTrigger value="email" className="rounded-full" data-testid="admin-tab-email"><Mail className="h-4 w-4 mr-1.5" />Email</TabsTrigger>}
-                    {allowed("news") && <TabsTrigger value="news" className="rounded-full" data-testid="admin-tab-news"><Newspaper className="h-4 w-4 mr-1.5" />News</TabsTrigger>}
-                    {allowed("pages") && <TabsTrigger value="pages" className="rounded-full" data-testid="admin-tab-pages"><FileText className="h-4 w-4 mr-1.5" />Pages</TabsTrigger>}
-                </TabsList>
+                <div className="-mx-2 px-2 sm:mx-0 sm:px-0 overflow-x-auto scrollbar-hide">
+                    <TabsList className="rounded-full bg-muted p-1 inline-flex sm:flex-wrap sm:h-auto whitespace-nowrap">
+                        {allowed("dashboard") && <TabsTrigger value="dashboard" className="rounded-full" data-testid="admin-tab-dashboard"><LayoutDashboard className="h-4 w-4 mr-1.5" />Dashboard</TabsTrigger>}
+                        {allowed("members") && <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>}
+                        {allowed("chapters") && <TabsTrigger value="chapters" className="rounded-full" data-testid="admin-tab-chapters"><Building2 className="h-4 w-4 mr-1.5" />Chapters</TabsTrigger>}
+                        {allowed("tiers") && <TabsTrigger value="tiers" className="rounded-full" data-testid="admin-tab-tiers"><Layers className="h-4 w-4 mr-1.5" />Tiers</TabsTrigger>}
+                        {allowed("events") && <TabsTrigger value="events" className="rounded-full" data-testid="admin-tab-events"><Calendar className="h-4 w-4 mr-1.5" />Events</TabsTrigger>}
+                        {allowed("hours") && <TabsTrigger value="hours" className="rounded-full" data-testid="admin-tab-hours"><Clock className="h-4 w-4 mr-1.5" />Hours</TabsTrigger>}
+                        {allowed("awards") && <TabsTrigger value="awards" className="rounded-full" data-testid="admin-tab-awards"><Trophy className="h-4 w-4 mr-1.5" />Awards</TabsTrigger>}
+                        {allowed("gear") && <TabsTrigger value="gear" className="rounded-full" data-testid="admin-tab-gear"><ShoppingBag className="h-4 w-4 mr-1.5" />Gear</TabsTrigger>}
+                        {allowed("causes") && <TabsTrigger value="causes" className="rounded-full" data-testid="admin-tab-causes"><Heart className="h-4 w-4 mr-1.5" />Causes</TabsTrigger>}
+                        {allowed("reports") && <TabsTrigger value="reports" className="rounded-full" data-testid="admin-tab-reports"><BarChart3 className="h-4 w-4 mr-1.5" />Reports</TabsTrigger>}
+                        {allowed("email") && <TabsTrigger value="email" className="rounded-full" data-testid="admin-tab-email"><Mail className="h-4 w-4 mr-1.5" />Email</TabsTrigger>}
+                        {allowed("news") && <TabsTrigger value="news" className="rounded-full" data-testid="admin-tab-news"><Newspaper className="h-4 w-4 mr-1.5" />News</TabsTrigger>}
+                        {allowed("pages") && <TabsTrigger value="pages" className="rounded-full" data-testid="admin-tab-pages"><FileText className="h-4 w-4 mr-1.5" />Pages</TabsTrigger>}
+                    </TabsList>
+                </div>
 
                 {allowed("dashboard") && <TabsContent value="dashboard" className="mt-6"><AdminDashboard scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
                 {allowed("members") && <TabsContent value="members" className="mt-6"><MembersAdmin /></TabsContent>}
@@ -1531,13 +1533,15 @@ function EmailBlastAdmin() {
     const [view, setView] = useState("compose");
     return (
         <Tabs value={view} onValueChange={setView}>
-            <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
-                <TabsTrigger value="compose" className="rounded-full" data-testid="email-tab-compose"><Send className="h-4 w-4 mr-1.5" />Compose</TabsTrigger>
-                <TabsTrigger value="templates" className="rounded-full" data-testid="email-tab-templates"><FileText className="h-4 w-4 mr-1.5" />Templates</TabsTrigger>
-                <TabsTrigger value="signatures" className="rounded-full" data-testid="email-tab-signatures"><PenSquare className="h-4 w-4 mr-1.5" />Signatures</TabsTrigger>
-                <TabsTrigger value="history" className="rounded-full" data-testid="email-tab-history"><Clock className="h-4 w-4 mr-1.5" />History</TabsTrigger>
-                <TabsTrigger value="test-send" className="rounded-full" data-testid="email-tab-test-send"><Send className="h-4 w-4 mr-1.5" />Test send</TabsTrigger>
-            </TabsList>
+            <div className="-mx-2 px-2 sm:mx-0 sm:px-0 overflow-x-auto scrollbar-hide">
+                <TabsList className="rounded-full bg-muted p-1 inline-flex sm:flex-wrap sm:h-auto whitespace-nowrap">
+                    <TabsTrigger value="compose" className="rounded-full" data-testid="email-tab-compose"><Send className="h-4 w-4 mr-1.5" />Compose</TabsTrigger>
+                    <TabsTrigger value="templates" className="rounded-full" data-testid="email-tab-templates"><FileText className="h-4 w-4 mr-1.5" />Templates</TabsTrigger>
+                    <TabsTrigger value="signatures" className="rounded-full" data-testid="email-tab-signatures"><PenSquare className="h-4 w-4 mr-1.5" />Signatures</TabsTrigger>
+                    <TabsTrigger value="history" className="rounded-full" data-testid="email-tab-history"><Clock className="h-4 w-4 mr-1.5" />History</TabsTrigger>
+                    <TabsTrigger value="test-send" className="rounded-full" data-testid="email-tab-test-send"><Send className="h-4 w-4 mr-1.5" />Test send</TabsTrigger>
+                </TabsList>
+            </div>
             <TabsContent value="compose" className="mt-6"><ComposeBlast /></TabsContent>
             <TabsContent value="templates" className="mt-6"><EmailTemplates /></TabsContent>
             <TabsContent value="signatures" className="mt-6"><EmailSignatures /></TabsContent>

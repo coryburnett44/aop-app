@@ -8,11 +8,22 @@ export function AuthProvider({ children }) {
     const [loading, setLoading] = useState(true);
 
     const refresh = useCallback(async () => {
+        // Try /auth/me first. If the access token is expired/missing but the
+        // refresh_token cookie is still valid, /auth/refresh will mint a new
+        // access cookie and we retry /auth/me. Only after BOTH fail do we mark
+        // the user as logged out. This is what fixes the "logout on page refresh"
+        // bug on mobile Safari, where access-cookie eviction is more aggressive.
         try {
             const { data } = await api.get("/auth/me");
             setUser(data);
         } catch {
-            setUser(false);
+            try {
+                await api.post("/auth/refresh");
+                const { data } = await api.get("/auth/me");
+                setUser(data);
+            } catch {
+                setUser(false);
+            }
         } finally {
             setLoading(false);
         }

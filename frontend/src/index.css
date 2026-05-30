@@ -110,3 +110,13 @@
         display: contents !important;
     }
 }
+
+
+/* Hide horizontal scrollbar on mobile tab strips while preserving scroll behavior */
+.scrollbar-hide {
+    -ms-overflow-style: none; /* IE/Edge */
+    scrollbar-width: none;    /* Firefox */
+}
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;            /* Chrome / Safari / iOS */
+}
