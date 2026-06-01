@@ -149,6 +149,19 @@ def public_user(u: dict) -> dict:
         "within_grace": within_grace,
         "email_verified": u.get("email_verified", False),
         "created_at": u.get("created_at"),
+        # Social media handles (members manage on profile)
+        "facebook_url": u.get("facebook_url", ""),
+        "instagram_url": u.get("instagram_url", ""),
+        "linkedin_url": u.get("linkedin_url", ""),
+        "tiktok_url": u.get("tiktok_url", ""),
+        "twitter_url": u.get("twitter_url", ""),
+        "pinterest_url": u.get("pinterest_url", ""),
+        "youtube_url": u.get("youtube_url", ""),
+        "website_url": u.get("website_url", ""),
+        # If the member changed their intake_completed_at, this carries the pending value
+        # until an admin approves it. Frontend shows the saved value (above) plus a pill
+        # noting that {pending_intake_completed_at} is awaiting review.
+        "pending_intake_completed_at": u.get("pending_intake_completed_at", ""),
     }
 
 # ---------- Object Storage ----------
@@ -351,6 +364,15 @@ class ProfileUpdateIn(BaseModel):
     avatar_url: Optional[str] = None
     chat_email_notifications: Optional[bool] = None
     chat_sms_notifications: Optional[bool] = None
+    # Social-media handles / URLs (members can update freely)
+    facebook_url: Optional[str] = None
+    instagram_url: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    tiktok_url: Optional[str] = None
+    twitter_url: Optional[str] = None
+    pinterest_url: Optional[str] = None
+    youtube_url: Optional[str] = None
+    website_url: Optional[str] = None
 
 
 class StatusOverrideIn(BaseModel):
@@ -1050,6 +1072,14 @@ async def update_me(body: ProfileUpdateIn, user: dict = Depends(get_current_user
         existing = await db.users.find_one({"username": updates["username"], "id": {"$ne": user["id"]}})
         if existing:
             raise HTTPException(status_code=400, detail="Username already taken")
+    # Intake completion date requires admin approval — never write straight to
+    # intake_completed_at, instead stash on pending_intake_completed_at. Skip
+    # entirely if the value matches what's already saved (no change requested).
+    if "intake_completed_at" in updates:
+        requested = (updates.pop("intake_completed_at") or "").strip()
+        current_saved = (user.get("intake_completed_at") or "").strip()
+        if requested != current_saved:
+            updates["pending_intake_completed_at"] = requested
     # If first/last names supplied without 'name', recompute display name
     if "first_name" in updates or "last_name" in updates or "middle_name" in updates:
         parts = [
@@ -1075,37 +1105,73 @@ async def change_password(body: ChangePasswordIn, user: dict = Depends(get_curre
 
 @api.post("/members/me/renew")
 async def renew_membership(user: dict = Depends(get_current_user)):
-    current = user.get("membership_expires_at")
-    try:
-        base = datetime.fromisoformat(current) if current else now_utc()
-    except Exception:
-        base = now_utc()
-    # Grace period: if expired within grace window, renew from now (don't stack past grace)
-    if base < now_utc():
-        base = now_utc()
-    new_exp = base + timedelta(days=365)
-    await db.users.update_one({"id": user["id"]}, {"$set": {"membership_expires_at": iso(new_exp)}})
-    # Determine dues amount based on tier
-    amount = ANNUAL_DUES_USD
-    if user.get("tier_id"):
-        tier = await db.tiers.find_one({"id": user["tier_id"]}, {"_id": 0})
-        if tier:
-            amount = float(tier.get("annual_dues", ANNUAL_DUES_USD))
-    await db.transactions.insert_one({
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "user_name": user.get("name", ""),
-        "type": "renewal",
-        "amount": amount,
-        "currency": "USD",
-        "description": f"Annual membership renewal · expires {format_iso(new_exp)}",
-        "status": "completed",
-        "recorded_by": user["id"],
-        "recorded_by_name": user.get("name", "Self"),
-        "created_at": iso(now_utc()),
-    })
-    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
-    return public_user(u)
+    """Self-renewal is disabled — members must pay their annual dues via PayPal
+    (the dues PayPal capture path extends membership_expires_at by 365 days).
+    Returning 410 Gone so old clients see a clear error."""
+    raise HTTPException(
+        status_code=410,
+        detail="Self-renewal without payment is no longer supported. Please pay annual dues via PayPal in your profile.",
+    )
+
+
+# ---------- Admin: Intake completion date review ----------
+class IntakeDateReviewIn(BaseModel):
+    action: Literal["approve", "reject"]
+    note: str = ""
+
+
+@api.get("/admin/pending-intake-changes")
+async def list_pending_intake_changes(_: dict = Depends(admin_tab_dep("members"))):
+    """All users with a pending intake_completed_at change awaiting admin review."""
+    cursor = db.users.find(
+        {"pending_intake_completed_at": {"$nin": [None, ""]}},
+        {"_id": 0, "password_hash": 0},
+    ).limit(500)
+    rows = await cursor.to_list(500)
+    return [
+        {
+            "id": u["id"],
+            "name": u.get("name", ""),
+            "email": u.get("email", ""),
+            "line_name": u.get("line_name", ""),
+            "current_intake_completed_at": u.get("intake_completed_at", ""),
+            "pending_intake_completed_at": u.get("pending_intake_completed_at", ""),
+        }
+        for u in rows
+    ]
+
+
+@api.post("/admin/members/{user_id}/intake-completion-review")
+async def review_intake_change(user_id: str, body: IntakeDateReviewIn, admin: dict = Depends(admin_tab_dep("members"))):
+    u = await db.users.find_one({"id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="Member not found")
+    pending = u.get("pending_intake_completed_at")
+    if not pending:
+        raise HTTPException(status_code=400, detail="This member has no pending intake date change.")
+    if body.action == "approve":
+        await db.users.update_one(
+            {"id": user_id},
+            {"$set": {"intake_completed_at": pending, "pending_intake_completed_at": ""},
+             "$push": {"intake_review_log": {
+                 "action": "approved", "value": pending, "note": body.note,
+                 "reviewed_by_id": admin["id"], "reviewed_by_name": admin.get("name", ""),
+                 "reviewed_at": iso(now_utc()),
+             }}},
+        )
+    else:
+        await db.users.update_one(
+            {"id": user_id},
+            {"$set": {"pending_intake_completed_at": ""},
+             "$push": {"intake_review_log": {
+                 "action": "rejected", "value": pending, "note": body.note,
+                 "reviewed_by_id": admin["id"], "reviewed_by_name": admin.get("name", ""),
+                 "reviewed_at": iso(now_utc()),
+             }}},
+        )
+    fresh = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return public_user(fresh)
+
 
 # ---------- Events ----------
 def event_out(e: dict) -> dict:
@@ -4718,6 +4784,8 @@ AOP_TIERS = [
      "description": "Member who served a minimum of four years in the organization and is the elite member of the organization. Lifetime membership — no renewal."},
     {"name": "Gold Life Member", "order": 6, "color": "#D4AF37", "annual_dues": 0.0, "is_lifetime": True,
      "description": "Member who served a minimum of 15 years in the organization and is the elite member of the organization. Lifetime membership — no renewal."},
+    {"name": "Founder", "order": 7, "color": "#0A2463", "annual_dues": 0.0, "is_lifetime": True,
+     "description": "Founding member of Alpha Omega Phi Military Fraternity & Sorority, Inc. Lifetime membership — no renewal."},
 ]
 AOP_TIER_NAMES = [t["name"] for t in AOP_TIERS]
 

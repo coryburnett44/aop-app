@@ -425,6 +425,65 @@ function ApplicationsPanel({ onApproved }) {
     );
 }
 
+function PendingIntakeChangesPanel({ onChanged }) {
+    const [items, setItems] = useState([]);
+    const [busy, setBusy] = useState({});
+
+    async function load() {
+        try {
+            const { data } = await api.get("/admin/pending-intake-changes");
+            setItems(data || []);
+        } catch { setItems([]); }
+    }
+    useEffect(() => { load(); }, []);
+
+    async function review(id, action) {
+        const note = action === "reject" ? (prompt("Optional reason for rejection:") || "") : "";
+        setBusy({ ...busy, [id]: true });
+        try {
+            await api.post(`/admin/members/${id}/intake-completion-review`, { action, note });
+            toast.success(action === "approve" ? "Intake date approved" : "Intake date change rejected");
+            await load();
+            onChanged?.();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Failed");
+        }
+        setBusy({ ...busy, [id]: false });
+    }
+
+    if (items.length === 0) return null;
+    return (
+        <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl border-2 border-amber-300 shadow-warm p-5 mb-6" data-testid="pending-intake-panel">
+            <div className="flex items-end justify-between mb-3 gap-3 flex-wrap">
+                <div>
+                    <div className="text-xs uppercase tracking-[0.25em] font-bold text-amber-700">Pending intake date changes</div>
+                    <h3 className="font-heading text-xl font-bold mt-1">{items.length} awaiting review</h3>
+                </div>
+            </div>
+            <div className="space-y-2">
+                {items.map((m) => (
+                    <div key={m.id} className="border border-amber-200 bg-white rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3" data-testid={`intake-change-${m.id}`}>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-heading text-base font-bold truncate">{m.name}</div>
+                            <div className="text-xs text-muted-foreground truncate">{m.email}{m.line_name && ` · "${m.line_name}"`}</div>
+                            <div className="text-xs mt-1">
+                                Current: <strong>{m.current_intake_completed_at || "—"}</strong>
+                                <span className="mx-2 opacity-60">→</span>
+                                Requested: <strong className="text-amber-700">{m.pending_intake_completed_at}</strong>
+                            </div>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                            <Button size="sm" variant="outline" disabled={busy[m.id]} onClick={() => review(m.id, "reject")} className="rounded-full" data-testid={`reject-intake-${m.id}`}>Reject</Button>
+                            <Button size="sm" disabled={busy[m.id]} onClick={() => review(m.id, "approve")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`approve-intake-${m.id}`}>Approve</Button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+
 function MembersAdmin() {
     const { user: me } = useAuth();
     const isFullAdmin = (me?.admin_role || "full") === "full";
@@ -483,6 +542,7 @@ function MembersAdmin() {
     return (
         <div>
             <ApplicationsPanel onApproved={load} />
+            <PendingIntakeChangesPanel onChanged={load} />
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
                 <NewMemberDialog chapters={chapters} tiers={tiers} onSaved={load} />
@@ -920,14 +980,15 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
                 <DialogHeader><DialogTitle className="font-heading text-2xl">{chapter ? "Edit chapter" : "New chapter"}</DialogTitle></DialogHeader>
                 <div className="space-y-3 mt-2">
                     <div>
-                        <Label>Chapter</Label>
-                        <Select value={form.name} onValueChange={(v) => setForm({ ...form, name: v })}>
-                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="chapter-name-input"><SelectValue placeholder="Pick a chapter…" /></SelectTrigger>
-                            <SelectContent>
-                                {OFFICIAL_CHAPTER_NAMES.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                        <div className="text-xs text-muted-foreground mt-1.5">Official AOP chapters: Texas, Florida, Tri-South, DMV.</div>
+                        <Label>Chapter name *</Label>
+                        <Input
+                            value={form.name}
+                            onChange={(e) => setForm({ ...form, name: e.target.value })}
+                            placeholder="e.g. Texas, Florida, Tri-South, DMV, Carolinas, Pacific Northwest"
+                            className="rounded-xl mt-1.5"
+                            data-testid="chapter-name-input"
+                        />
+                        <div className="text-xs text-muted-foreground mt-1.5">Type any name. Existing official chapters: Texas, Florida, Tri-South, DMV.</div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div><Label>Region</Label><Input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} placeholder="e.g. South, Mid-Atlantic" className="rounded-xl mt-1.5" data-testid="chapter-region-input" /></div>

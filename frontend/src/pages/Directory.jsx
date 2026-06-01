@@ -1,10 +1,53 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Input } from "../components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { Search, Mail, Phone, MapPin, Calendar, Shield } from "lucide-react";
+import {
+    Search, Mail, Phone, MapPin, Calendar, Shield,
+    Facebook, Instagram, Linkedin, Twitter, Youtube, Globe,
+} from "lucide-react";
 import { format, parseISO } from "date-fns";
+
+const SOCIAL_PLATFORMS = [
+    { key: "facebook_url", label: "Facebook", icon: Facebook, color: "#1877F2" },
+    { key: "instagram_url", label: "Instagram", icon: Instagram, color: "#E4405F" },
+    { key: "linkedin_url", label: "LinkedIn", icon: Linkedin, color: "#0A66C2" },
+    { key: "twitter_url", label: "X", icon: Twitter, color: "#000000" },
+    { key: "tiktok_url", label: "TikTok", icon: null, glyph: "TT", color: "#000000" },
+    { key: "pinterest_url", label: "Pinterest", icon: null, glyph: "P", color: "#E60023" },
+    { key: "youtube_url", label: "YouTube", icon: Youtube, color: "#FF0000" },
+    { key: "website_url", label: "Website", icon: Globe, color: "#0A2463" },
+];
+
+function SocialIcons({ member, size = "h-7 w-7", stop = true }) {
+    const items = SOCIAL_PLATFORMS.filter((p) => member[p.key]);
+    if (items.length === 0) return null;
+    return (
+        <div className="flex flex-wrap gap-1.5 mt-3">
+            {items.map((p) => {
+                const Icon = p.icon;
+                const href = /^https?:\/\//i.test(member[p.key]) ? member[p.key] : `https://${member[p.key]}`;
+                return (
+                    <a
+                        key={p.key}
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => { if (stop) e.stopPropagation(); }}
+                        className={`${size} rounded-full grid place-items-center text-white hover:scale-110 transition-transform shadow-sm`}
+                        style={{ backgroundColor: p.color }}
+                        title={p.label}
+                        aria-label={`${p.label} profile`}
+                        data-testid={`member-social-${p.key}`}
+                    >
+                        {Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="text-[10px] font-bold">{p.glyph}</span>}
+                    </a>
+                );
+            })}
+        </div>
+    );
+}
 
 export default function Directory() {
     const [members, setMembers] = useState([]);
@@ -47,31 +90,51 @@ export default function Directory() {
                 </div>
             </div>
 
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {members.map((m) => {
                     const initials = (m.name || m.email).split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+                    const fullAddress = [m.address, m.city, m.state, m.zip_code, m.country].filter(Boolean).join(", ");
                     return (
                         <button
                             key={m.id}
                             onClick={() => setActive(m)}
-                            className="text-left bg-muted/40 border border-black/5 rounded-2xl p-6 hover:-translate-y-1 hover:shadow-warm transition-all focus:outline-none focus:ring-2 focus:ring-primary/40"
+                            className="text-left bg-card border border-border rounded-2xl overflow-hidden hover:-translate-y-1 hover:shadow-warm transition-all focus:outline-none focus:ring-2 focus:ring-primary/40 flex flex-col"
                             data-testid={`member-card-${m.id}`}
                         >
-                            <Avatar className="h-16 w-16 border-2 border-white shadow-warm">
-                                {m.avatar_url && <AvatarImage src={m.avatar_url} alt={m.name} />}
-                                <AvatarFallback className="bg-primary/20 text-primary font-bold text-lg">{initials}</AvatarFallback>
-                            </Avatar>
-                            <h3 className="font-heading font-semibold text-lg mt-4">{m.name}</h3>
-                            {m.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary">"{m.line_name}"</div>}
-                            <div className="text-xs text-muted-foreground mt-1">{chapterName(m.chapter_id)}</div>
-                            <div className="text-xs text-muted-foreground">{m.city || "—"}</div>
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                                {m.role === "admin" && (
-                                    <span className="text-[10px] uppercase tracking-wider bg-primary/15 text-primary rounded-full px-2 py-0.5 font-semibold">
-                                        Admin
-                                    </span>
+                            {/* Rectangular member photo */}
+                            <div className="aspect-[4/3] w-full bg-muted/40 border-b border-border overflow-hidden flex items-center justify-center">
+                                {m.avatar_url ? (
+                                    <img
+                                        src={mediaUrl(m.avatar_url)}
+                                        alt={m.name}
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                    />
+                                ) : (
+                                    <span className="font-heading font-black text-6xl text-primary/40">{initials}</span>
                                 )}
-                                <StatusPill status={m.status} />
+                            </div>
+                            <div className="p-5 flex-1 flex flex-col">
+                                <div className="flex items-start justify-between gap-2 mb-1">
+                                    <h3 className="font-heading font-bold text-xl leading-tight flex-1">{m.name}</h3>
+                                </div>
+                                {m.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary mb-2">"{m.line_name}"</div>}
+                                <div className="space-y-1.5 text-xs text-foreground/80">
+                                    {m.email && <div className="flex items-start gap-2"><Mail className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" /><span className="break-all">{m.email}</span></div>}
+                                    {m.phone && <div className="flex items-start gap-2"><Phone className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />{m.phone}</div>}
+                                    {fullAddress && <div className="flex items-start gap-2"><MapPin className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" /><span>{fullAddress}</span></div>}
+                                    <div className="flex items-start gap-2"><Shield className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />{chapterName(m.chapter_id)}</div>
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                    {m.role === "admin" && (
+                                        <span className="text-[10px] uppercase tracking-wider bg-primary/15 text-primary rounded-full px-2 py-0.5 font-semibold">Admin</span>
+                                    )}
+                                    <StatusPill status={m.status} />
+                                    {m.membership_tier && m.membership_tier !== "standard" && (
+                                        <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-accent/40">{m.membership_tier}</span>
+                                    )}
+                                </div>
+                                <SocialIcons member={m} />
                             </div>
                         </button>
                     );
@@ -96,11 +159,12 @@ function MemberDetail({ member, chapters }) {
     }, [member.id]);
     const chapter = chapters.find((c) => c.id === d.chapter_id);
     const initials = (d.name || d.email).split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+    const fullAddress = [d.address, d.city, d.state, d.zip_code, d.country].filter(Boolean).join(", ");
     return (
         <div data-testid={`member-detail-${d.id}`}>
             <div className="flex items-center gap-4">
                 <Avatar className="h-20 w-20 border-2 border-white shadow-warm">
-                    {d.avatar_url && <AvatarImage src={d.avatar_url} />}
+                    {d.avatar_url && <AvatarImage src={mediaUrl(d.avatar_url)} />}
                     <AvatarFallback className="bg-primary/20 text-primary font-bold text-2xl">{initials}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
@@ -117,11 +181,13 @@ function MemberDetail({ member, chapters }) {
             <div className="mt-5 space-y-3 text-sm">
                 {d.email && <Row icon={<Mail className="h-4 w-4" />}>{d.email}</Row>}
                 {d.phone && <Row icon={<Phone className="h-4 w-4" />}>{d.phone}</Row>}
-                {(d.address || d.city) && <Row icon={<MapPin className="h-4 w-4" />}>{[d.address, d.city].filter(Boolean).join(", ")}</Row>}
+                {fullAddress && <Row icon={<MapPin className="h-4 w-4" />}>{fullAddress}</Row>}
                 {chapter && <Row icon={<Shield className="h-4 w-4" />}>{chapter.name}{chapter.region ? ` · ${chapter.region}` : ""}{chapter.state ? ` (${chapter.state})` : ""}</Row>}
                 {d.branch_of_service && <Row icon={<Shield className="h-4 w-4" />}>{d.branch_of_service}</Row>}
                 {d.created_at && <Row icon={<Calendar className="h-4 w-4" />}>Joined {format(parseISO(d.created_at), "MMM d, yyyy")}</Row>}
             </div>
+
+            <SocialIcons member={d} size="h-9 w-9" stop={false} />
 
             {d.bio && (
                 <div className="mt-5 pt-4 border-t">

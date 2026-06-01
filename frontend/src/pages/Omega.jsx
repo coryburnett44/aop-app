@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
@@ -9,7 +9,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { format, parseISO } from "date-fns";
-import { Flame, Plus, Pencil, Trash2, Upload as UploadIcon, Image as ImageIcon } from "lucide-react";
+import { Flame, Plus, Pencil, Trash2, Upload as UploadIcon } from "lucide-react";
 import { toast } from "sonner";
 
 const NAVY = "#0A2463";
@@ -84,17 +84,12 @@ export default function Omega() {
     const { user } = useAuth();
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [hero, setHero] = useState({ image_url: "", title: "", caption: "" });
     const isAdmin = user?.role === "admin";
 
     async function load() {
         try {
-            const [{ data }, { data: h }] = await Promise.all([
-                api.get("/omega"),
-                api.get("/omega/hero").catch(() => ({ data: { image_url: "", title: "", caption: "" } })),
-            ]);
+            const { data } = await api.get("/omega");
             setItems(data);
-            setHero(h || { image_url: "", title: "", caption: "" });
         } catch { /* ignore */ }
         setLoading(false);
     }
@@ -118,29 +113,13 @@ export default function Omega() {
                         <div className="mt-7 flex flex-wrap gap-3 justify-center">
                             <TributeBuilder onSaved={load} trigger={(
                                 <Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="add-tribute-btn">
-                                    <Plus className="h-4 w-4 mr-1.5" /> Add tribute
+                                    <Plus className="h-4 w-4 mr-1.5" /> Post a tribute
                                 </Button>
                             )} />
-                            <HeroEditor hero={hero} onSaved={load} />
                         </div>
                     )}
                 </div>
             </section>
-
-            {/* Hero featured photo (admin-managed banner like the Omega Chapter clubexpress page) */}
-            {hero.image_url && (
-                <section className="max-w-5xl mx-auto px-6 lg:px-10 pt-10" data-testid="omega-hero-banner">
-                    <div className="rounded-3xl overflow-hidden border-4 shadow-warm bg-white" style={{ borderColor: NAVY }}>
-                        <img src={hero.image_url} alt={hero.title || "Omega Chapter featured"} className="w-full h-auto max-h-[520px] object-cover" />
-                        {(hero.title || hero.caption) && (
-                            <div className="p-5 sm:p-6 text-center">
-                                {hero.title && <h2 className="font-heading text-2xl sm:text-3xl font-black" style={{ color: NAVY }}>{hero.title}</h2>}
-                                {hero.caption && <p className="text-sm sm:text-base text-slate-600 mt-2 leading-relaxed max-w-3xl mx-auto whitespace-pre-wrap">{hero.caption}</p>}
-                            </div>
-                        )}
-                    </div>
-                </section>
-            )}
 
             <section className="max-w-6xl mx-auto px-6 lg:px-10 py-14">
                 {loading ? null : items.length === 0 ? (
@@ -149,7 +128,7 @@ export default function Omega() {
                         <p className="text-sm">No brothers or sisters have entered Omega yet. May it remain that way for many years.</p>
                     </div>
                 ) : (
-                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="omega-grid">
+                    <div className="space-y-10" data-testid="omega-grid">
                         {items.map((it) => (
                             <TributeCard key={it.id || it.user_id} item={it} isAdmin={isAdmin} onChanged={load} />
                         ))}
@@ -218,11 +197,17 @@ function TributeCard({ item, isAdmin, onChanged }) {
     );
 }
 
-function CoverOrAvatar({ src, alt, initials, bg, size = "h-20 w-20" }) {
-    if (src) return <img src={src} alt={alt} className={`${size} rounded-full object-cover border-4 border-white shadow-warm`} />;
+function CoverOrAvatar({ src, alt, initials, bg, size = "h-20 w-20", shape = "round" }) {
+    if (src) {
+        const cls = shape === "rect"
+            ? `${size} rounded-2xl object-cover border-4 border-white shadow-warm`
+            : `${size} rounded-full object-cover border-4 border-white shadow-warm`;
+        return <img src={mediaUrl(src)} alt={alt} className={cls} />;
+    }
+    const fallbackShape = shape === "rect" ? "rounded-2xl" : "";
     return (
-        <Avatar className={`${size} border-4 border-white shadow-warm`}>
-            <AvatarFallback className="text-white font-black text-2xl" style={{ backgroundColor: bg.accent }}>{initials}</AvatarFallback>
+        <Avatar className={`${size} border-4 border-white shadow-warm ${fallbackShape}`}>
+            <AvatarFallback className={`text-white font-black text-2xl ${fallbackShape}`} style={{ backgroundColor: bg.accent }}>{initials}</AvatarFallback>
         </Avatar>
     );
 }
@@ -263,28 +248,45 @@ function InServiceBody({ item, member, initials, bg }) {
 }
 
 function BiographyBody({ item, member, initials, bg }) {
+    const photo = item.cover_image || member.avatar_url;
     return (
         <div className="flex-1 flex flex-col">
-            <div className="px-6 pt-6 flex items-start gap-4">
-                <CoverOrAvatar src={item.cover_image || member.avatar_url} alt={member.name} initials={initials} bg={bg} size="h-24 w-24" />
-                <div className="flex-1">
-                    <h3 className="font-heading font-bold text-2xl leading-tight" style={{ color: bg.text }}>{member.name}</h3>
-                    {member.line_name && <div className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: bg.accent }}>"{member.line_name}"</div>}
-                    <div className="text-xs mt-2 opacity-75">
-                        {[member.branch_of_service, [member.city, member.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ")}
-                    </div>
-                    <div className="text-[11px] mt-1 opacity-70">{tryFormat(item.born_at)} {item.born_at && (item.passed_at || member.deceased_at) && "—"} {tryFormat(item.passed_at || member.deceased_at)}</div>
+            <div className="px-6 sm:px-10 pt-8 sm:pt-10 pb-2 text-center">
+                <div className="text-[10px] uppercase tracking-[0.3em] font-bold mb-2 opacity-70">In Loving Memory Of</div>
+            </div>
+            <div className="px-6 sm:px-10 pt-2 pb-4 flex justify-center">
+                <CoverOrAvatar
+                    src={photo}
+                    alt={member.name}
+                    initials={initials}
+                    bg={bg}
+                    size="h-72 w-56 sm:h-96 sm:w-80"
+                    shape="rect"
+                />
+            </div>
+            <div className="px-6 sm:px-10 pt-2 pb-2 text-center">
+                <h3 className="font-heading font-black text-3xl sm:text-4xl leading-tight" style={{ color: bg.text }}>{member.name}</h3>
+                {member.line_name && <div className="text-xs sm:text-sm font-bold uppercase tracking-widest mt-2" style={{ color: bg.accent }}>"{member.line_name}"</div>}
+                <div className="text-sm mt-3 opacity-85">
+                    {tryFormat(item.born_at)} {item.born_at && (item.passed_at || member.deceased_at) && "—"} {tryFormat(item.passed_at || member.deceased_at)}
+                </div>
+                <div className="text-xs mt-1 opacity-70">
+                    {[member.branch_of_service, [member.city, member.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ")}
+                </div>
+                <div className="my-5 flex justify-center">
+                    <div className="h-px w-24" style={{ background: bg.accent }} />
                 </div>
             </div>
-            <div className="px-6 py-5 flex-1">
-                {item.epitaph && <blockquote className="border-l-4 pl-3 italic text-sm mb-4 opacity-90" style={{ borderColor: bg.accent }}>"{item.epitaph}"</blockquote>}
+            <div className="px-6 sm:px-10 pb-10 max-w-3xl mx-auto w-full">
+                {item.epitaph && <blockquote className="text-center italic text-base sm:text-lg mb-6 opacity-90" style={{ color: bg.accent }}>"{item.epitaph}"</blockquote>}
                 {item.biography ? (
-                    <div className="text-sm leading-relaxed opacity-90 whitespace-pre-wrap">{item.biography}</div>
+                    <div className="text-sm sm:text-base leading-relaxed opacity-90 whitespace-pre-wrap">{item.biography}</div>
                 ) : item.synopsis ? (
-                    <p className="text-sm leading-relaxed opacity-90">{item.synopsis}</p>
+                    <p className="text-sm sm:text-base leading-relaxed opacity-90 whitespace-pre-wrap text-center">{item.synopsis}</p>
                 ) : (
-                    <p className="text-sm italic opacity-60">A biography for {member.name} has not yet been written.</p>
+                    <p className="text-sm italic opacity-60 text-center">A biography for {member.name} has not yet been written.</p>
                 )}
+                {item.location && <div className="text-center text-xs mt-6 opacity-60">Laid to rest in {item.location}</div>}
             </div>
         </div>
     );
@@ -472,6 +474,16 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
                                         <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadCover(e.target.files?.[0])} />
                                     </label>
                                 </div>
+                                {form.cover_image && (
+                                    <div className="mt-3 rounded-xl overflow-hidden border-2 border-border bg-muted/30 max-w-xs">
+                                        <img
+                                            src={mediaUrl(form.cover_image)}
+                                            alt="Tribute photo preview"
+                                            className="w-full h-56 object-cover"
+                                            onError={(e) => { e.currentTarget.style.opacity = '0.3'; }}
+                                        />
+                                    </div>
+                                )}
                             </div>
 
                             <div className="grid grid-cols-2 gap-3">
@@ -543,109 +555,3 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
     );
 }
 
-
-// ---------- Hero Editor (admin-only — manages the featured banner image on /omega) ----------
-function HeroEditor({ hero, onSaved }) {
-    const [open, setOpen] = useState(false);
-    const [form, setForm] = useState({ image_url: "", title: "", caption: "" });
-    const [busy, setBusy] = useState(false);
-
-    useEffect(() => {
-        if (open) setForm({ image_url: hero.image_url || "", title: hero.title || "", caption: hero.caption || "" });
-    }, [open, hero]);
-
-    async function uploadImage(file) {
-        if (!file) return;
-        if (file.size > 15 * 1024 * 1024) { toast.error("Image must be under 15 MB"); return; }
-        const fd = new FormData();
-        fd.append("file", file);
-        try {
-            const { data } = await api.post("/omega/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
-            setForm((f) => ({ ...f, image_url: data.url }));
-            toast.success("Photo uploaded");
-        } catch (e) { toast.error(e.response?.data?.detail || "Upload failed"); }
-    }
-
-    async function save() {
-        setBusy(true);
-        try {
-            await api.put("/omega/hero", form);
-            toast.success("Featured photo saved");
-            setOpen(false);
-            onSaved?.();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
-        setBusy(false);
-    }
-
-    async function clearHero() {
-        if (!window.confirm("Remove the featured photo from the Omega Chapter page?")) return;
-        setBusy(true);
-        try {
-            await api.put("/omega/hero", { image_url: "", title: "", caption: "" });
-            toast.success("Featured photo removed");
-            setOpen(false);
-            onSaved?.();
-        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
-        setBusy(false);
-    }
-
-    return (
-        <>
-            <Button onClick={() => setOpen(true)} variant="outline" className="rounded-full" data-testid="omega-hero-edit-btn">
-                <ImageIcon className="h-4 w-4 mr-1.5" /> {hero.image_url ? "Edit featured photo" : "Add featured photo"}
-            </Button>
-            <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="max-w-xl" data-testid="omega-hero-dialog">
-                    <DialogHeader>
-                        <DialogTitle className="font-heading text-2xl">Omega Chapter featured photo</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4 mt-2">
-                        {form.image_url && (
-                            <div className="rounded-xl overflow-hidden border border-border">
-                                <img src={form.image_url} alt="Preview" className="w-full max-h-80 object-cover" />
-                            </div>
-                        )}
-                        <div>
-                            <Label>Image URL or upload</Label>
-                            <div className="flex items-center gap-2 mt-1.5">
-                                <Input
-                                    type="text"
-                                    placeholder="https://… or upload below"
-                                    value={form.image_url}
-                                    onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
-                                    className="rounded-xl flex-1"
-                                    data-testid="omega-hero-url"
-                                />
-                                <label className="cursor-pointer">
-                                    <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
-                                        <span data-testid="omega-hero-upload"><UploadIcon className="h-3.5 w-3.5 mr-1" />Upload</span>
-                                    </Button>
-                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadImage(e.target.files?.[0])} />
-                                </label>
-                            </div>
-                        </div>
-                        <div>
-                            <Label>Title <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
-                            <Input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} className="rounded-xl mt-1.5" placeholder="e.g. In remembrance of Brother Neal Brooks" data-testid="omega-hero-title" />
-                        </div>
-                        <div>
-                            <Label>Caption <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
-                            <Textarea value={form.caption} onChange={(e) => setForm((f) => ({ ...f, caption: e.target.value }))} className="rounded-xl mt-1.5" rows={3} placeholder="A short caption shown beneath the photo." data-testid="omega-hero-caption" />
-                        </div>
-                    </div>
-                    <DialogFooter className="mt-4 flex-wrap gap-2">
-                        {hero.image_url && (
-                            <Button variant="outline" onClick={clearHero} disabled={busy} className="rounded-full text-destructive" data-testid="omega-hero-clear-btn">
-                                <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Remove
-                            </Button>
-                        )}
-                        <Button variant="outline" onClick={() => setOpen(false)} className="rounded-full">Cancel</Button>
-                        <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="omega-hero-save-btn">
-                            {busy ? "Saving…" : "Save featured photo"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </>
-    );
-}

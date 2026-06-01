@@ -14,7 +14,8 @@ import { format, parseISO, differenceInDays } from "date-fns";
 import { toast } from "sonner";
 import {
     Calendar, MapPin, Trophy, Clock, Medal, Star, Heart, GraduationCap, Sparkles,
-    Award as AwardIcon, Building2, Lock, DollarSign, Activity, Phone, AtSign
+    Award as AwardIcon, Building2, Lock, DollarSign, Activity, Phone, AtSign,
+    Facebook, Instagram, Linkedin, Twitter, Youtube, Globe,
 } from "lucide-react";
 import PayPalCheckout from "../components/PayPalCheckout";
 import AvatarUploader from "../components/AvatarUploader";
@@ -62,6 +63,14 @@ export default function Profile() {
                 interests: (user.interests || []).join(", "),
                 avatar_url: user.avatar_url || "",
                 chapter_id: user.chapter_id || "",
+                facebook_url: user.facebook_url || "",
+                instagram_url: user.instagram_url || "",
+                linkedin_url: user.linkedin_url || "",
+                tiktok_url: user.tiktok_url || "",
+                twitter_url: user.twitter_url || "",
+                pinterest_url: user.pinterest_url || "",
+                youtube_url: user.youtube_url || "",
+                website_url: user.website_url || "",
             });
         }
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
@@ -85,6 +94,10 @@ export default function Profile() {
                 birthdate: form.birthdate,
                 interests: form.interests.split(",").map((s) => s.trim()).filter(Boolean),
                 avatar_url: form.avatar_url,
+                facebook_url: form.facebook_url, instagram_url: form.instagram_url,
+                linkedin_url: form.linkedin_url, tiktok_url: form.tiktok_url,
+                twitter_url: form.twitter_url, pinterest_url: form.pinterest_url,
+                youtube_url: form.youtube_url, website_url: form.website_url,
             };
             const { data } = await api.put("/members/me", payload);
             // Chapter is a separate endpoint
@@ -94,7 +107,12 @@ export default function Profile() {
             } else {
                 setUser(data);
             }
-            toast.success("Profile updated");
+            // Notify the user if the intake change is waiting on admin approval
+            if (form.intake_completed_at && form.intake_completed_at !== (user.intake_completed_at || "") && data.pending_intake_completed_at) {
+                toast.success("Profile saved. Your intake completion date change is pending admin approval.", { duration: 6500 });
+            } else {
+                toast.success("Profile updated");
+            }
         } catch (err) {
             toast.error(err.response?.data?.detail || "Failed to save");
         }
@@ -114,18 +132,6 @@ export default function Profile() {
             toast.error(err.response?.data?.detail || "Failed");
         }
         setChangingPwd(false);
-    }
-
-    async function renew() {
-        try {
-            const { data } = await api.post("/members/me/renew");
-            setUser(data);
-            const { data: tx } = await api.get("/me/transactions");
-            setTransactions(tx);
-            toast.success("Membership renewed for another year! 🎉");
-        } catch {
-            toast.error("Renewal failed");
-        }
     }
 
     if (!user) return null;
@@ -176,9 +182,7 @@ export default function Profile() {
                         )}
                     </div>
                     {!user.is_lifetime_member && (
-                        <Button onClick={renew} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="renew-btn">
-                            Renew for 1 year
-                        </Button>
+                        <div className="text-xs text-muted-foreground italic">Pay annual dues below to renew.</div>
                     )}
                 </div>
                 {!user.is_lifetime_member && (
@@ -232,8 +236,15 @@ export default function Profile() {
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div><Label>Intake line</Label>
                                 <Input value={form.intake_line} onChange={(e) => setForm({ ...form, intake_line: e.target.value })} className="rounded-xl mt-1.5" placeholder="e.g. Spring '24 — A1" data-testid="profile-intake-line" /></div>
-                            <div><Label>Intake completion date <span className="text-xs text-muted-foreground font-normal">(Month/Year)</span></Label>
-                                <Input type="month" value={form.intake_completed_at} onChange={(e) => setForm({ ...form, intake_completed_at: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-intake-completed-at" /></div>
+                            <div>
+                                <Label>Intake completion date <span className="text-xs text-muted-foreground font-normal">(Month/Year — requires admin approval)</span></Label>
+                                <Input type="month" value={form.intake_completed_at} onChange={(e) => setForm({ ...form, intake_completed_at: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-intake-completed-at" />
+                                {user.pending_intake_completed_at && (
+                                    <p className="text-xs text-amber-700 mt-1.5 flex items-center gap-1" data-testid="profile-intake-pending">
+                                        ⏳ Pending review — awaiting admin approval of <strong>{user.pending_intake_completed_at}</strong>
+                                    </p>
+                                )}
+                            </div>
                         </div>
                         <div className="grid sm:grid-cols-2 gap-4">
                             <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-phone" /></div>
@@ -253,12 +264,53 @@ export default function Profile() {
                             <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
                                 <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-chapter"><SelectValue placeholder="Select your chapter" /></SelectTrigger>
                                 <SelectContent>
-                                    {chapters.filter((c) => ["Texas", "Florida", "Tri-South", "DMV"].includes(c.name)).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
+                                    {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
                                 </SelectContent>
                             </Select>
                         </div>
                         <div><Label>Avatar URL</Label><Input value={form.avatar_url} onChange={(e) => setForm({ ...form, avatar_url: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-avatar" /></div>
                         <div><Label>Interests (comma separated)</Label><Input value={form.interests} onChange={(e) => setForm({ ...form, interests: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-interests" /></div>
+                        <div className="border-t border-border pt-5 mt-2">
+                            <div className="flex items-center gap-2 mb-3">
+                                <Globe className="h-4 w-4 text-primary" />
+                                <h3 className="font-heading text-lg font-bold">Social profiles</h3>
+                                <span className="text-xs text-muted-foreground">— shown on your member card in the directory</span>
+                            </div>
+                            <div className="grid sm:grid-cols-2 gap-4">
+                                <div>
+                                    <Label className="flex items-center gap-1.5"><Facebook className="h-3.5 w-3.5" /> Facebook</Label>
+                                    <Input value={form.facebook_url} onChange={(e) => setForm({ ...form, facebook_url: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://facebook.com/yourhandle" data-testid="profile-facebook" />
+                                </div>
+                                <div>
+                                    <Label className="flex items-center gap-1.5"><Instagram className="h-3.5 w-3.5" /> Instagram</Label>
+                                    <Input value={form.instagram_url} onChange={(e) => setForm({ ...form, instagram_url: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://instagram.com/yourhandle" data-testid="profile-instagram" />
+                                </div>
+                                <div>
+                                    <Label className="flex items-center gap-1.5"><Linkedin className="h-3.5 w-3.5" /> LinkedIn</Label>
+                                    <Input value={form.linkedin_url} onChange={(e) => setForm({ ...form, linkedin_url: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://linkedin.com/in/yourhandle" data-testid="profile-linkedin" />
+                                </div>
+                                <div>
+                                    <Label className="flex items-center gap-1.5"><Twitter className="h-3.5 w-3.5" /> X / Twitter</Label>
+                                    <Input value={form.twitter_url} onChange={(e) => setForm({ ...form, twitter_url: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://x.com/yourhandle" data-testid="profile-twitter" />
+                                </div>
+                                <div>
+                                    <Label>TikTok</Label>
+                                    <Input value={form.tiktok_url} onChange={(e) => setForm({ ...form, tiktok_url: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://tiktok.com/@yourhandle" data-testid="profile-tiktok" />
+                                </div>
+                                <div>
+                                    <Label>Pinterest</Label>
+                                    <Input value={form.pinterest_url} onChange={(e) => setForm({ ...form, pinterest_url: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://pinterest.com/yourhandle" data-testid="profile-pinterest" />
+                                </div>
+                                <div>
+                                    <Label className="flex items-center gap-1.5"><Youtube className="h-3.5 w-3.5" /> YouTube</Label>
+                                    <Input value={form.youtube_url} onChange={(e) => setForm({ ...form, youtube_url: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://youtube.com/@yourhandle" data-testid="profile-youtube" />
+                                </div>
+                                <div>
+                                    <Label className="flex items-center gap-1.5"><Globe className="h-3.5 w-3.5" /> Personal website</Label>
+                                    <Input value={form.website_url} onChange={(e) => setForm({ ...form, website_url: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://yourwebsite.com" data-testid="profile-website" />
+                                </div>
+                            </div>
+                        </div>
                         <div><Label>Bio</Label><Textarea rows={4} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-bio" /></div>
                         <div className="flex justify-end">
                             <Button type="submit" disabled={saving} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="profile-save-btn">{saving ? "Saving…" : "Save changes"}</Button>

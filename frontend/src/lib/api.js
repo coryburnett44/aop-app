@@ -3,6 +3,19 @@ import axios from "axios";
 export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
+// Convert a relative storage URL like "/api/files/xyz" into an absolute URL
+// that works regardless of whether REACT_APP_BACKEND_URL is the same origin as
+// the page. Absolute http(s) URLs are returned unchanged. Empty/null values
+// pass through. Use this anywhere you render an avatar / cover / image whose
+// path may have been saved as a relative API URL.
+export function mediaUrl(url) {
+    if (!url) return url || "";
+    if (/^(https?:|data:|blob:)/i.test(url)) return url;
+    if (url.startsWith("/api/")) return `${BACKEND_URL}${url}`;
+    if (url.startsWith("/")) return `${BACKEND_URL}${url}`;
+    return url;
+}
+
 export const api = axios.create({
     baseURL: API,
     withCredentials: true,

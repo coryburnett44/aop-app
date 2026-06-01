@@ -1,5 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { mediaUrl } from "../lib/api";
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import {
@@ -47,9 +48,11 @@ export default function Navbar() {
         >
             <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between">
                 <Link to="/" className="flex items-center gap-2 group" data-testid="nav-logo">
-                    <div className="w-9 h-9 rounded-2xl bg-[#0A2463] text-white grid place-items-center font-heading font-black text-lg shadow-warm group-hover:rotate-6 transition-transform">
-                        A
-                    </div>
+                    <img
+                        src="https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png"
+                        alt="Alpha Omega Phi"
+                        className="h-9 w-9 rounded-2xl object-cover shadow-warm group-hover:rotate-6 transition-transform"
+                    />
                     <span className="font-heading font-bold text-xl tracking-tight leading-tight whitespace-nowrap">
                         Alpha<span className="text-[#D62828]"> Omega Phi</span>
                     </span>
@@ -94,7 +97,7 @@ export default function Navbar() {
                                     data-testid="nav-user-menu"
                                 >
                                     <Avatar className="h-8 w-8 border border-border">
-                                        {user.avatar_url ? <AvatarImage src={user.avatar_url} alt={user.name} /> : null}
+                                        {user.avatar_url ? <AvatarImage src={mediaUrl(user.avatar_url)} alt={user.name} /> : null}
                                         <AvatarFallback className="bg-primary/15 text-primary font-semibold text-xs">
                                             {initials}
                                         </AvatarFallback>

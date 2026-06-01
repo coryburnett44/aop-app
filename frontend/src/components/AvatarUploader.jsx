@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -39,7 +39,7 @@ export default function AvatarUploader({ user, onUpdated }) {
     return (
         <div className="flex items-center gap-4" data-testid="avatar-uploader">
             <Avatar className="h-20 w-20 border-2 border-white shadow-warm" data-testid="avatar-current">
-                {user?.avatar_url && <AvatarImage src={user.avatar_url} />}
+                {user?.avatar_url && <AvatarImage src={mediaUrl(user.avatar_url)} />}
                 <AvatarFallback className="bg-primary/15 text-primary text-2xl font-bold">
                     {user?.name?.[0]?.toUpperCase() || "M"}
                 </AvatarFallback>

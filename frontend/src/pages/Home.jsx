@@ -8,7 +8,7 @@ import Countdown from "../components/Countdown";
 
 const HERO_BANNER = "https://images.clubexpress.com/211315/photos/original/Sheron_Tana_Banner_743849018.jpg";
 const SECONDARY_BANNER = "https://images.clubexpress.com/211315/photos/original/Kendra_Brandy_Banner_2074356465.jpg";
-const AOP_LOGO = "https://images.clubexpress.com/211315/graphics/AOP_2_281912154.png";
+const AOP_LOGO = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png";
 
 const NAVY = "#0A2463";
 const RED = "#C8102E";

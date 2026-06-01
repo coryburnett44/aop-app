@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -297,7 +297,7 @@ function LinkCard({ link, isAdmin, onChanged }) {
             <button onClick={openUrl} className="block text-left" data-testid={`form-link-open-${link.id}`}>
                 <div className="aspect-[16/10] w-full overflow-hidden bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
                     {link.image_url ? (
-                        <img src={link.image_url} alt={link.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                        <img src={mediaUrl(link.image_url)} alt={link.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     ) : (
                         <span className="font-heading text-5xl font-black text-primary/40">{initials}</span>
                     )}
@@ -406,8 +406,16 @@ function LinkEditor({ trigger, existing, onSaved }) {
                                 </label>
                             </div>
                             {form.image_url && (
-                                <div className="mt-3 rounded-xl overflow-hidden border border-border">
-                                    <img src={form.image_url} alt="Preview" className="w-full max-h-48 object-cover" />
+                                <div className="mt-3 rounded-xl overflow-hidden border-2 border-border bg-muted/30">
+                                    <div className="px-3 py-1.5 text-[10px] uppercase tracking-widest font-bold text-muted-foreground border-b border-border bg-muted">
+                                        Preview
+                                    </div>
+                                    <img
+                                        src={mediaUrl(form.image_url)}
+                                        alt="Picture preview"
+                                        className="w-full h-64 object-cover bg-white"
+                                        onError={(e) => { e.currentTarget.style.opacity = '0.3'; e.currentTarget.alt = 'Preview failed to load — check the URL'; }}
+                                    />
                                 </div>
                             )}
                             {!form.image_url && (
