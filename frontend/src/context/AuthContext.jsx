@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { api, formatApiError } from "../lib/api";
+import { api, formatApiError, saveTokens, clearTokens, getAccessToken } from "../lib/api";
 
 const AuthContext = createContext(null);
 
@@ -8,34 +8,33 @@ export function AuthProvider({ children }) {
     const [loading, setLoading] = useState(true);
 
     const refresh = useCallback(async () => {
-        // Try /auth/me first. If the access token is expired/missing but the
-        // refresh_token cookie is still valid, /auth/refresh will mint a new
-        // access cookie and we retry /auth/me. Only after BOTH fail do we mark
-        // the user as logged out. This is what fixes the "logout on page refresh"
+        // Try /auth/me first. If access token is missing/expired but a refresh
+        // token is still valid (in localStorage or cookie), the global 401
+        // interceptor in lib/api.js will silently refresh + retry. So /auth/me
+        // will succeed on the retry. Only after the refresh itself fails do we
+        // mark the user as logged out. This fixes the "logout on pull-to-refresh"
         // bug on mobile Safari, where access-cookie eviction is more aggressive.
         try {
             const { data } = await api.get("/auth/me");
             setUser(data);
         } catch {
-            try {
-                await api.post("/auth/refresh");
-                const { data } = await api.get("/auth/me");
-                setUser(data);
-            } catch {
-                setUser(false);
-            }
+            setUser(false);
+            clearTokens();
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
+        // If we don't have any token yet and no cookie either, skip the call
+        // (UX: avoid a flash of unauth state — refresh() handles it anyway).
         refresh();
     }, [refresh]);
 
     const login = async (email, password) => {
         try {
             const { data } = await api.post("/auth/login", { email, password });
+            saveTokens(data); // <-- store Bearer tokens for mobile durability
             setUser(data);
             return { ok: true };
         } catch (e) {
@@ -46,6 +45,7 @@ export function AuthProvider({ children }) {
     const register = async (payload) => {
         try {
             const { data } = await api.post("/auth/register", payload);
+            saveTokens(data);
             setUser(data);
             return { ok: true };
         } catch (e) {
@@ -56,12 +56,13 @@ export function AuthProvider({ children }) {
     const logout = async () => {
         try {
             await api.post("/auth/logout");
-        } catch {}
+        } catch { /* ignore */ }
+        clearTokens();
         setUser(false);
     };
 
     return (
-        <AuthContext.Provider value={{ user, loading, login, register, logout, refresh, setUser }}>
+        <AuthContext.Provider value={{ user, loading, login, register, logout, refresh, setUser, hasToken: !!getAccessToken() }}>
             {children}
         </AuthContext.Provider>
     );

@@ -1,0 +1,33 @@
+{
+  "summary": "Phase K review — Mobile-auth fix + admin membership-expiry edit + Gear redesign all verified. 22/22 backend pytest tests passed against the public preview URL (mobile auth: Bearer-only /auth/me + PUT /members/me, refresh via body/header/cookie, register/login return tokens in body; admin expiry: full admin sets custom date, join_date change does NOT clobber explicit expiry, mm.tx 403 with 'full Admin … expiration date' message; Gear: color_images CRUD, /gear-page public-GET admin-PUT, /gear/upload accepts image / rejects non-image / 403 for non-admin; PayPal create-order persists gear_color/gear_size and description has '(red · M)'; regression: members, tiers includes Founder, gear list). Frontend live verified on mobile 390px: profile save after clearing ALL cookies (keeping only localStorage aop_at/aop_rt) succeeds with 'Profile updated' toast — proves the mobile-auth fix. Admin Gear page shows 'Edit page banner' + 'Add item' buttons; Add-item dialog has Sizes/Colors/Cover/In-stock. Admin → Members → Edit dialog shows 'Membership expires (editable — overrides auto from join date)' as a real date input. Member-facing gear dialog shows Color buttons (Navy/Charcoal), Size buttons (S/M/L/XL/XXL), Qty stepper, PayPal/Pay Later/Debit-Credit-Card buttons.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin EditMember dialog", "issues": ["Date inputs use the browser's native date picker (mm/dd/yyyy) instead of shadcn Calendar component — minor consistency note, not a functional bug. Three date inputs: Date joined, Birthdate, Membership expires."]},
+      {"screen": "Login page", "issues": ["GET /auth/me returns 401 on first visit before the user logs in — these expected 401s show as console errors. Harmless; AuthContext probes the session on mount."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_k.py",
+    "/app/test_reports/pytest/phase_k_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~5440 lines — well past the 700-line guideline. Strongly recommend splitting into route modules (auth, members, gear, gear_page, payments, admin) before further growth. Same callout as iter-13.",
+    "PUT /members/{id}: when admin sends both join_date AND membership_expires_at, the explicit expiry wins (test_full_admin_join_date_change_does_not_clobber_explicit_expiry passes). Good. The recompute-from-join only runs when membership_expires_at is NOT in updates — that logic is correct and well-guarded.",
+    "/api/gear/upload stores under /api/files/gear/{id}/{filename} via chat_files collection — reusing chat_files for gear images works but conflates concerns. Consider a dedicated gear_files collection or at least a 'kind: gear' marker (currently 'kind: image') so future cleanup/audit can filter.",
+    "GearItemUpdateIn uses 'None means unchanged' via the {k:v for k,v in ... if v is not None} filter — this prevents clearing a field by sending null. If admin needs to remove all color_images by sending [], an empty list is truthy in Python so that path works; sending null would silently no-op. Acceptable for current UI.",
+    "/api/gear-page upserts a single doc keyed by 'gear_page' in app_settings — no versioning/audit trail. Fine for a small admin-edited landing block.",
+    "Bearer fallback in get_current_user is implemented correctly; refresh accepts body OR Bearer OR cookie. CSRF surface is unchanged (still requires same-origin or Origin/Referer for cookie path). No regression risk."
+  ],
+  "updated_files": ["/app/backend/tests/test_phase_k.py (new — 22 tests)"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Used admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123!, mm.tx@clubhaven.app/MemMgr123! from /app/memory/test_credentials.md.",
+  "seed_data_creation": "Test data created and cleaned up in-test: 1 TEST_ registered user (TEST_reg_* via /auth/register — left in DB, harmless), 1 TEST gear item (TEST AOP Tee — deleted), 1 TEST Variant Hoodie gear item (deleted), gear_page settings set then cleared back to empty, member.membership_expires_at modified during tests then restored to original. Member profile bio updated to 'TEST mobile-auth bio' during frontend test — minor, can be reset by main agent if needed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression file: /app/backend/tests/test_phase_k.py (22 tests). Frontend localStorage token keys are 'aop_at' and 'aop_rt' (not 'access_token'/'refresh_token'). Mobile-auth fix is end-to-end verified — clearing all cookies on a 390px viewport and reloading /profile keeps the user signed in via Bearer header from localStorage. PayPal sandbox is reachable from preview; test_create_paypal_order_persists_gear_color_size confirmed transaction is created with gear_color='red', gear_size='M', and description ends with '(red · M)'. The 401 console errors on login page load are expected (AuthContext /auth/me probe before login).",
+  "rca of the issue": "N/A — no regressions or failures detected."
+}

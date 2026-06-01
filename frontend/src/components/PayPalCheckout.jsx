@@ -23,7 +23,7 @@ async function loadConfig() {
  *   onComplete={(tx) => ...}
  * />
  */
-export default function PayPalCheckout({ purpose, amount, cause_id, gear_id, event_id, quantity = 1, anonymous = false, note = "", disabled = false, onComplete }) {
+export default function PayPalCheckout({ purpose, amount, cause_id, gear_id, event_id, quantity = 1, anonymous = false, note = "", gear_color, gear_size, disabled = false, onComplete }) {
     const [cfg, setCfg] = useState(null);
     useEffect(() => { loadConfig().then(setCfg).catch(() => setCfg({ enabled: false })); }, []);
 
@@ -37,12 +37,14 @@ export default function PayPalCheckout({ purpose, amount, cause_id, gear_id, eve
                 <PayPalButtons
                     disabled={disabled}
                     style={{ layout: "vertical", shape: "pill", color: "gold", label: "paypal" }}
-                    forceReRender={[amount, purpose, cause_id, gear_id, event_id, quantity, anonymous]}
+                    forceReRender={[amount, purpose, cause_id, gear_id, event_id, quantity, anonymous, gear_color, gear_size]}
                     createOrder={async () => {
                         try {
                             const { data } = await api.post("/payments/paypal/orders", {
                                 purpose, amount: Number(amount), cause_id, gear_id, event_id,
                                 quantity, anonymous, note,
+                                gear_color: gear_color || undefined,
+                                gear_size: gear_size || undefined,
                             });
                             return data.order_id;
                         } catch (e) {

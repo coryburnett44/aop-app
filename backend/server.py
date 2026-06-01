@@ -652,6 +652,8 @@ async def register(body: RegisterIn, response: Response):
     set_auth_cookies(response, at, rt)
     out = public_user(doc)
     out["verify_link"] = verify_link  # dev: returned so UI can surface; replace with email provider later
+    out["access_token"] = at
+    out["refresh_token"] = rt
     return out
 
 @api.post("/auth/login")
@@ -677,7 +679,13 @@ async def login(body: LoginIn, request: Request, response: Response):
     at = create_access_token(user["id"], user["email"], user.get("role", "member"))
     rt = create_refresh_token(user["id"])
     set_auth_cookies(response, at, rt)
-    return public_user(user)
+    out = public_user(user)
+    # Return tokens in the body so mobile clients (iOS Safari ITP can evict
+    # third-party-ish cookies) can store them in localStorage and send them
+    # as Authorization: Bearer headers. Cookies still work for non-mobile.
+    out["access_token"] = at
+    out["refresh_token"] = rt
+    return out
 
 @api.post("/auth/logout")
 async def logout(response: Response, _: dict = Depends(get_current_user)):
@@ -960,9 +968,25 @@ async def set_password_from_token(body: SetPasswordIn):
     return {"ok": True, "email": user.get("email") if user else None}
 
 
+class RefreshIn(BaseModel):
+    refresh_token: Optional[str] = None
+
+
 @api.post("/auth/refresh")
-async def refresh(request: Request, response: Response):
-    token = request.cookies.get("refresh_token")
+async def refresh(request: Request, response: Response, body: Optional[RefreshIn] = None):
+    # Accept refresh token via (in priority order):
+    # 1. JSON body { refresh_token } — mobile/localStorage path
+    # 2. Authorization: Bearer  — non-cookie clients
+    # 3. refresh_token cookie — desktop/laptop path
+    token = None
+    if body and body.refresh_token:
+        token = body.refresh_token
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        token = request.cookies.get("refresh_token")
     if not token:
         raise HTTPException(status_code=401, detail="No refresh token")
     try:
@@ -975,7 +999,7 @@ async def refresh(request: Request, response: Response):
         at = create_access_token(user["id"], user["email"], user.get("role", "member"))
         rt = create_refresh_token(user["id"])
         set_auth_cookies(response, at, rt)
-        return {"ok": True}
+        return {"ok": True, "access_token": at, "refresh_token": rt}
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
@@ -1625,10 +1649,18 @@ async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, admin: di
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Member not found")
-    # Only full admins may change role / admin_role / tier
-    if (body.role is not None and body.role != existing.get("role")) or (body.admin_role is not None and body.admin_role != existing.get("admin_role")) or (body.tier_id is not None and body.tier_id != existing.get("tier_id")):
+    # Only full admins may change role / admin_role / tier / membership_expires_at
+    expires_changing = body.membership_expires_at is not None and (
+        iso(body.membership_expires_at) != (existing.get("membership_expires_at") or "")
+    )
+    if (
+        (body.role is not None and body.role != existing.get("role"))
+        or (body.admin_role is not None and body.admin_role != existing.get("admin_role"))
+        or (body.tier_id is not None and body.tier_id != existing.get("tier_id"))
+        or expires_changing
+    ):
         if admin_role_of(admin) != "full":
-            raise HTTPException(status_code=403, detail="Only full Admins may change member roles or tiers")
+            raise HTTPException(status_code=403, detail="Only full Admins may change roles, tiers, or the membership expiration date.")
     updates = {k: v for k, v in body.model_dump().items() if v is not None and k not in ("new_password", "member_status")}
     # Status override (member_status maps to status_override; "active" with no expiry issues means clear override)
     if body.member_status is not None:
@@ -3103,12 +3135,18 @@ async def upload_form_link_image(file: UploadFile = File(...), user: dict = Depe
 
 
 # ---------- AOP Gear (catalog) ----------
+class GearColorImage(BaseModel):
+    color: str
+    image_url: str = ""
+
+
 class GearItemIn(BaseModel):
     name: str
     description: str = ""
     price: float = 0.0
     sizes: List[str] = []
     colors: List[str] = []
+    color_images: List[GearColorImage] = []  # one image per color (admin tags)
     cover_image: str = ""
     images: List[str] = []
     category: str = "apparel"
@@ -3121,6 +3159,7 @@ class GearItemUpdateIn(BaseModel):
     price: Optional[float] = None
     sizes: Optional[List[str]] = None
     colors: Optional[List[str]] = None
+    color_images: Optional[List[GearColorImage]] = None
     cover_image: Optional[str] = None
     images: Optional[List[str]] = None
     category: Optional[str] = None
@@ -3135,6 +3174,7 @@ def gear_out(g: dict) -> dict:
         "price": g.get("price", 0.0),
         "sizes": g.get("sizes", []),
         "colors": g.get("colors", []),
+        "color_images": g.get("color_images", []),
         "cover_image": g.get("cover_image", ""),
         "images": g.get("images", []),
         "category": g.get("category", "apparel"),
@@ -3180,6 +3220,82 @@ async def update_gear(item_id: str, body: GearItemUpdateIn, _: dict = Depends(ad
 async def delete_gear(item_id: str, _: dict = Depends(admin_tab_dep("gear"))):
     await db.gear.delete_one({"id": item_id})
     return {"ok": True}
+
+
+# ---------- Gear page settings (admin-editable hero/intro) ----------
+class GearPageIn(BaseModel):
+    hero_image: str = ""
+    title: str = ""
+    subtitle: str = ""
+    intro: str = ""
+
+
+@api.get("/gear-page")
+async def get_gear_page():
+    doc = await db.app_settings.find_one({"key": "gear_page"}, {"_id": 0})
+    if not doc:
+        return {"hero_image": "", "title": "", "subtitle": "", "intro": ""}
+    return {
+        "hero_image": doc.get("hero_image", ""),
+        "title": doc.get("title", ""),
+        "subtitle": doc.get("subtitle", ""),
+        "intro": doc.get("intro", ""),
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+@api.put("/gear-page")
+async def set_gear_page(body: GearPageIn, admin: dict = Depends(admin_tab_dep("gear"))):
+    await db.app_settings.update_one(
+        {"key": "gear_page"},
+        {"$set": {
+            "key": "gear_page",
+            "hero_image": body.hero_image,
+            "title": body.title,
+            "subtitle": body.subtitle,
+            "intro": body.intro,
+            "updated_at": iso(now_utc()),
+            "updated_by": admin.get("name", ""),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, **body.model_dump()}
+
+
+@api.post("/gear/upload")
+async def gear_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("gear"))):
+    """Admin uploads an image for a gear item (cover, gallery, or per-color photo)."""
+    chunks: list = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Image must be under 10 MB")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    fname = (file.filename or "gear.jpg").replace("/", "_")
+    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
+    if ext not in IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
+    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
+    file_id = str(uuid.uuid4())
+    storage_path = f"gear/{file_id}/{fname}"
+    await asyncio.to_thread(put_object, storage_path, data, content_type)
+    await db.chat_files.insert_one({
+        "id": file_id,
+        "filename": fname,
+        "storage_path": storage_path,
+        "content_type": content_type,
+        "size": total,
+        "kind": "image",
+        "uploaded_by": user["id"],
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    })
+    return {"url": f"/api/files/{storage_path}", "size": total}
 
 
 # ---------- Donations / Causes ----------
@@ -3944,6 +4060,10 @@ class PayPalOrderIn(BaseModel):
     quantity: int = 1
     note: str = ""
     anonymous: bool = False
+    # Gear variant selections (color/size). Surfaced on receipts so the
+    # admin fulfilling the order knows exactly what to ship.
+    gear_color: Optional[str] = None
+    gear_size: Optional[str] = None
 
 @api.post("/payments/paypal/orders")
 async def paypal_create_order(body: PayPalOrderIn, user: dict = Depends(get_current_user)):
@@ -3955,7 +4075,9 @@ async def paypal_create_order(body: PayPalOrderIn, user: dict = Depends(get_curr
     if body.purpose == "gear" and body.gear_id:
         g = await db.gear.find_one({"id": body.gear_id}, {"_id": 0})
         if g:
-            desc = f"AOP Gear: {g['name']}" + (f" ×{body.quantity}" if body.quantity > 1 else "")
+            variant_parts = [body.gear_color, body.gear_size]
+            variant = " · ".join([v for v in variant_parts if v])
+            desc = f"AOP Gear: {g['name']}" + (f" ({variant})" if variant else "") + (f" ×{body.quantity}" if body.quantity > 1 else "")
     if body.purpose == "event" and body.event_id:
         e = await db.events.find_one({"id": body.event_id}, {"_id": 0})
         if e:
@@ -4004,6 +4126,8 @@ async def paypal_create_order(body: PayPalOrderIn, user: dict = Depends(get_curr
         "purpose": body.purpose,
         "cause_id": body.cause_id,
         "gear_id": body.gear_id,
+        "gear_color": body.gear_color,
+        "gear_size": body.gear_size,
         "event_id": body.event_id,
         "quantity": body.quantity,
         "anonymous": body.anonymous,

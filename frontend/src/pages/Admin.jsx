@@ -762,6 +762,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                 role: member.role,
                 admin_role: member.admin_role || "full",
                 join_date: member.join_date ? member.join_date.slice(0, 10) : "",
+                membership_expires_at: member.membership_expires_at ? member.membership_expires_at.slice(0, 10) : "",
                 member_status: member.status_override || member.status || "active",
                 new_password: "",
             });
@@ -776,6 +777,11 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
             // Convert join_date YYYY-MM-DD to ISO timestamp so backend recomputes membership_expires_at
             if (payload.join_date && payload.join_date.length === 10) {
                 payload.join_date = new Date(`${payload.join_date}T00:00:00Z`).toISOString();
+            }
+            // Convert membership_expires_at YYYY-MM-DD to ISO so backend stores it
+            // verbatim (overriding the auto-calculation from join_date)
+            if (payload.membership_expires_at && payload.membership_expires_at.length === 10) {
+                payload.membership_expires_at = new Date(`${payload.membership_expires_at}T00:00:00Z`).toISOString();
             }
             await api.put(`/members/${member.id}`, payload);
             toast.success("Saved");
@@ -825,15 +831,31 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                             <Input type="date" value={form.join_date || ""} onChange={(e) => setForm({ ...form, join_date: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-join-date" />
                         </div>
                         <div>
-                            <Label>Membership expires (auto from join date)</Label>
-                            <div className="rounded-xl mt-1.5 px-3 py-2 bg-muted/40 text-sm text-muted-foreground" data-testid="em-expires-preview">
-                                {(() => {
-                                    const selectedTier = tiers.find((t) => t.id === form.tier_id);
-                                    if (selectedTier?.is_lifetime) return <span className="text-primary font-semibold">Lifetime · no expiration</span>;
-                                    if (form.join_date) return format(new Date(new Date(`${form.join_date}T00:00:00Z`).getTime() + 365 * 86400000), "MMM d, yyyy");
-                                    return member.membership_expires_at ? format(parseISO(member.membership_expires_at), "MMM d, yyyy") : "—";
-                                })()}
-                            </div>
+                            <Label>Membership expires <span className="text-xs text-muted-foreground font-normal">{isFullAdmin ? "(editable — overrides auto from join date)" : "(auto from join date)"}</span></Label>
+                            {isFullAdmin ? (
+                                <Input
+                                    type="date"
+                                    value={form.membership_expires_at || ""}
+                                    onChange={(e) => setForm({ ...form, membership_expires_at: e.target.value })}
+                                    className="rounded-xl mt-1.5"
+                                    data-testid="em-membership-expires"
+                                />
+                            ) : (
+                                <div className="rounded-xl mt-1.5 px-3 py-2 bg-muted/40 text-sm text-muted-foreground" data-testid="em-expires-preview">
+                                    {(() => {
+                                        const selectedTier = tiers.find((t) => t.id === form.tier_id);
+                                        if (selectedTier?.is_lifetime) return <span className="text-primary font-semibold">Lifetime · no expiration</span>;
+                                        if (form.join_date) return format(new Date(new Date(`${form.join_date}T00:00:00Z`).getTime() + 365 * 86400000), "MMM d, yyyy");
+                                        return member.membership_expires_at ? format(parseISO(member.membership_expires_at), "MMM d, yyyy") : "—";
+                                    })()}
+                                </div>
+                            )}
+                            {isFullAdmin && form.membership_expires_at && (() => {
+                                const selectedTier = tiers.find((t) => t.id === form.tier_id);
+                                return selectedTier?.is_lifetime
+                                    ? <div className="text-xs text-primary mt-1 font-semibold">Lifetime tier — expiration ignored.</div>
+                                    : null;
+                            })()}
                         </div>
                     </div>
                     <div className="grid grid-cols-3 gap-3">
