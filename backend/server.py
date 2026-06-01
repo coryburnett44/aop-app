@@ -4,6 +4,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+import re
 import uuid
 import logging
 import secrets
@@ -1475,7 +1476,14 @@ async def list_chapters():
 
 @api.post("/chapters")
 async def create_chapter(body: ChapterIn, _: dict = Depends(admin_tab_dep("chapters"))):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Chapter name is required.")
+    existing = await db.chapters.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
+    if existing:
+        raise HTTPException(status_code=400, detail=f"A chapter named '{existing['name']}' already exists.")
     doc = body.model_dump()
+    doc["name"] = name
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = iso(now_utc())
     await db.chapters.insert_one(doc)

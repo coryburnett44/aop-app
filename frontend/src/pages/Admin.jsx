@@ -49,8 +49,8 @@ export default function Admin() {
             </div>
 
             <Tabs value={tab} onValueChange={setTab}>
-                <div className="-mx-2 px-2 sm:mx-0 sm:px-0 overflow-x-auto scrollbar-hide">
-                    <TabsList className="rounded-full bg-muted p-1 inline-flex sm:flex-wrap sm:h-auto whitespace-nowrap">
+                <div className="-mx-2 px-2 sm:mx-0 sm:px-0 overflow-x-auto sm:overflow-x-visible scrollbar-hide max-w-full">
+                    <TabsList className="rounded-full bg-muted p-1 inline-flex sm:flex sm:flex-wrap sm:h-auto whitespace-nowrap w-max sm:w-full">
                         {allowed("dashboard") && <TabsTrigger value="dashboard" className="rounded-full" data-testid="admin-tab-dashboard"><LayoutDashboard className="h-4 w-4 mr-1.5" />Dashboard</TabsTrigger>}
                         {allowed("members") && <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>}
                         {allowed("chapters") && <TabsTrigger value="chapters" className="rounded-full" data-testid="admin-tab-chapters"><Building2 className="h-4 w-4 mr-1.5" />Chapters</TabsTrigger>}
@@ -1594,8 +1594,8 @@ function EmailBlastAdmin() {
     const [view, setView] = useState("compose");
     return (
         <Tabs value={view} onValueChange={setView}>
-            <div className="-mx-2 px-2 sm:mx-0 sm:px-0 overflow-x-auto scrollbar-hide">
-                <TabsList className="rounded-full bg-muted p-1 inline-flex sm:flex-wrap sm:h-auto whitespace-nowrap">
+            <div className="-mx-2 px-2 sm:mx-0 sm:px-0 overflow-x-auto sm:overflow-x-visible scrollbar-hide max-w-full">
+                <TabsList className="rounded-full bg-muted p-1 inline-flex sm:flex sm:flex-wrap sm:h-auto whitespace-nowrap w-max sm:w-full">
                     <TabsTrigger value="compose" className="rounded-full" data-testid="email-tab-compose"><Send className="h-4 w-4 mr-1.5" />Compose</TabsTrigger>
                     <TabsTrigger value="templates" className="rounded-full" data-testid="email-tab-templates"><FileText className="h-4 w-4 mr-1.5" />Templates</TabsTrigger>
                     <TabsTrigger value="signatures" className="rounded-full" data-testid="email-tab-signatures"><PenSquare className="h-4 w-4 mr-1.5" />Signatures</TabsTrigger>
