@@ -517,15 +517,17 @@ class EventUpdateIn(BaseModel):
     parent_event_id: Optional[str] = None
     allows_ticket_types: Optional[bool] = None
 
+TicketType = Literal["vip", "all_access", "general", "guest", "speaker", "volunteer"]
+
 class GuestIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     email: Optional[str] = ""
     phone: Optional[str] = ""
-    ticket_type: Optional[str] = "general"  # vip|all_access|general|guest|speaker|volunteer
+    ticket_type: Optional[TicketType] = "general"
 
 class EventRsvpIn(BaseModel):
     guests: List[GuestIn] = []  # optional: register guests alongside
-    ticket_type: Optional[str] = "general"  # ticket type for the member themselves
+    ticket_type: Optional[TicketType] = "general"  # ticket type for the member themselves
 
 class NewsIn(BaseModel):
     title: str
@@ -1525,18 +1527,28 @@ async def send_rsvp_ticket_email(member: dict, event: dict, rsvp: dict) -> bool:
         when = event.get("start_at", "")
     where = event.get("location", "")
     cards_html = []
-    # Member ticket
-    member_token = make_ticket_token(event["id"], rsvp.get("ticket_id") or str(uuid.uuid4()), "member", rsvp.get("ticket_type", "general"), member.get("name", ""))
+    # Member ticket — backfill missing ticket_id onto the RSVP doc so future
+    # re-sends use the same QR (instead of generating a different one each call).
+    member_ticket_id = rsvp.get("ticket_id")
+    if not member_ticket_id:
+        member_ticket_id = str(uuid.uuid4())
+        await db.rsvps.update_one({"id": rsvp.get("id")}, {"$set": {"ticket_id": member_ticket_id}})
+    member_token = make_ticket_token(event["id"], member_ticket_id, "member", rsvp.get("ticket_type", "general"), member.get("name", ""))
     member_url = f"{frontend}/checkin/{member_token}"
     cards_html.append(_ticket_card_html(member.get("name", "Member"), rsvp.get("ticket_type", "general"),
                                         make_qr_png_b64(member_url), event_title, when, where))
-    # Guest tickets
-    for g in rsvp.get("guests", []) or []:
-        tid = g.get("ticket_id") or str(uuid.uuid4())
-        ttype = g.get("ticket_type", "general")
-        gtoken = make_ticket_token(event["id"], tid, "guest", ttype, g.get("name", ""))
+    # Guest tickets — backfill per-guest ticket_id as well.
+    guests = rsvp.get("guests", []) or []
+    guests_dirty = False
+    for g in guests:
+        if not g.get("ticket_id"):
+            g["ticket_id"] = str(uuid.uuid4())
+            guests_dirty = True
+        gtoken = make_ticket_token(event["id"], g["ticket_id"], "guest", g.get("ticket_type", "general"), g.get("name", ""))
         gurl = f"{frontend}/checkin/{gtoken}"
-        cards_html.append(_ticket_card_html(g.get("name", "Guest"), ttype, make_qr_png_b64(gurl), event_title, when, where))
+        cards_html.append(_ticket_card_html(g.get("name", "Guest"), g.get("ticket_type", "general"), make_qr_png_b64(gurl), event_title, when, where))
+    if guests_dirty:
+        await db.rsvps.update_one({"id": rsvp.get("id")}, {"$set": {"guests": guests}})
     body = f"""
     <div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f7f5f0">
       <h1 style="color:#0A2463;margin:0 0 4px;font-size:26px">You're going! 🎉</h1>
