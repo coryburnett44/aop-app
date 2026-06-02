@@ -8,7 +8,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "../components/ui/dialog";
 import { ScrollArea } from "../components/ui/scroll-area";
-import { Plus, Send, Paperclip, X, Search, Users as UsersIcon, Trash2, LogOut, Settings, FileText, Image as ImageIcon, Download, ArrowLeft } from "lucide-react";
+import { Plus, Send, Paperclip, X, Search, Users as UsersIcon, Trash2, LogOut, Settings, FileText, Image as ImageIcon, Download, ArrowLeft, Upload, Camera } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 
@@ -440,13 +440,16 @@ function NewChatDialog({ onCreated }) {
     const [search, setSearch] = useState("");
     const [selected, setSelected] = useState([]);
     const [name, setName] = useState("");
+    const [avatarUrl, setAvatarUrl] = useState("");
+    const [uploadingPic, setUploadingPic] = useState(false);
     const [busy, setBusy] = useState(false);
     const { user } = useAuth();
+    const picRef = useRef(null);
 
     useEffect(() => {
         if (open) {
             api.get("/members").then(({ data }) => setMembers(data.filter((m) => m.id !== user.id))).catch(() => {});
-            setSearch(""); setSelected([]); setName("");
+            setSearch(""); setSelected([]); setName(""); setAvatarUrl("");
         }
     }, [open, user.id]);
 
@@ -460,11 +463,28 @@ function NewChatDialog({ onCreated }) {
         setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
     }
 
+    async function pickGroupPic(file) {
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) { toast.error("Image must be under 10 MB"); return; }
+        setUploadingPic(true);
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            const { data } = await api.post("/chat/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+            setAvatarUrl(data.url || "");
+            toast.success("Group picture set");
+        } catch (e) { toast.error(e.response?.data?.detail || "Upload failed"); }
+        setUploadingPic(false);
+        if (picRef.current) picRef.current.value = "";
+    }
+
     async function create() {
         if (selected.length === 0) { toast.error("Pick at least one member"); return; }
         setBusy(true);
         try {
-            const { data } = await api.post("/conversations", { member_ids: selected, name: selected.length > 1 ? (name.trim() || null) : null });
+            const payload = { member_ids: selected, name: selected.length > 1 ? (name.trim() || null) : null };
+            if (selected.length > 1 && avatarUrl) payload.avatar_url = avatarUrl;
+            const { data } = await api.post("/conversations", payload);
             setOpen(false);
             onCreated(data);
         } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
@@ -482,10 +502,53 @@ function NewChatDialog({ onCreated }) {
                 <DialogHeader><DialogTitle className="font-heading text-2xl" style={{ color: NAVY }}>New chat</DialogTitle></DialogHeader>
                 <div className="space-y-3 mt-2 overflow-hidden flex flex-col flex-1">
                     {selected.length > 1 && (
-                        <div>
-                            <Label className="text-xs">Group name (optional)</Label>
-                            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Texas Bravo squad" className="rounded-xl mt-1.5" data-testid="group-name-input" />
-                        </div>
+                        <>
+                            <div>
+                                <Label className="text-xs">Group name (optional)</Label>
+                                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Texas Bravo squad" className="rounded-xl mt-1.5" data-testid="group-name-input" />
+                            </div>
+                            <div>
+                                <Label className="text-xs">Group picture (optional)</Label>
+                                <div className="flex items-center gap-3 mt-1.5">
+                                    <div className="h-14 w-14 rounded-full overflow-hidden border-2 border-slate-200 shrink-0 grid place-items-center bg-slate-100">
+                                        {avatarUrl ? (
+                                            <img src={(process.env.REACT_APP_BACKEND_URL || "") + avatarUrl} alt="Group" className="w-full h-full object-cover" />
+                                        ) : (
+                                            <Camera className="h-5 w-5 text-slate-400" />
+                                        )}
+                                    </div>
+                                    <input
+                                        ref={picRef}
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={(e) => pickGroupPic(e.target.files?.[0])}
+                                        data-testid="group-pic-input"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="rounded-full"
+                                        disabled={uploadingPic}
+                                        onClick={() => picRef.current?.click()}
+                                        data-testid="group-pic-upload-btn"
+                                    >
+                                        <Upload className="h-3.5 w-3.5 mr-1" /> {uploadingPic ? "Uploading…" : avatarUrl ? "Replace" : "Upload"}
+                                    </Button>
+                                    {avatarUrl && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setAvatarUrl("")}
+                                            className="text-xs text-slate-500 hover:text-destructive"
+                                            data-testid="group-pic-clear-btn"
+                                        >
+                                            Remove
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </>
                     )}
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />

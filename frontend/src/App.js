@@ -30,6 +30,7 @@ import Gear from "./pages/Gear";
 import Donations from "./pages/Donations";
 import CalendarPage from "./pages/Calendar";
 import Chat from "./pages/Chat";
+import ScheduleMeeting from "./pages/ScheduleMeeting";
 
 function App() {
     return (

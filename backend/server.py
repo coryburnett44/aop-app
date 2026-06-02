@@ -2070,6 +2070,7 @@ async def list_photo_albums():
             "name": a["name"],
             "count": counts.get(a["name"], 0),
             "is_default": a.get("is_default", False),
+            "created_by": a.get("created_by"),
             "created_by_name": a.get("created_by_name", ""),
         }
         for a in albums
@@ -2101,15 +2102,19 @@ async def create_photo_album(body: AlbumIn, user: dict = Depends(get_current_use
 
 
 @api.delete("/photos/albums/{album_id}")
-async def delete_photo_album(album_id: str, _: dict = Depends(admin_tab_dep("members"))):
-    """Admin-only: delete a custom album (default albums cannot be deleted).
-    Photos inside the album are NOT deleted — their `album` field stays so they
-    appear under a "Re-home me" state in the UI."""
+async def delete_photo_album(album_id: str, user: dict = Depends(get_current_user)):
+    """Creator or any admin may delete a custom album. Default albums cannot
+    be deleted. Photos inside the album are NOT deleted — their `album` field
+    stays so they remain queryable."""
     a = await db.photo_albums.find_one({"id": album_id})
     if not a:
         raise HTTPException(status_code=404, detail="Album not found")
     if a.get("is_default"):
         raise HTTPException(status_code=400, detail="Default albums cannot be deleted.")
+    is_admin = user.get("role") == "admin"
+    is_creator = a.get("created_by") == user["id"]
+    if not (is_admin or is_creator):
+        raise HTTPException(status_code=403, detail="Only the album creator or an admin may delete this album.")
     await db.photo_albums.delete_one({"id": album_id})
     return {"ok": True}
 

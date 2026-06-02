@@ -1646,7 +1646,30 @@ function CauseDialog({ cause, onSaved, trigger }) {
                             </Select>
                         </div>
                     </div>
-                    <div><Label>Cover image URL</Label><Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div>
+                        <Label>Cover image</Label>
+                        <div className="flex items-center gap-2 mt-1.5">
+                            <Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl flex-1" placeholder="https://… or upload" data-testid="cause-image-url" />
+                            <label className="cursor-pointer">
+                                <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
+                                    <span data-testid="cause-image-upload-btn"><Upload className="h-3.5 w-3.5 mr-1" />Upload</span>
+                                </Button>
+                                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                                    const f = e.target.files?.[0]; if (!f) return;
+                                    if (f.size > 10 * 1024 * 1024) { toast.error("Image must be under 10 MB"); return; }
+                                    const fd = new FormData(); fd.append("file", f);
+                                    try {
+                                        const { data } = await api.post("/causes/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                                        setForm((p) => ({ ...p, cover_image: data.url }));
+                                        toast.success("Cover photo uploaded");
+                                    } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
+                                }} />
+                            </label>
+                        </div>
+                        {form.cover_image && (
+                            <img src={mediaUrl(form.cover_image)} alt="Cause preview" className="mt-2 w-full max-h-32 object-cover rounded-xl border border-border" />
+                        )}
+                    </div>
                     <label className="flex items-center gap-2 text-sm">
                         <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} /> Active
                     </label>
