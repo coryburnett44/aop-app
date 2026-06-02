@@ -82,7 +82,7 @@ function MeetingCard({ card, isAdmin, onEdit, onChanged }) {
         <div className="relative group bg-white rounded-2xl border border-border overflow-hidden shadow-warm hover:-translate-y-1 hover:shadow-warm-lg transition-all flex flex-col" data-testid={`meeting-card-${card.id}`}>
             <div className="aspect-[4/3] bg-gradient-to-br from-primary/15 to-primary/5 overflow-hidden flex items-center justify-center">
                 {card.image_url ? (
-                    <img src={mediaUrl(card.image_url)} alt={card.name} className="w-full h-full object-cover" />
+                    <img src={mediaUrl(card.image_url)} alt={card.name} className="w-full h-full object-contain" />
                 ) : (
                     <Avatar className="h-28 w-28">
                         <AvatarFallback className="text-white font-black text-4xl" style={{ backgroundColor: NAVY }}>{initials}</AvatarFallback>
@@ -178,8 +178,8 @@ function MeetingEditor({ card, onSaved, onClose }) {
                         </label>
                     </div>
                     {form.image_url && (
-                        <div className="mt-3 rounded-xl overflow-hidden border-2 border-border max-w-xs">
-                            <img src={mediaUrl(form.image_url)} alt="Preview" className="w-full h-48 object-cover" />
+                        <div className="mt-3 rounded-xl overflow-hidden border-2 border-border max-w-xs bg-slate-100">
+                            <img src={mediaUrl(form.image_url)} alt="Preview" className="w-full h-48 object-contain" />
                         </div>
                     )}
                     {!form.image_url && (
