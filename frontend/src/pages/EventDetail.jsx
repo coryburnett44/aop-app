@@ -37,13 +37,14 @@ export default function EventDetail() {
     const hasRsvped = user && rsvps.some((r) => r.user_id === user.id);
     const myRsvp = user && rsvps.find((r) => r.user_id === user.id);
     const myGuests = myRsvp?.guests || [];
+    const allowsTickets = !!event?.allows_ticket_types;
 
-    async function rsvpWithGuests(guests) {
+    async function rsvpWithGuests(guests, memberTicketType) {
         if (!user) { toast.error("Please log in to RSVP"); return; }
         setLoading(true);
         try {
-            const { data } = await api.post(`/events/${id}/rsvp`, { guests });
-            toast.success(data.rsvped ? `You're going! 🎉${data.guests ? ` +${data.guests} guests` : ""}` : "RSVP removed");
+            const { data } = await api.post(`/events/${id}/rsvp`, { guests, ticket_type: memberTicketType });
+            toast.success(data.rsvped ? `You're going! 🎉${data.guests ? ` +${data.guests} guests` : ""} Ticket emailed.` : "RSVP removed");
             await load();
         } catch (e) {
             toast.error(e.response?.data?.detail || "Something went wrong");
@@ -52,15 +53,15 @@ export default function EventDetail() {
     }
 
     async function toggleRsvp() {
-        await rsvpWithGuests([]);
+        await rsvpWithGuests([], "general");
     }
 
     async function updateGuests(guests) {
         if (!myRsvp) return;
         setLoading(true);
         try {
-            await api.put(`/events/${id}/rsvp/guests`, { guests });
-            toast.success("Guest list updated");
+            await api.put(`/events/${id}/rsvp/guests`, { guests, ticket_type: myRsvp?.ticket_type || "general" });
+            toast.success("Guest list updated — new ticket QRs sent");
             await load();
         } catch (e) {
             toast.error(e.response?.data?.detail || "Something went wrong");
@@ -120,16 +121,31 @@ export default function EventDetail() {
                             )}
                         </div>
                     </div>
-                    <Button
-                        onClick={toggleRsvp}
-                        disabled={loading}
-                        className={`w-full rounded-full py-6 ${hasRsvped ? "bg-accent hover:bg-accent/90 text-accent-foreground" : "bg-primary hover:bg-primary/90 shadow-warm"}`}
-                        data-testid="rsvp-btn"
-                    >
-                        {loading ? "Updating…" : hasRsvped ? "You're going — cancel" : "RSVP"}
-                    </Button>
+                    {!hasRsvped && allowsTickets && (
+                        <MemberTicketPicker onRsvp={(tt) => rsvpWithGuests([], tt)} disabled={loading} />
+                    )}
+                    {!hasRsvped && !allowsTickets && (
+                        <Button
+                            onClick={toggleRsvp}
+                            disabled={loading}
+                            className="w-full rounded-full py-6 bg-primary hover:bg-primary/90 shadow-warm"
+                            data-testid="rsvp-btn"
+                        >
+                            {loading ? "Updating…" : "RSVP"}
+                        </Button>
+                    )}
                     {hasRsvped && (
-                        <GuestManager guests={myGuests} onSave={updateGuests} disabled={loading} />
+                        <Button
+                            onClick={toggleRsvp}
+                            disabled={loading}
+                            className="w-full rounded-full py-6 bg-accent hover:bg-accent/90 text-accent-foreground"
+                            data-testid="rsvp-btn"
+                        >
+                            {loading ? "Updating…" : `You're going (${(myRsvp?.ticket_type || "general").replace("_", " ")}) — cancel`}
+                        </Button>
+                    )}
+                    {hasRsvped && (
+                        <GuestManager guests={myGuests} onSave={updateGuests} disabled={loading} allowsTickets={allowsTickets} />
                     )}
                     {rsvps.length > 0 && (
                         <div>
@@ -181,17 +197,47 @@ function SubEventsPanel({ subs }) {
     );
 }
 
-function GuestManager({ guests, onSave, disabled }) {
+function MemberTicketPicker({ onRsvp, disabled }) {
+    const [tt, setTt] = useState("general");
+    return (
+        <div className="border-2 border-primary/20 rounded-2xl p-3 bg-primary/5 space-y-2" data-testid="member-ticket-picker">
+            <Label className="text-xs">Your ticket type</Label>
+            <Select value={tt} onValueChange={setTt}>
+                <SelectTrigger className="rounded-xl text-sm" data-testid="member-ticket-type-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="vip">VIP</SelectItem>
+                    <SelectItem value="all_access">All Access</SelectItem>
+                    <SelectItem value="general">General Admission</SelectItem>
+                </SelectContent>
+            </Select>
+            <Button
+                onClick={() => onRsvp(tt)}
+                disabled={disabled}
+                className="w-full rounded-full py-6 bg-primary hover:bg-primary/90 shadow-warm"
+                data-testid="rsvp-btn"
+            >
+                {disabled ? "Updating…" : "RSVP — email me my ticket"}
+            </Button>
+        </div>
+    );
+}
+
+function GuestManager({ guests, onSave, disabled, allowsTickets }) {
     const [open, setOpen] = useState(false);
     const [list, setList] = useState(guests || []);
     useEffect(() => { setList(guests || []); }, [guests]);
 
-    function add() { setList([...list, { name: "", email: "", phone: "" }]); }
+    function add() { setList([...list, { name: "", email: "", phone: "", ticket_type: allowsTickets ? "general" : "guest" }]); }
     function remove(i) { setList(list.filter((_, idx) => idx !== i)); }
     function update(i, field, val) { setList(list.map((g, idx) => idx === i ? { ...g, [field]: val } : g)); }
 
     async function save() {
-        const cleaned = list.filter((g) => g.name?.trim()).map((g) => ({ name: g.name.trim(), email: g.email?.trim() || "", phone: g.phone?.trim() || "" }));
+        const cleaned = list.filter((g) => g.name?.trim()).map((g) => ({
+            name: g.name.trim(),
+            email: g.email?.trim() || "",
+            phone: g.phone?.trim() || "",
+            ticket_type: g.ticket_type || (allowsTickets ? "general" : "guest"),
+        }));
         await onSave(cleaned);
         setOpen(false);
     }
@@ -207,14 +253,18 @@ function GuestManager({ guests, onSave, disabled }) {
             {(guests || []).length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                     {(guests || []).map((g, i) => (
-                        <span key={i} className="text-xs bg-accent/40 rounded-full px-3 py-1" data-testid={`guest-pill-${i}`}>{g.name}</span>
+                        <span key={i} className="text-xs bg-accent/40 rounded-full px-3 py-1" data-testid={`guest-pill-${i}`}>
+                            {g.name}
+                            {g.ticket_type && g.ticket_type !== "guest" && allowsTickets ? ` · ${g.ticket_type.replace("_", " ")}` : ""}
+                        </span>
                     ))}
                 </div>
             )}
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
                     <DialogHeader><DialogTitle className="font-heading text-2xl">Manage your guests</DialogTitle></DialogHeader>
-                    <div className="space-y-3 mt-2">
+                    <p className="text-xs text-muted-foreground -mt-1">Each guest receives their own QR ticket inside your confirmation email. Updating the list re-sends the email.</p>
+                    <div className="space-y-3 mt-3">
                         {list.length === 0 && <div className="text-sm text-muted-foreground italic">No guests yet — add one below.</div>}
                         {list.map((g, i) => (
                             <div key={i} className="border border-border rounded-xl p-3 space-y-2 relative" data-testid={`guest-row-${i}`}>
@@ -226,6 +276,20 @@ function GuestManager({ guests, onSave, disabled }) {
                                     <Input placeholder="Email (optional)" value={g.email || ""} onChange={(e) => update(i, "email", e.target.value)} className="rounded-xl text-sm" data-testid={`guest-email-${i}`} />
                                     <Input placeholder="Phone (optional)" value={g.phone || ""} onChange={(e) => update(i, "phone", e.target.value)} className="rounded-xl text-sm" data-testid={`guest-phone-${i}`} />
                                 </div>
+                                {allowsTickets && (
+                                    <div>
+                                        <Label className="text-xs">Ticket type for this guest</Label>
+                                        <Select value={g.ticket_type || "general"} onValueChange={(v) => update(i, "ticket_type", v)}>
+                                            <SelectTrigger className="rounded-xl mt-1 text-sm" data-testid={`guest-ticket-type-${i}`}><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="vip">VIP</SelectItem>
+                                                <SelectItem value="all_access">All Access</SelectItem>
+                                                <SelectItem value="general">General Admission</SelectItem>
+                                                <SelectItem value="guest">Guest</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                )}
                             </div>
                         ))}
                         <Button variant="outline" onClick={add} className="w-full rounded-full" data-testid="add-guest-btn">

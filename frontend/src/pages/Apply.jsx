@@ -24,7 +24,15 @@ export default function Apply() {
         if (form.password !== form.confirm_password) { toast.error("Passwords don't match"); return; }
         setSubmitting(true);
         try {
-            const { confirm_password: _, ...payload } = form;
+            // Defensive trim to defeat Safari autofill leaks
+            const { confirm_password: _, ...rest } = form;
+            const payload = {
+                ...rest,
+                first_name: (rest.first_name || "").trim(),
+                last_name: (rest.last_name || "").trim(),
+                email: (rest.email || "").trim().toLowerCase(),
+                password: (rest.password || "").trim(),
+            };
             await api.post("/auth/apply", payload);
             setDone(true);
         } catch (err) {
@@ -59,7 +67,7 @@ export default function Apply() {
                     </div>
                     <div>
                         <Label>Email *</Label>
-                        <Input required type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className="rounded-xl mt-1.5" data-testid="apply-email" />
+                        <Input required type="email" autoComplete="email" autoCapitalize="none" autoCorrect="off" spellCheck="false" inputMode="email" value={form.email} onChange={(e) => set("email", e.target.value)} className="rounded-xl mt-1.5" data-testid="apply-email" />
                     </div>
                     <div className="grid sm:grid-cols-2 gap-4">
                         <div><Label>Choose a password *</Label><Input required type="password" minLength={6} value={form.password} onChange={(e) => set("password", e.target.value)} className="rounded-xl mt-1.5" placeholder="At least 6 characters" data-testid="apply-password" /></div>

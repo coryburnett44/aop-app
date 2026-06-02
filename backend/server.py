@@ -11,6 +11,9 @@ import secrets
 import requests
 import bcrypt
 import jwt
+import io
+import base64
+import qrcode
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
@@ -518,9 +521,11 @@ class GuestIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     email: Optional[str] = ""
     phone: Optional[str] = ""
+    ticket_type: Optional[str] = "general"  # vip|all_access|general|guest|speaker|volunteer
 
 class EventRsvpIn(BaseModel):
     guests: List[GuestIn] = []  # optional: register guests alongside
+    ticket_type: Optional[str] = "general"  # ticket type for the member themselves
 
 class NewsIn(BaseModel):
     title: str
@@ -756,7 +761,62 @@ async def submit_application(body: PublicApplicationIn):
         "created_at": iso(now_utc()),
     }
     await db.applications.insert_one(doc)
+    # Notify all full admins so they can review immediately.
+    try:
+        asyncio.create_task(_send_application_admin_notification(doc))
+    except Exception as ex:
+        logger.warning(f"Failed to schedule admin notification: {ex}")
     return {"ok": True, "application_id": doc["id"]}
+
+
+async def _send_application_admin_notification(application: dict) -> bool:
+    """Email every full admin when a new application is submitted."""
+    if not RESEND_API_KEY:
+        logger.info("Application notification skipped — no RESEND_API_KEY")
+        return False
+    cursor = db.users.find({"role": "admin"}, {"_id": 0, "email": 1, "name": 1, "admin_role": 1})
+    recipients = []
+    async for adm in cursor:
+        e = (adm.get("email") or "").strip()
+        if e and (adm.get("admin_role") or "full") in ("full", "membership_manager"):
+            recipients.append(e)
+    if not recipients:
+        logger.warning("No admin recipients for application notification")
+        return False
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    import html as _h
+    name = _h.escape(f"{application.get('first_name', '')} {application.get('last_name', '')}".strip())
+    email = _h.escape(application.get("email", ""))
+    line = _h.escape(application.get("line_name", "") or "—")
+    chapter_state = _h.escape(application.get("state", "") or "—")
+    intake = _h.escape(application.get("intake_completed_at", "") or "—")
+    body = f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:28px;background:#fff;color:#222">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:#C8102E;font-weight:700">New application</div>
+      <h1 style="color:#0A2463;margin:6px 0 14px;font-size:24px">{name} is requesting access</h1>
+      <div style="background:#f7f5f0;border-radius:14px;padding:18px;margin:18px 0;font-size:14px;line-height:1.7">
+        <div><strong>Email:</strong> {email}</div>
+        <div><strong>Line name:</strong> {line}</div>
+        <div><strong>State:</strong> {chapter_state}</div>
+        <div><strong>Intake completed:</strong> {intake}</div>
+      </div>
+      <p><a href="{frontend}/admin" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Open Admin → Members</a></p>
+      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">Review the pending application card to approve or reject. The applicant has already chosen their password — approving them grants immediate access.</p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": RESEND_FROM,
+            "to": recipients,
+            "subject": f"[AOP] New application: {name}",
+            "html": body,
+            "tags": [{"name": "type", "value": "application_admin_notify"}],
+        })
+        logger.info(f"Admin application notification sent to {len(recipients)} admins")
+        return True
+    except Exception as e:
+        logger.warning(f"Admin application notification failed: {e}")
+        return False
 
 
 @api.get("/admin/applications")
@@ -1297,23 +1357,40 @@ async def rsvp_event(event_id: str, body: Optional[EventRsvpIn] = None, user: di
             {"$inc": {"rsvp_count": -1, "guest_count": -prev_guests}},
         )
         return {"rsvped": False}
-    guests = [g.model_dump() for g in (body.guests if body else [])]
+    member_ticket_type = (body.ticket_type if body else None) or "general"
+    guests_raw = body.guests if body else []
+    guests = []
+    for g in guests_raw:
+        gd = g.model_dump()
+        gd["ticket_id"] = str(uuid.uuid4())
+        gd["ticket_type"] = (gd.get("ticket_type") or "general")
+        gd["checked_in_at"] = None
+        guests.append(gd)
     seats_needed = 1 + len(guests)
     if e.get("capacity", 0) > 0 and (e.get("rsvp_count", 0) + e.get("guest_count", 0) + seats_needed) > e["capacity"]:
         raise HTTPException(status_code=400, detail="Event does not have enough seats")
-    await db.rsvps.insert_one({
+    member_ticket_id = str(uuid.uuid4())
+    rsvp_doc = {
         "id": str(uuid.uuid4()),
         "event_id": event_id,
         "user_id": user["id"],
         "user_name": user.get("name", ""),
+        "ticket_id": member_ticket_id,
+        "ticket_type": member_ticket_type,
         "guests": guests,
         "created_at": iso(now_utc()),
-    })
+    }
+    await db.rsvps.insert_one(rsvp_doc)
     await db.events.update_one(
         {"id": event_id},
         {"$inc": {"rsvp_count": 1, "guest_count": len(guests)}},
     )
-    return {"rsvped": True, "guests": len(guests)}
+    # Fire-and-forget: email the member their ticket(s) with QR code(s).
+    try:
+        asyncio.create_task(send_rsvp_ticket_email(user, e, rsvp_doc))
+    except Exception as ex:
+        logger.warning(f"Failed to schedule ticket email: {ex}")
+    return {"rsvped": True, "guests": len(guests), "ticket_id": member_ticket_id}
 
 @api.put("/events/{event_id}/rsvp/guests")
 async def update_rsvp_guests(event_id: str, body: EventRsvpIn, user: dict = Depends(get_current_user)):
@@ -1324,14 +1401,35 @@ async def update_rsvp_guests(event_id: str, body: EventRsvpIn, user: dict = Depe
     e = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not e:
         raise HTTPException(status_code=404, detail="Event not found")
-    prev_guests = len(rsvp.get("guests", []) or [])
-    new_guests = [g.model_dump() for g in body.guests]
-    delta = len(new_guests) - prev_guests
+    prev_guests = rsvp.get("guests", []) or []
+    prev_by_name = {(g.get("name") or "").strip().lower(): g for g in prev_guests}
+    new_guests = []
+    for g in body.guests:
+        gd = g.model_dump()
+        key = (gd.get("name") or "").strip().lower()
+        old = prev_by_name.get(key)
+        gd["ticket_id"] = (old.get("ticket_id") if old else None) or str(uuid.uuid4())
+        gd["ticket_type"] = gd.get("ticket_type") or (old.get("ticket_type") if old else "general")
+        gd["checked_in_at"] = old.get("checked_in_at") if old else None
+        new_guests.append(gd)
+    # Also update member ticket_type if provided
+    sets = {"guests": new_guests}
+    if body.ticket_type:
+        sets["ticket_type"] = body.ticket_type
+    delta = len(new_guests) - len(prev_guests)
     if e.get("capacity", 0) > 0 and (e.get("rsvp_count", 0) + e.get("guest_count", 0) + delta) > e["capacity"]:
         raise HTTPException(status_code=400, detail="Event does not have enough seats")
-    await db.rsvps.update_one({"_id": rsvp["_id"]}, {"$set": {"guests": new_guests}})
+    await db.rsvps.update_one({"_id": rsvp["_id"]}, {"$set": sets})
     if delta:
         await db.events.update_one({"id": event_id}, {"$inc": {"guest_count": delta}})
+    # Re-send the ticket email so the member has the up-to-date guest QR codes.
+    try:
+        fresh = await db.rsvps.find_one({"_id": rsvp["_id"]}, {"_id": 0})
+        u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+        if u and fresh:
+            asyncio.create_task(send_rsvp_ticket_email(u, e, fresh))
+    except Exception as ex:
+        logger.warning(f"Failed to schedule re-send ticket email: {ex}")
     return {"ok": True, "guests": len(new_guests)}
 
 @api.get("/events/{event_id}/sub-events")
@@ -1353,6 +1451,204 @@ async def my_events(user: dict = Depends(get_current_user)):
     ids = [r["event_id"] for r in rsvps]
     events = await db.events.find({"id": {"$in": ids}}, {"_id": 0}).to_list(500)
     return [event_out(e) for e in events]
+
+
+# ---------- QR Ticket helpers (email confirmation + scan-to-check-in) ----------
+def make_ticket_token(event_id: str, ticket_id: str, kind: str, ticket_type: str, name: str = "") -> str:
+    """Signed JWT carried in the QR code. Validated server-side at scan."""
+    payload = {
+        "event_id": event_id,
+        "ticket_id": ticket_id,
+        "kind": kind,  # "member" | "guest"
+        "ticket_type": ticket_type or "general",
+        "name": name or "",
+        "iat": int(now_utc().timestamp()),
+    }
+    return jwt.encode(payload, jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def decode_ticket_token(token: str) -> dict:
+    return jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGORITHM])
+
+
+def make_qr_png_b64(payload_url: str) -> str:
+    """Return a base64-encoded PNG for inline embedding (data: URI)."""
+    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
+    qr.add_data(payload_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#0A2463", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _ticket_card_html(holder: str, ticket_type: str, qr_png_b64: str, event_title: str, when: str, where: str) -> str:
+    pretty = {"vip": "VIP", "all_access": "All Access", "general": "General Admission",
+              "guest": "Guest", "speaker": "Speaker", "volunteer": "Volunteer"}.get(ticket_type, ticket_type.title())
+    import html as _h
+    return f"""
+    <div style="border:2px solid #0A2463;border-radius:18px;padding:20px;margin:14px 0;background:#fff;display:flex;gap:16px;align-items:center">
+      <div style="flex-shrink:0">
+        <img src="data:image/png;base64,{qr_png_b64}" alt="ticket QR" width="160" height="160" style="display:block;border-radius:6px"/>
+      </div>
+      <div style="flex:1;font-family:-apple-system,sans-serif;color:#222">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:#C8102E;font-weight:700">Ticket · {_h.escape(pretty)}</div>
+        <div style="font-size:18px;font-weight:800;color:#0A2463;margin-top:4px">{_h.escape(holder)}</div>
+        <div style="font-size:13px;color:#444;margin-top:8px">{_h.escape(event_title)}</div>
+        <div style="font-size:12px;color:#666;margin-top:2px">{_h.escape(when)}{' · ' + _h.escape(where) if where else ''}</div>
+        <div style="font-size:10px;color:#888;margin-top:10px;line-height:1.4">Show this QR at the door. Admin staff will scan it to check you in.</div>
+      </div>
+    </div>
+    """
+
+
+async def send_rsvp_ticket_email(member: dict, event: dict, rsvp: dict) -> bool:
+    """Email the member their digital ticket(s) — one QR per attendee (member + each guest).
+    Idempotent: safe to call again after guest-list edits."""
+    if not RESEND_API_KEY:
+        logger.info(f"RSVP ticket email skipped (no RESEND_API_KEY) for {member.get('email')}")
+        return False
+    email = (member.get("email") or "").strip()
+    if not email:
+        return False
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    # Build QR cards
+    event_title = event.get("title", "Alpha Omega Phi Event")
+    when = ""
+    try:
+        from datetime import datetime as _dt
+        sa = event.get("start_at")
+        if sa:
+            d = _dt.fromisoformat(sa.replace("Z", "+00:00"))
+            when = d.strftime("%A, %b %d, %Y · %I:%M %p UTC")
+    except Exception:
+        when = event.get("start_at", "")
+    where = event.get("location", "")
+    cards_html = []
+    # Member ticket
+    member_token = make_ticket_token(event["id"], rsvp.get("ticket_id") or str(uuid.uuid4()), "member", rsvp.get("ticket_type", "general"), member.get("name", ""))
+    member_url = f"{frontend}/checkin/{member_token}"
+    cards_html.append(_ticket_card_html(member.get("name", "Member"), rsvp.get("ticket_type", "general"),
+                                        make_qr_png_b64(member_url), event_title, when, where))
+    # Guest tickets
+    for g in rsvp.get("guests", []) or []:
+        tid = g.get("ticket_id") or str(uuid.uuid4())
+        ttype = g.get("ticket_type", "general")
+        gtoken = make_ticket_token(event["id"], tid, "guest", ttype, g.get("name", ""))
+        gurl = f"{frontend}/checkin/{gtoken}"
+        cards_html.append(_ticket_card_html(g.get("name", "Guest"), ttype, make_qr_png_b64(gurl), event_title, when, where))
+    body = f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f7f5f0">
+      <h1 style="color:#0A2463;margin:0 0 4px;font-size:26px">You're going! 🎉</h1>
+      <div style="color:#666;font-size:13px">RSVP confirmed for <strong>{event_title}</strong></div>
+      <div style="background:#fff;border-radius:12px;padding:14px 18px;margin:18px 0;font-size:13px;line-height:1.55">
+        <div><strong>When:</strong> {when or 'TBA'}</div>
+        <div><strong>Where:</strong> {where or 'TBA'}</div>
+        <div><strong>Tickets:</strong> {len(cards_html)} ({1 + len(rsvp.get('guests', []) or [])} attendees total)</div>
+      </div>
+      {''.join(cards_html)}
+      <p style="font-size:12px;color:#888;margin-top:18px;line-height:1.6">Each person needs their own QR ticket at the door. To add or remove guests, head back to <a href="{frontend}/events/{event['id']}" style="color:#C8102E">your RSVP page</a>.</p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": RESEND_FROM,
+            "to": [email],
+            "subject": f"Your tickets — {event_title}",
+            "html": body,
+            "tags": [{"name": "type", "value": "rsvp_ticket"}, {"name": "event_id", "value": event["id"]}],
+        })
+        logger.info(f"RSVP ticket email sent to {email} for {event_title} ({len(cards_html)} tickets)")
+        return True
+    except Exception as e:
+        logger.warning(f"RSVP ticket email failed for {email}: {e}")
+        return False
+
+
+@api.get("/checkin/lookup/{token}")
+async def checkin_lookup(token: str):
+    """Decode a QR token and return ticket info — used by the /checkin/:token
+    landing page to show 'who is this'. Does NOT require auth (the page itself
+    enforces admin login before recording the check-in)."""
+    try:
+        payload = decode_ticket_token(token)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or expired ticket QR")
+    event = await db.events.find_one({"id": payload["event_id"]}, {"_id": 0})
+    if not event:
+        raise HTTPException(status_code=404, detail="Event no longer exists")
+    return {
+        "event": event_out(event),
+        "ticket_id": payload["ticket_id"],
+        "kind": payload["kind"],
+        "ticket_type": payload.get("ticket_type", "general"),
+        "name": payload.get("name", ""),
+    }
+
+
+@api.post("/checkin/scan/{token}")
+async def checkin_scan(token: str, user: dict = Depends(get_current_user)):
+    """Admin scans the QR. Token is decoded → check-in is recorded immediately.
+    Idempotent: subsequent scans return the existing check-in row with already_checked_in=true."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can scan tickets to check in attendees.")
+    try:
+        payload = decode_ticket_token(token)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or expired ticket QR")
+    event_id = payload["event_id"]
+    ticket_id = payload["ticket_id"]
+    ticket_type = payload.get("ticket_type", "general")
+    kind = payload["kind"]
+    holder_name = payload.get("name", "")
+    event = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not event:
+        raise HTTPException(status_code=404, detail="Event no longer exists")
+    # Look for an existing check-in row tied to this ticket_id
+    existing = await db.checkins.find_one({"event_id": event_id, "ticket_id": ticket_id}, {"_id": 0})
+    if existing:
+        return {"already_checked_in": True, "checkin": existing, "event": event_out(event)}
+    if kind == "member":
+        # Find the matching member RSVP row
+        rsvp = await db.rsvps.find_one({"event_id": event_id, "ticket_id": ticket_id})
+        if not rsvp:
+            # Token is valid but RSVP was cancelled
+            raise HTTPException(status_code=410, detail="This ticket is no longer valid (the member cancelled their RSVP).")
+        doc = {
+            "id": str(uuid.uuid4()),
+            "event_id": event_id,
+            "user_id": rsvp.get("user_id"),
+            "user_name": rsvp.get("user_name", holder_name),
+            "ticket_id": ticket_id,
+            "ticket_type": ticket_type,
+            "guest_name": "",
+            "checked_in_at": iso(now_utc()),
+            "checked_in_by": user["id"],
+            "checked_in_by_name": user.get("name", ""),
+        }
+    else:  # guest
+        # Find which RSVP this guest belongs to
+        rsvp = await db.rsvps.find_one({"event_id": event_id, "guests.ticket_id": ticket_id})
+        if not rsvp:
+            raise HTTPException(status_code=410, detail="This guest ticket is no longer on any RSVP.")
+        doc = {
+            "id": str(uuid.uuid4()),
+            "event_id": event_id,
+            "user_id": None,
+            "user_name": holder_name or "Guest",
+            "ticket_id": ticket_id,
+            "ticket_type": ticket_type,
+            "guest_name": holder_name,
+            "host_user_id": rsvp.get("user_id"),
+            "host_user_name": rsvp.get("user_name", ""),
+            "checked_in_at": iso(now_utc()),
+            "checked_in_by": user["id"],
+            "checked_in_by_name": user.get("name", ""),
+        }
+    await db.checkins.insert_one(doc)
+    doc.pop("_id", None)
+    return {"already_checked_in": False, "checkin": doc, "event": event_out(event)}
+
 
 # ---------- News ----------
 def news_out(n: dict) -> dict:

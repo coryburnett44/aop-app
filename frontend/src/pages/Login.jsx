@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -9,6 +9,8 @@ import { toast } from "sonner";
 export default function Login() {
     const { login } = useAuth();
     const navigate = useNavigate();
+    const [params] = useSearchParams();
+    const nextPath = params.get("next") || "/";
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
@@ -18,11 +20,15 @@ export default function Login() {
         e.preventDefault();
         setLoading(true);
         setError("");
-        const res = await login(email, password);
+        // Trim whitespace to defend against iOS/Safari autofill leaking a
+        // leading/trailing space — common cause of "credentials rejected".
+        const cleanEmail = (email || "").trim().toLowerCase();
+        const cleanPassword = (password || "").trim();
+        const res = await login(cleanEmail, cleanPassword);
         setLoading(false);
         if (res.ok) {
             toast.success("Welcome back!");
-            navigate("/");
+            navigate(nextPath || "/");
         } else {
             setError(res.error);
         }
@@ -40,6 +46,10 @@ export default function Login() {
                             id="email"
                             type="email"
                             autoComplete="email"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck="false"
+                            inputMode="email"
                             required
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}

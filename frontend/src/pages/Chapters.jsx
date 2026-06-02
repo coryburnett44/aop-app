@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { MapPin, Compass, Users as UsersIcon } from "lucide-react";
 
 export default function Chapters() {
@@ -14,10 +14,19 @@ export default function Chapters() {
             <div className="mt-10 grid md:grid-cols-2 gap-5">
                 {chapters.map((c) => (
                     <div key={c.id} className="bg-card rounded-2xl border border-border p-6 shadow-warm" data-testid={`chapter-${c.id}`}>
-                        <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary grid place-items-center font-heading font-black text-lg">
-                                {c.name.split(" ").map((s) => s[0]).join("").slice(0, 2)}
-                            </div>
+                        <div className="flex items-center gap-4">
+                            {c.logo_url ? (
+                                <img
+                                    src={mediaUrl(c.logo_url)}
+                                    alt={`${c.name} logo`}
+                                    className="w-16 h-16 rounded-2xl object-cover border-2 border-border shrink-0"
+                                    data-testid={`chapter-logo-${c.id}`}
+                                />
+                            ) : (
+                                <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary grid place-items-center font-heading font-black text-xl shrink-0">
+                                    {c.name.split(" ").map((s) => s[0]).join("").slice(0, 2)}
+                                </div>
+                            )}
                             <div>
                                 <h3 className="font-heading text-xl font-bold">{c.name}</h3>
                                 <div className="text-xs text-muted-foreground">Chartered {c.founded_year || "—"}</div>
