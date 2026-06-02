@@ -90,11 +90,11 @@ export default function Anniversary() {
                     Every Trendsetter has a story
                 </h2>
                 <p className="mt-4 text-slate-600 leading-relaxed">
-                    Want to share yours? Submit your decade-in-review photos and memories through the Documents tab —
+                    Want to share yours? Submit your decade-in-review photos and memories through the Photos tab —
                     we're building a commemorative program for the gala.
                 </p>
-                <Link to="/documents" className="inline-flex items-center gap-2 mt-6 text-primary font-bold hover:underline">
-                    Open documents <ArrowRight className="h-4 w-4" />
+                <Link to="/photos" className="inline-flex items-center gap-2 mt-6 text-primary font-bold hover:underline" data-testid="anniversary-photos-link">
+                    Open Photos <ArrowRight className="h-4 w-4" />
                 </Link>
             </section>
         </div>

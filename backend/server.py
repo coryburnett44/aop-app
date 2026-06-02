@@ -389,6 +389,7 @@ class ChapterIn(BaseModel):
     city: str = ""
     founded_year: Optional[int] = None
     description: str = ""
+    logo_url: str = ""
 
 class ChapterUpdateIn(BaseModel):
     name: Optional[str] = None
@@ -398,6 +399,7 @@ class ChapterUpdateIn(BaseModel):
     city: Optional[str] = None
     founded_year: Optional[int] = None
     description: Optional[str] = None
+    logo_url: Optional[str] = None
 
 class HoursLogIn(BaseModel):
     hours: float = Field(gt=0, le=1000)
@@ -1219,10 +1221,15 @@ def event_out(e: dict) -> dict:
     }
 
 @api.get("/events")
-async def list_events(upcoming: bool = False):
+async def list_events(upcoming: bool = False, include_sub_events: bool = False):
     query = {}
     if upcoming:
         query["start_at"] = {"$gte": iso(now_utc())}
+    # By default the main /events grid hides sub-events — members reach them
+    # by clicking into the parent (umbrella) event. Set include_sub_events=true
+    # to flatten the tree (used by Admin/Calendar).
+    if not include_sub_events:
+        query["parent_event_id"] = {"$in": [None, ""]}
     cursor = db.events.find(query, {"_id": 0}).sort("start_at", 1).limit(200)
     events = await cursor.to_list(200)
     return [event_out(e) for e in events]
@@ -1272,6 +1279,15 @@ async def rsvp_event(event_id: str, body: Optional[EventRsvpIn] = None, user: di
     e = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not e:
         raise HTTPException(status_code=404, detail="Event not found")
+    # Parent events (which group sub-events) cannot be RSVP'd directly — members
+    # RSVP individually to each sub-event listed underneath. This prevents the
+    # awkward "RSVP to the umbrella" UX that confuses everyone.
+    has_children = await db.events.find_one({"parent_event_id": event_id})
+    if has_children:
+        raise HTTPException(
+            status_code=400,
+            detail="This event is an umbrella — please RSVP to each sub-event below individually.",
+        )
     existing = await db.rsvps.find_one({"event_id": event_id, "user_id": user["id"]})
     if existing:
         prev_guests = len(existing.get("guests", []) or [])
@@ -1483,6 +1499,7 @@ def chapter_out(c: dict) -> dict:
         "region": c.get("region", ""),
         "founded_year": c.get("founded_year"),
         "description": c.get("description", ""),
+        "logo_url": c.get("logo_url", ""),
         "member_count": c.get("member_count", 0),
     }
 
@@ -1993,17 +2010,108 @@ async def list_photos(album: Optional[str] = None):
     items = await cursor.to_list(500)
     return [photo_out(p) for p in items]
 
+DEFAULT_PHOTO_ALBUMS = [
+    "Alpha Line", "Beta Line", "Gamma Line",
+    "Book Bag Giveaway", "Dorn VA Community Service",
+    "5-Year Anniversary", "7-Year Anniversary", "10-Year Anniversary",
+    "Commitment Ceremony 2018", "Commitment Ceremony 2019", "Commitment Ceremony 2020",
+    "Commitment Ceremony 2021", "Commitment Ceremony 2022", "Commitment Ceremony 2023",
+    "Commitment Ceremony 2024", "Commitment Ceremony 2025", "Commitment Ceremony 2026",
+    "Commitment Ceremony 2027", "Commitment Ceremony 2028", "Commitment Ceremony 2029",
+    "Commitment Ceremony 2030",
+    "Leadership Conference 2018", "Leadership Conference 2019", "Leadership Conference 2020",
+    "Leadership Conference 2021", "Leadership Conference 2022", "Leadership Conference 2023",
+    "Leadership Conference 2024", "Leadership Conference 2025", "Leadership Conference 2026",
+    "Leadership Conference 2027",
+    "Golf Tournament 2017", "Golf Tournament 2018", "Golf Tournament 2019",
+    "Golf Tournament 2020", "Golf Tournament 2021", "Golf Tournament 2022",
+    "Golf Tournament 2023", "Golf Tournament 2024", "Golf Tournament 2025",
+    "Golf Tournament 2026", "Golf Tournament 2027",
+    "Trendsetters Spirits Conference 2026", "Trendsetters Spirits Conference 2027",
+    "Trendsetters Spirits Conference 2028", "Trendsetters Spirits Conference 2029",
+    "Trendsetters Spirits Conference 2030",
+]
+
+
+async def seed_default_photo_albums():
+    """Insert each canonical album as a row in the photo_albums collection.
+    Only inserts new ones; never overwrites custom albums. Idempotent."""
+    for name in DEFAULT_PHOTO_ALBUMS:
+        await db.photo_albums.update_one(
+            {"name": name},
+            {"$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "name": name,
+                "is_default": True,
+                "created_by": None,
+                "created_by_name": "System",
+                "created_at": iso(now_utc()),
+            }},
+            upsert=True,
+        )
+
+
 @api.get("/photos/albums")
 async def list_photo_albums():
+    """Returns every album the chapter has — canonical + admin-created + any
+    albums a member auto-created on upload."""
+    albums = await db.photo_albums.find({}, {"_id": 0}).sort([("is_default", -1), ("name", 1)]).to_list(500)
+    # Augment with live photo counts so the UI can show 'Album X — 23 photos'.
     pipeline = [
         {"$match": {"is_deleted": {"$ne": True}}},
         {"$group": {"_id": "$album", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
     ]
-    out = []
+    counts = {}
     async for d in db.photos.aggregate(pipeline):
-        out.append({"album": d["_id"] or "general", "count": d["count"]})
-    return out
+        counts[d["_id"] or "general"] = d["count"]
+    return [
+        {
+            "id": a.get("id"),
+            "name": a["name"],
+            "count": counts.get(a["name"], 0),
+            "is_default": a.get("is_default", False),
+            "created_by_name": a.get("created_by_name", ""),
+        }
+        for a in albums
+    ]
+
+
+class AlbumIn(BaseModel):
+    name: str
+
+
+@api.post("/photos/albums")
+async def create_photo_album(body: AlbumIn, user: dict = Depends(get_current_user)):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Album name is required.")
+    existing = await db.photo_albums.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Album '{existing['name']}' already exists.")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "is_default": False,
+        "created_by": user["id"],
+        "created_by_name": user.get("name", ""),
+        "created_at": iso(now_utc()),
+    }
+    await db.photo_albums.insert_one(doc)
+    return {"id": doc["id"], "name": name, "count": 0, "is_default": False, "created_by_name": user.get("name", "")}
+
+
+@api.delete("/photos/albums/{album_id}")
+async def delete_photo_album(album_id: str, _: dict = Depends(admin_tab_dep("members"))):
+    """Admin-only: delete a custom album (default albums cannot be deleted).
+    Photos inside the album are NOT deleted — their `album` field stays so they
+    appear under a "Re-home me" state in the UI."""
+    a = await db.photo_albums.find_one({"id": album_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Album not found")
+    if a.get("is_default"):
+        raise HTTPException(status_code=400, detail="Default albums cannot be deleted.")
+    await db.photo_albums.delete_one({"id": album_id})
+    return {"ok": True}
 
 @api.post("/photos")
 async def upload_photo(
@@ -2021,10 +2129,25 @@ async def upload_photo(
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 10MB)")
     result = put_object(path, data, content_type)
+    album_name = (album or "general").strip() or "general"
+    # Auto-create the album row if it doesn't already exist so it shows up in
+    # the album list even before another photo is added.
+    await db.photo_albums.update_one(
+        {"name": album_name},
+        {"$setOnInsert": {
+            "id": str(uuid.uuid4()),
+            "name": album_name,
+            "is_default": False,
+            "created_by": user["id"],
+            "created_by_name": user.get("name", ""),
+            "created_at": iso(now_utc()),
+        }},
+        upsert=True,
+    )
     doc = {
         "id": str(uuid.uuid4()),
         "title": title,
-        "album": album or "general",
+        "album": album_name,
         "storage_path": result["path"],
         "original_filename": file.filename,
         "content_type": content_type,
@@ -2036,6 +2159,63 @@ async def upload_photo(
     }
     await db.photos.insert_one(doc)
     return photo_out(doc)
+
+
+@api.post("/photos/bulk")
+async def upload_photos_bulk(
+    files: List[UploadFile] = File(...),
+    album: str = Form("general"),
+    user: dict = Depends(get_current_user),
+):
+    """Upload many photos at once into a single album. Returns
+    {uploaded: [...photo_out], failed: [{name, error}]}. Caps total batch at
+    50 files / 100 MB."""
+    if len(files) > 50:
+        raise HTTPException(status_code=400, detail="Upload up to 50 photos per batch.")
+    album_name = (album or "general").strip() or "general"
+    await db.photo_albums.update_one(
+        {"name": album_name},
+        {"$setOnInsert": {
+            "id": str(uuid.uuid4()), "name": album_name, "is_default": False,
+            "created_by": user["id"], "created_by_name": user.get("name", ""),
+            "created_at": iso(now_utc()),
+        }},
+        upsert=True,
+    )
+    uploaded, failed = [], []
+    total_bytes = 0
+    for f in files:
+        try:
+            data = await f.read()
+            if len(data) > 10 * 1024 * 1024:
+                failed.append({"name": f.filename, "error": "Over 10MB"}); continue
+            total_bytes += len(data)
+            if total_bytes > 100 * 1024 * 1024:
+                failed.append({"name": f.filename, "error": "Batch exceeded 100MB"}); continue
+            ext = (f.filename.rsplit(".", 1)[-1] if f.filename and "." in f.filename else "bin").lower()
+            if ext not in IMAGE_EXT:
+                failed.append({"name": f.filename, "error": "Not an image"}); continue
+            content_type = f.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
+            path = f"{APP_NAME}/photos/{user['id']}/{uuid.uuid4()}.{ext}"
+            result = put_object(path, data, content_type)
+            doc = {
+                "id": str(uuid.uuid4()),
+                "title": "",
+                "album": album_name,
+                "storage_path": result["path"],
+                "original_filename": f.filename,
+                "content_type": content_type,
+                "size": result.get("size", len(data)),
+                "uploaded_by": user["id"],
+                "uploaded_by_name": user.get("name", ""),
+                "is_deleted": False,
+                "created_at": iso(now_utc()),
+            }
+            await db.photos.insert_one(doc)
+            uploaded.append(photo_out(doc))
+        except Exception as e:
+            failed.append({"name": getattr(f, "filename", "unknown"), "error": str(e)})
+    return {"uploaded": uploaded, "failed": failed}
 
 @api.delete("/photos/{photo_id}")
 async def delete_photo(photo_id: str, user: dict = Depends(get_current_user)):
@@ -2482,6 +2662,7 @@ async def startup():
     await reconcile_tiers()
     await reconcile_awards()
     await seed_anniversary_subevents()
+    await seed_default_photo_albums()
     # Start background tasks
     asyncio.create_task(_chat_digest_loop())
 
@@ -3132,6 +3313,151 @@ async def upload_form_link_image(file: UploadFile = File(...), user: dict = Depe
     return {"url": f"/api/files/{storage_path}", "size": total}
 
 
+# ---------- Generic admin image upload (chapter logo / cause / news / chat group) ----------
+async def _upload_image(file: UploadFile, prefix: str, user: dict, max_mb: int = 10) -> dict:
+    chunks: list = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_mb * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=f"Image must be under {max_mb} MB")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    fname = (file.filename or "image.jpg").replace("/", "_")
+    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
+    if ext not in IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
+    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
+    file_id = str(uuid.uuid4())
+    storage_path = f"{prefix}/{file_id}/{fname}"
+    await asyncio.to_thread(put_object, storage_path, data, content_type)
+    await db.chat_files.insert_one({
+        "id": file_id, "filename": fname, "storage_path": storage_path,
+        "content_type": content_type, "size": total, "kind": "image",
+        "uploaded_by": user["id"], "is_deleted": False, "created_at": iso(now_utc()),
+    })
+    return {"url": f"/api/files/{storage_path}", "size": total}
+
+
+@api.post("/chapters/upload-logo")
+async def chapter_logo_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("chapters"))):
+    return await _upload_image(file, "chapter-logos", user)
+
+
+@api.post("/causes/upload-image")
+async def cause_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("causes"))):
+    return await _upload_image(file, "causes", user)
+
+
+@api.post("/news/upload-image")
+async def news_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("news"))):
+    return await _upload_image(file, "news", user)
+
+
+@api.post("/chat/group-photo-upload")
+async def chat_group_photo_upload(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Any logged-in user can upload — they'll only be able to attach the
+    resulting URL to a conversation they belong to (enforced by /conversations PUT)."""
+    return await _upload_image(file, "chat-groups", user, max_mb=8)
+
+
+# ---------- Schedule a Meeting (admin-editable cards) ----------
+class MeetingCardIn(BaseModel):
+    name: str
+    title: str = ""
+    description: str = ""
+    image_url: str = ""
+    button_label: str = "Book Meeting"
+    button_url: str
+    order: int = 0
+
+
+class MeetingCardUpdateIn(BaseModel):
+    name: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    button_label: Optional[str] = None
+    button_url: Optional[str] = None
+    order: Optional[int] = None
+
+
+def _meeting_out(d: dict) -> dict:
+    return {
+        "id": d["id"],
+        "name": d.get("name", ""),
+        "title": d.get("title", ""),
+        "description": d.get("description", ""),
+        "image_url": d.get("image_url", ""),
+        "button_label": d.get("button_label", "Book Meeting"),
+        "button_url": d.get("button_url", ""),
+        "order": d.get("order", 0),
+        "created_at": d.get("created_at"),
+    }
+
+
+@api.get("/meeting-cards")
+async def list_meeting_cards():
+    rows = await db.meeting_cards.find({}, {"_id": 0}).sort([("order", 1), ("created_at", 1)]).to_list(200)
+    return [_meeting_out(r) for r in rows]
+
+
+@api.post("/meeting-cards")
+async def create_meeting_card(body: MeetingCardIn, admin: dict = Depends(admin_tab_dep("members"))):
+    if not body.name.strip() or not body.button_url.strip():
+        raise HTTPException(status_code=400, detail="Name and Book Meeting URL are required.")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip(),
+        "title": body.title.strip(),
+        "description": body.description.strip(),
+        "image_url": body.image_url.strip(),
+        "button_label": (body.button_label or "Book Meeting").strip(),
+        "button_url": body.button_url.strip(),
+        "order": body.order,
+        "created_by_name": admin.get("name", ""),
+        "created_at": iso(now_utc()),
+        "updated_at": iso(now_utc()),
+    }
+    await db.meeting_cards.insert_one(doc)
+    return _meeting_out(doc)
+
+
+@api.put("/meeting-cards/{card_id}")
+async def update_meeting_card(card_id: str, body: MeetingCardUpdateIn, _: dict = Depends(admin_tab_dep("members"))):
+    existing = await db.meeting_cards.find_one({"id": card_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Meeting card not found")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "name" in updates and not str(updates["name"]).strip():
+        raise HTTPException(status_code=400, detail="Name cannot be blank.")
+    if "button_url" in updates and not str(updates["button_url"]).strip():
+        raise HTTPException(status_code=400, detail="Book Meeting URL cannot be blank.")
+    updates["updated_at"] = iso(now_utc())
+    await db.meeting_cards.update_one({"id": card_id}, {"$set": updates})
+    out = await db.meeting_cards.find_one({"id": card_id}, {"_id": 0})
+    return _meeting_out(out)
+
+
+@api.delete("/meeting-cards/{card_id}")
+async def delete_meeting_card(card_id: str, _: dict = Depends(admin_tab_dep("members"))):
+    existing = await db.meeting_cards.find_one({"id": card_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Meeting card not found")
+    await db.meeting_cards.delete_one({"id": card_id})
+    return {"ok": True}
+
+
+@api.post("/meeting-cards/upload-image")
+async def meeting_card_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("members"))):
+    return await _upload_image(file, "meeting-cards", user)
+
+
+
+
 
 
 # ---------- AOP Gear (catalog) ----------
@@ -3452,7 +3778,11 @@ async def events_calendar(month: Optional[str] = None):
 
 class CheckInIn(BaseModel):
     user_id: Optional[str] = None
-    guest_name: Optional[str] = None  # for walk-in non-members
+    guest_name: Optional[str] = None  # for walk-in non-members or a member's invited guest
+    # If guest_name is supplied AND host_user_id points at the member who RSVP'd
+    # this guest, the check-in record links them so reports can group guests
+    # under the inviting member.
+    host_user_id: Optional[str] = None
     ticket_type: Literal["vip", "all_access", "general", "guest", "speaker", "volunteer"] = "general"
     note: str = ""
 
@@ -3472,6 +3802,10 @@ async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(admin_t
             raise HTTPException(status_code=404, detail="Member not found")
         display = u.get("name", "")
     else:
+        # Check duplicate guest check-in on the same event
+        gx = await db.checkins.find_one({"event_id": event_id, "user_id": None, "user_name": body.guest_name, "host_user_id": body.host_user_id})
+        if gx:
+            raise HTTPException(status_code=400, detail="This guest has already been checked in")
         display = body.guest_name
     doc = {
         "id": str(uuid.uuid4()),
@@ -3479,6 +3813,8 @@ async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(admin_t
         "event_title": event.get("title", ""),
         "user_id": body.user_id,
         "user_name": display,
+        "host_user_id": body.host_user_id,  # populated only for guest rows
+        "is_guest": body.user_id is None,
         "ticket_type": body.ticket_type,
         "note": body.note,
         "checked_in_by": admin["id"],
@@ -3489,6 +3825,57 @@ async def check_in(event_id: str, body: CheckInIn, admin: dict = Depends(admin_t
     out = dict(doc)
     out.pop("_id", None)
     return out
+
+
+@api.get("/events/{event_id}/check-in-roster")
+async def check_in_roster(event_id: str, _: dict = Depends(admin_tab_dep("events"))):
+    """Flat roster for the check-in screen: every RSVP'd member + every guest
+    they brought + every already-checked-in walk-in, each with status."""
+    event = await db.events.find_one({"id": event_id})
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    rsvps = await db.rsvps.find({"event_id": event_id}, {"_id": 0}).to_list(2000)
+    checkins = await db.checkins.find({"event_id": event_id}, {"_id": 0}).to_list(2000)
+    checked_in_member_ids = {c["user_id"] for c in checkins if c.get("user_id")}
+    checked_in_guest_keys = {(c.get("host_user_id"), c.get("user_name")) for c in checkins if c.get("is_guest")}
+    rows = []
+    for r in rsvps:
+        u = await db.users.find_one({"id": r["user_id"]}, {"_id": 0, "name": 1, "email": 1, "avatar_url": 1, "line_name": 1})
+        rows.append({
+            "kind": "member",
+            "user_id": r["user_id"],
+            "host_user_id": None,
+            "name": (u or {}).get("name", r.get("user_name", "")),
+            "email": (u or {}).get("email", ""),
+            "avatar_url": (u or {}).get("avatar_url", ""),
+            "line_name": (u or {}).get("line_name", ""),
+            "ticket_type": r.get("ticket_type", "general"),
+            "checked_in": r["user_id"] in checked_in_member_ids,
+        })
+        for g in (r.get("guests") or []):
+            gname = g.get("name") if isinstance(g, dict) else str(g)
+            rows.append({
+                "kind": "guest",
+                "user_id": None,
+                "host_user_id": r["user_id"],
+                "host_name": (u or {}).get("name", r.get("user_name", "")),
+                "name": gname,
+                "email": (g.get("email") if isinstance(g, dict) else ""),
+                "ticket_type": (g.get("ticket_type") if isinstance(g, dict) else "guest"),
+                "checked_in": (r["user_id"], gname) in checked_in_guest_keys,
+            })
+    # Also include any walk-in check-ins not on the RSVP list
+    for c in checkins:
+        if not c.get("user_id") and not c.get("host_user_id"):
+            rows.append({
+                "kind": "walkin",
+                "user_id": None,
+                "host_user_id": None,
+                "name": c.get("user_name", ""),
+                "ticket_type": c.get("ticket_type", "guest"),
+                "checked_in": True,
+            })
+    return rows
 
 @api.get("/events/{event_id}/check-ins")
 async def list_checkins(event_id: str, _: dict = Depends(admin_tab_dep("events"))):
@@ -4505,6 +4892,7 @@ chat_hub = ChatHub()
 class ConversationCreateIn(BaseModel):
     member_ids: List[str]  # other members (the current user is auto-included)
     name: Optional[str] = None
+    avatar_url: Optional[str] = None  # group photo (any member can change later)
     type: Optional[Literal["dm", "group"]] = None  # auto-detected if None
 
 class ConversationUpdateIn(BaseModel):
@@ -4606,7 +4994,7 @@ async def create_conversation(body: ConversationCreateIn, user: dict = Depends(g
         "id": str(uuid.uuid4()),
         "type": ctype,
         "name": body.name,
-        "avatar_url": "",
+        "avatar_url": body.avatar_url or "",
         "member_ids": members,
         "created_by": user["id"],
         "created_at": _now_iso(),
@@ -5023,12 +5411,19 @@ ANNIVERSARY_PARENT_TITLE = "Alpha Omega Phi 10-Year Anniversary"
 ANNIVERSARY_START = datetime(2027, 7, 29, 0, 0, 0, tzinfo=timezone.utc)
 ANNIVERSARY_END = datetime(2027, 7, 31, 23, 59, 59, tzinfo=timezone.utc)
 ANNIVERSARY_SUB_EVENTS = [
-    {"title": "Transportation Buses to Sip and Paint", "category": "transportation", "allows_ticket_types": False, "day_offset": 0, "hour": 16},
-    {"title": "Sip and Paint",                          "category": "social",         "allows_ticket_types": True,  "day_offset": 0, "hour": 18},
-    {"title": "Banquet",                                "category": "formal",         "allows_ticket_types": True,  "day_offset": 1, "hour": 18},
-    {"title": "Transportation Buses to Top Golf",       "category": "transportation", "allows_ticket_types": False, "day_offset": 2, "hour": 11},
-    {"title": "Top Golf",                               "category": "social",         "allows_ticket_types": True,  "day_offset": 2, "hour": 13},
+    {"title": "Transportation to Sip & Paint", "category": "transportation", "allows_ticket_types": True, "day_offset": 0, "hour": 16},
+    {"title": "Sip & Paint",                   "category": "social",         "allows_ticket_types": True, "day_offset": 0, "hour": 18},
+    {"title": "Sneaker Ball Banquet",          "category": "formal",         "allows_ticket_types": True, "day_offset": 1, "hour": 18},
+    {"title": "Transportation to Top Golf",    "category": "transportation", "allows_ticket_types": True, "day_offset": 2, "hour": 11},
+    {"title": "Top Golf",                      "category": "social",         "allows_ticket_types": True, "day_offset": 2, "hour": 13},
 ]
+# Legacy titles that the seeder needs to clean up if they still exist from earlier names.
+ANNIVERSARY_LEGACY_TITLES = {
+    "Transportation Buses to Sip and Paint",
+    "Sip and Paint",
+    "Banquet",
+    "Transportation Buses to Top Golf",
+}
 ANNIVERSARY_ALLOWED_TITLES = {ANNIVERSARY_PARENT_TITLE, *(s["title"] for s in ANNIVERSARY_SUB_EVENTS)}
 
 async def seed_anniversary_subevents():
@@ -5103,6 +5498,7 @@ async def seed_anniversary_subevents():
                 {"$or": [
                     {"parent_event_id": parent["id"]},
                     {"category": "anniversary"},
+                    {"title": {"$in": list(ANNIVERSARY_LEGACY_TITLES)}},
                 ]},
                 {"title": {"$nin": list(ANNIVERSARY_ALLOWED_TITLES)}},
             ]
@@ -5114,6 +5510,19 @@ async def seed_anniversary_subevents():
         await db.rsvps.delete_many({"event_id": e["id"]})
         await db.checkins.delete_many({"event_id": e["id"]})
         logger.info(f"Removed stale anniversary event: {e.get('title')}")
+
+    # Wipe ALL non-anniversary events on startup so the events page is clean.
+    # The Anniversary tree (parent + its 5 sub-events) is the only canonical set
+    # right now per the chapter. Admins re-seed via the UI when they add real events.
+    allowed_ids = {parent["id"]}
+    async for sub in db.events.find({"parent_event_id": parent["id"]}, {"_id": 0, "id": 1}):
+        allowed_ids.add(sub["id"])
+    other = db.events.find({"id": {"$nin": list(allowed_ids)}}, {"_id": 0, "id": 1, "title": 1})
+    async for e in other:
+        await db.events.delete_one({"id": e["id"]})
+        await db.rsvps.delete_many({"event_id": e["id"]})
+        await db.checkins.delete_many({"event_id": e["id"]})
+        logger.info(f"Removed legacy event: {e.get('title')}")
 
 
 # ---------- Email Signatures (personal + org-wide) ----------

@@ -113,7 +113,7 @@ export default function Gear() {
             </section>
 
             <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
-                <DialogContent className="max-w-2xl p-0 overflow-hidden max-h-[92vh] sm:max-h-[90vh]">
+                <DialogContent className="max-w-2xl p-0 overflow-hidden max-h-[92vh] sm:max-h-[90vh] flex flex-col">
                     {active && <GearCheckout item={active} user={user} onClose={() => setActive(null)} />}
                 </DialogContent>
             </Dialog>
@@ -211,11 +211,11 @@ function GearCheckout({ item, user, onClose }) {
     const canCheckout = (!item.colors?.length || color) && (!item.sizes?.length || size);
 
     return (
-        <div className="grid sm:grid-cols-2 overflow-y-auto" data-testid={`gear-dialog-${item.id}`}>
-            <div className="aspect-square sm:aspect-auto bg-slate-100 sm:sticky sm:top-0 sm:h-full overflow-hidden">
+        <div className="flex flex-col sm:grid sm:grid-cols-2 overflow-y-auto flex-1 min-h-0" data-testid={`gear-dialog-${item.id}`}>
+            <div className="w-full h-52 sm:h-auto sm:aspect-auto sm:sticky sm:top-0 sm:max-h-full bg-slate-100 overflow-hidden shrink-0">
                 {activeImage && <img src={mediaUrl(activeImage)} alt={item.name} className="w-full h-full object-cover" />}
             </div>
-            <div className="p-6 overflow-y-auto">
+            <div className="p-5 sm:p-6 overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl" style={{ color: NAVY }}>{item.name}</DialogTitle></DialogHeader>
                 <div className="font-heading font-black text-3xl mt-2" style={{ color: RED }}>${item.price.toFixed(2)}</div>
                 {item.sku && <div className="text-xs text-slate-500 mt-1 inline-flex items-center gap-1"><Tag className="h-3 w-3" />SKU: {item.sku}</div>}

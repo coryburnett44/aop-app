@@ -27,6 +27,7 @@ const LINKS = [
     { to: "/donations", label: "Donate" },
     { to: "/omega", label: "Omega" },
     { to: "/news", label: "News" },
+    { to: "/schedule-meeting", label: "Meet" },
 ];
 
 export default function Navbar() {

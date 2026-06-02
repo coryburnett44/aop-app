@@ -61,6 +61,7 @@ function App() {
                             <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
                             <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
                             <Route path="/chat/:conversationId" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+                            <Route path="/schedule-meeting" element={<ProtectedRoute><ScheduleMeeting /></ProtectedRoute>} />
                             <Route path="/hours" element={<ProtectedRoute><Hours /></ProtectedRoute>} />
                             <Route path="/page/:slug" element={<CmsPage />} />
                             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />

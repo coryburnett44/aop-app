@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Input } from "../components/ui/input";
@@ -8,7 +8,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import AdminDashboard from "./AdminDashboard";
@@ -289,7 +289,29 @@ function NewsDialog({ article, onSaved, trigger }) {
                         <Textarea rows={10} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="rounded-xl" data-testid="news-body-input" />
                     </div>
                     <div className="grid sm:grid-cols-2 gap-4">
-                        <div><Label>Cover image URL</Label><Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div>
+                            <Label>Cover image</Label>
+                            <div className="flex items-center gap-2 mt-1.5">
+                                <Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl flex-1" placeholder="https://… or upload" />
+                                <label className="cursor-pointer">
+                                    <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
+                                        <span data-testid="news-image-upload-btn"><Upload className="h-3.5 w-3.5 mr-1" />Upload</span>
+                                    </Button>
+                                    <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                                        const f = e.target.files?.[0]; if (!f) return;
+                                        const fd = new FormData(); fd.append("file", f);
+                                        try {
+                                            const { data } = await api.post("/news/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                                            setForm((p) => ({ ...p, cover_image: data.url }));
+                                            toast.success("Cover photo uploaded");
+                                        } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
+                                    }} />
+                                </label>
+                            </div>
+                            {form.cover_image && (
+                                <img src={mediaUrl(form.cover_image)} alt="Preview" className="mt-2 w-full max-h-32 object-cover rounded-xl border border-border" />
+                            )}
+                        </div>
                         <div><Label>Tags (comma separated)</Label><Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     </div>
                 </div>
@@ -952,8 +974,9 @@ function ChaptersAdmin() {
             <div className="grid md:grid-cols-2 gap-4">
                 {items.map((c) => (
                     <div key={c.id} className="bg-card border border-border rounded-2xl p-5" data-testid={`admin-chapter-${c.id}`}>
-                        <div className="flex items-start justify-between">
-                            <div>
+                        <div className="flex items-start gap-3">
+                            {c.logo_url && <img src={mediaUrl(c.logo_url)} alt={c.name} className="w-12 h-12 rounded-xl object-cover border border-border shrink-0" />}
+                            <div className="flex-1 min-w-0">
                                 <div className="font-heading font-semibold text-lg">{c.name}</div>
                                 <div className="text-sm text-muted-foreground">
                                     {c.region && <>{c.region} region</>}
@@ -962,7 +985,7 @@ function ChaptersAdmin() {
                                 </div>
                                 <div className="text-xs text-muted-foreground mt-1">Founded {c.founded_year || "—"} · {c.member_count} members</div>
                             </div>
-                            <div className="flex gap-1">
+                            <div className="flex gap-1 shrink-0">
                                 <ChapterDialog chapter={c} onSaved={load} trigger={<Button variant="outline" size="sm" className="rounded-full">Edit</Button>} />
                                 <Button variant="ghost" size="icon" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                             </div>
@@ -983,6 +1006,7 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
         state: chapter?.state || "",
         founded_year: chapter?.founded_year || "",
         description: chapter?.description || "",
+        logo_url: chapter?.logo_url || "",
     });
     async function save() {
         if (!form.name) { toast.error("Pick a chapter from the list"); return; }
@@ -995,10 +1019,20 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
             onSaved();
         } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     }
+    async function uploadLogo(file) {
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) { toast.error("Image must be under 10 MB"); return; }
+        const fd = new FormData(); fd.append("file", file);
+        try {
+            const { data } = await api.post("/chapters/upload-logo", fd, { headers: { "Content-Type": "multipart/form-data" } });
+            setForm((p) => ({ ...p, logo_url: data.url }));
+            toast.success("Logo uploaded");
+        } catch (e) { toast.error(e.response?.data?.detail || "Upload failed"); }
+    }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>{trigger}</DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">{chapter ? "Edit chapter" : "New chapter"}</DialogTitle></DialogHeader>
                 <div className="space-y-3 mt-2">
                     <div>
@@ -1018,6 +1052,21 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
                     </div>
                     <div><Label>Founded year</Label><Input type="number" value={form.founded_year} onChange={(e) => setForm({ ...form, founded_year: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div>
+                        <Label>Chapter logo</Label>
+                        <div className="flex items-center gap-2 mt-1.5">
+                            <Input value={form.logo_url} onChange={(e) => setForm({ ...form, logo_url: e.target.value })} className="rounded-xl flex-1" placeholder="https://… or upload" data-testid="chapter-logo-url" />
+                            <label className="cursor-pointer">
+                                <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
+                                    <span data-testid="chapter-logo-upload-btn"><Upload className="h-3.5 w-3.5 mr-1" />Upload</span>
+                                </Button>
+                                <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadLogo(e.target.files?.[0])} />
+                            </label>
+                        </div>
+                        {form.logo_url && (
+                            <img src={mediaUrl(form.logo_url)} alt="Logo preview" className="mt-2 w-24 h-24 rounded-2xl object-cover border border-border" />
+                        )}
+                    </div>
                 </div>
                 <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="chapter-save-btn">Save</Button></DialogFooter>
             </DialogContent>
