@@ -36,12 +36,14 @@ export default function Reports() {
                 <TabsTrigger value="rsvps" className="rounded-full" data-testid="reports-tab-rsvps">RSVPs</TabsTrigger>
                 <TabsTrigger value="hours" className="rounded-full" data-testid="reports-tab-hours">Hours</TabsTrigger>
                 <TabsTrigger value="donations" className="rounded-full" data-testid="reports-tab-donations">Donations</TabsTrigger>
+                <TabsTrigger value="dues" className="rounded-full" data-testid="reports-tab-dues">Dues approvals</TabsTrigger>
                 <TabsTrigger value="brief" className="rounded-full" data-testid="reports-tab-brief">Personnel Brief</TabsTrigger>
             </TabsList>
             <TabsContent value="members" className="mt-6"><MembersReport /></TabsContent>
             <TabsContent value="rsvps" className="mt-6"><RsvpsReport /></TabsContent>
             <TabsContent value="hours" className="mt-6"><HoursReport /></TabsContent>
             <TabsContent value="donations" className="mt-6"><DonationsReport /></TabsContent>
+            <TabsContent value="dues" className="mt-6"><ZeffyDuesApprovals /></TabsContent>
             <TabsContent value="brief" className="mt-6"><PersonnelBriefSection /></TabsContent>
         </Tabs>
     );
@@ -274,7 +276,12 @@ function HoursReport() {
         }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    useEffect(() => { run(); }, [view, year, period, chapterId, eventType, status]);
+    useEffect(() => {
+        // Clear rows immediately when the view changes so we don't render stale rows
+        // (which have a different shape/keys) against the new table headers.
+        setRows([]);
+        run();
+    }, [view, year, period, chapterId, eventType, status]);
 
     function exportCSV() {
         let headers;
@@ -708,3 +715,78 @@ function FilterSelect({ label, value, onChange, options, testid }) {
         </div>
     );
 }
+
+function ZeffyDuesApprovals() {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    async function load() {
+        setLoading(true);
+        try {
+            const { data } = await api.get("/transactions", { params: { status_filter: "pending" } });
+            // Only Zeffy-pending dues transactions need our manual approval
+            const pending = (data || []).filter((t) => t.provider === "zeffy" && t.status === "pending");
+            setRows(pending);
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not load pending transactions");
+        }
+        setLoading(false);
+    }
+    useEffect(() => { load(); }, []);
+
+    async function approve(tx) {
+        if (!window.confirm(`Approve ${tx.user_name}'s Zeffy dues payment of $${tx.amount}? Their membership will be extended 365 days.`)) return;
+        try {
+            await api.put(`/transactions/${tx.id}/approve-zeffy`);
+            toast.success("Approved — membership extended");
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Approval failed");
+        }
+    }
+
+    async function reject(tx) {
+        if (!window.confirm(`Reject ${tx.user_name}'s payment? This will delete the pending transaction.`)) return;
+        try {
+            await api.delete(`/transactions/${tx.id}`);
+            toast.success("Pending transaction deleted");
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Delete failed");
+        }
+    }
+
+    if (loading) return <div className="text-muted-foreground text-center py-10">Loading…</div>;
+
+    return (
+        <div data-testid="zeffy-approvals-panel">
+            <div className="bg-card rounded-2xl border p-5 mb-4">
+                <div className="text-sm font-semibold mb-1">Pending Zeffy dues payments</div>
+                <p className="text-xs text-muted-foreground">Members who paid via Zeffy and submitted their receipt for verification. Approving extends their membership 365 days.</p>
+            </div>
+            {rows.length === 0 ? (
+                <div className="bg-card rounded-2xl border border-dashed border-border p-10 text-center" data-testid="zeffy-approvals-empty">
+                    <div className="font-heading text-lg">All caught up</div>
+                    <div className="text-sm text-muted-foreground mt-1">No pending Zeffy dues payments to verify.</div>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    {rows.map((t) => (
+                        <div key={t.id} className="bg-card border-2 border-amber-300 bg-amber-50/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3" data-testid={`zeffy-approval-row-${t.id}`}>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-heading font-bold text-lg">{t.user_name}</div>
+                                <div className="text-sm text-muted-foreground">${t.amount} · {t.description}</div>
+                                <div className="text-xs text-muted-foreground mt-0.5">Submitted {t.created_at && format(parseISO(t.created_at), "MMM d, yyyy")}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button variant="outline" size="sm" onClick={() => reject(t)} className="rounded-full" data-testid={`zeffy-reject-${t.id}`}>Reject</Button>
+                                <Button onClick={() => approve(t)} className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white" data-testid={`zeffy-approve-${t.id}`}>Approve & extend membership</Button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+

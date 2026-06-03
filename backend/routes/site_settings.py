@@ -44,6 +44,7 @@ def make_default_settings(iso, now_utc):
             "countdown": True,
             "pillars": True,
             "leadership_team": True,
+            "leaderboard": True,
             "family_pulse": True,
             "upcoming_events": True,
             "news": True,
@@ -136,6 +137,9 @@ def register(api, *, db, admin_tab_dep, iso, now_utc):
         sec_updated = False
         if "leadership_team" not in sec:
             sec["leadership_team"] = True
+            sec_updated = True
+        if "leaderboard" not in sec:
+            sec["leaderboard"] = True
             sec_updated = True
         if "secondary_banner" in sec:
             sec.pop("secondary_banner", None)

@@ -17,6 +17,7 @@ const HOME_SECTION_KEYS = [
     { key: "countdown", label: "10-year countdown" },
     { key: "pillars", label: "Three pillars" },
     { key: "leadership_team", label: "Leadership Team banners" },
+    { key: "leaderboard", label: "Community Service Leader Board" },
     { key: "family_pulse", label: "New members + birthdays" },
     { key: "upcoming_events", label: "Upcoming events" },
     { key: "news", label: "News & stories" },

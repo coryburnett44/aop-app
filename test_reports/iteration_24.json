@@ -1,0 +1,51 @@
+{
+  "summary": "Phase Y — Community Service Leaderboard + Zeffy dues — backend FULLY validated (15/15 pytest pass after one fix). Frontend: leaderboard widget on /home, Zeffy checkout on /profile, admin dues approvals panel, and home-section-leaderboard toggle all render and function. Found 1 CRITICAL frontend bug in ZeffyCheckout.jsx popup detection + 1 backend bug in tx_out missing provider field (FIXED by testing agent).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tx_out helper in server.py", "issue": "Was not returning provider/purpose/zeffy_confirmation/approved_at/approved_by fields, which broke ZeffyDuesApprovals filter `t.provider === 'zeffy'` on frontend (panel always empty). FIXED by testing agent — added these fields to tx_out()."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ZeffyCheckout.jsx (line 33-41)", "issue": "openZeffy() uses `noopener,noreferrer` window features. Modern browsers (Chrome/Firefox) return `null` from window.open() when noopener is specified — even on success. The code then treats null as 'popup blocked' and forcibly navigates the CURRENT tab to Zeffy via window.location.href, abandoning the page. User never sees the 'I completed my Zeffy payment' button and the entire confirmation flow is broken in production. Fix: drop the `noopener,noreferrer` arg (or set opened=true regardless), since target=_blank already isolates the opener.", "selector": "[data-testid='zeffy-open-btn']", "priority": "CRITICAL"},
+      {"component": "Profile.jsx / ZeffyCheckout receipt input", "issue": "Console warning: 'A component is changing an uncontrolled input to be controlled' on profile mount. Minor — should initialize reference state to '' (it already is, so likely on a different input). Non-blocking.", "selector": "[data-testid='zeffy-ref-input']", "priority": "LOW"},
+      {"component": "Reports.jsx HoursReport", "issue": "React key warning STILL present despite the rows=[] reset on view change. Warning: 'Encountered two children with the same key' fires when switching hours view tabs (Individual entries → By chapter etc.). The rows=[] reset addresses one symptom but the duplicate key originates elsewhere (likely .map without unique keys in totals tiles or filter options). Same issue flagged in iteration_23.", "selector": "[data-testid='hours-view-by-chapter']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Zeffy approve in admin reports → row removal", "issue": "After clicking zeffy-approve-{tx_id} (with window.confirm accepted), the row count stayed at 1 instead of becoming 0. The backend approval succeeded (200) and tx moved to status=completed (verified via API). The UI is likely re-fetching but the filter doesn't drop the row, or the local state isn't being mutated. Worth verifying the .filter((t)=>t.id!==tx.id) call in approve handler.", "affected_selectors": ["zeffy-approval-row-{tx_id}", "zeffy-approve-{tx_id}"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_y.py",
+    "/app/test_reports/pytest/phase_y_results.xml"
+  ],
+  "action_items": [
+    "[CRITICAL] Fix ZeffyCheckout.jsx popup detection — remove `noopener,noreferrer` from window.open args OR set opened=true unconditionally OR use a different popup-blocking detection. Currently the WHOLE flow is broken in real browsers because window.open returns null with noopener and the code navigates the current tab away.",
+    "[MEDIUM] Verify ZeffyDuesApprovals row removal after approve — current code may not be filtering out the approved tx_id from local state. Re-fetch after approve as backup.",
+    "[MEDIUM] React key warning in HoursReport persists despite Phase Y fix; audit all .map() calls in Reports.jsx HoursReport for non-unique keys (totals tiles, by_member/by_chapter/by_period rows likely missing unique keys).",
+    "[INFO] tx_out fix applied — please verify other admin transaction views (PayPal/donations) still render correctly with the new fields exposed."
+  ],
+  "critical_code_review_comments": [
+    "server.py /leaderboards/community-service correctly: groups only status='approved' hours, sorts by hours DESC, slices to top 5, enriches members with chapter via user lookup, handles 'unassigned' chapter bucket. period=year uses _period_to_range; period=all leaves filter open; default quarter computes Q from utcnow().",
+    "tx_out (BEFORE FIX) was dropping provider/purpose/zeffy_confirmation/approved_at — this would have made the Zeffy approvals panel ALWAYS empty in real frontend usage. Tests passed only because we queried raw DB-shaped txs. Now fixed; please verify nothing else depends on the slimmer tx_out shape.",
+    "approve-zeffy endpoint: provider check (400) precedes status check (already)/ membership extension — correct ordering. Idempotent path returns {ok:true, already:true} without re-extending — verified.",
+    "ZeffyConfirmIn pydantic constraint: min_length=2. Empty AND single-char both return 422 — verified. Good defensive validation.",
+    "ZeffyCheckout.jsx openZeffy: BUG — passing `noopener,noreferrer` to window.open() makes the function return null in Chrome/Firefox/Safari, so the popup-blocked fallback always fires and navigates the user away. CRITICAL.",
+    "Reports.jsx ZeffyDuesApprovals fetches /transactions and filters by provider==='zeffy' && status==='pending'. With tx_out fix this now works. The approve handler should also locally remove the row OR re-fetch after success.",
+    "site_settings home_sections migration correctly adds 'leaderboard' default — toggle present at home-section-leaderboard data-testid in Admin → Pages.",
+    "Hours regression: /api/me/hours/summary + /api/reports/hours/summary?group_by=chapter still return 200 with expected shape — no regression from Phase Y changes."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (tx_out helper — added provider, purpose, zeffy_confirmation, approved_at, approved_by, approved_by_name fields)",
+    "/app/backend/tests/test_phase_y.py (new — 15 tests covering leaderboard, zeffy config/confirm/approve, regression)"
+  ],
+  "success_rate": {"backend": "100% (15/15 after tx_out fix)", "frontend": "~80% — leaderboard + admin approval panel + site toggle work; Zeffy member flow BROKEN in production-like browsers due to noopener bug"},
+  "test_credentials": "admin@clubhaven.app / Admin123!  ·  member@clubhaven.app / Member123!",
+  "seed_data_creation": "Created and cleaned up ~5 TEST_ prefixed Zeffy pending transactions during backend tests (cleanup fixture deletes them via DELETE /api/transactions/{id}). Frontend test left 1 approved Zeffy tx (TEST-REF-FE-XYZ) on Riley Chen — already completed/approved, not blocking.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase Y coverage in /app/backend/tests/test_phase_y.py (15 tests passing). Covers: GET /api/leaderboards/community-service (5 tests: shape, chapter row keys, member row keys, period=year label, only-approved-counted), GET /api/payments/zeffy/config (1 test), POST /api/payments/zeffy/confirm (3 tests: create pending, short/empty confirmation → 422), PUT /api/transactions/{id}/approve-zeffy (4 tests: member 403, admin approve+extend membership, idempotent already:true, non-zeffy → 400), regression /me/hours/summary + /reports/hours/summary group_by=chapter (2 tests). IMPORTANT: backend tx_out helper was updated to include provider/purpose/zeffy_confirmation/approved_at/approved_by/approved_by_name fields — this was needed for the admin frontend to filter Zeffy txs. KNOWN OPEN BUG: ZeffyCheckout.jsx line 34 uses window.open(url, '_blank', 'noopener,noreferrer') which returns null in Chrome/Firefox/Safari → fallback navigates current tab. The full member→admin Zeffy flow is broken in real browsers (Playwright test only passed by mocking window.open to return a truthy object).",
+  "rca of the issue": "Two issues found: (1) Backend tx_out helper omitted provider/purpose/approved_* fields → frontend ZeffyDuesApprovals filter `t.provider==='zeffy'` always returned empty. Reproduce: POST /payments/zeffy/confirm as member, then GET /transactions as admin — provider field missing. FIX APPLIED: added 6 missing fields to tx_out. (2) ZeffyCheckout.jsx openZeffy() calls window.open(url, '_blank', 'noopener,noreferrer'). Per HTML spec & MDN, browsers return null from window.open when noopener is set even on successful popup. Code then treats null as popup-blocked and runs window.location.href = url, navigating current tab to Zeffy and abandoning the confirmation UI. Reproduce: visit /profile as member with a real browser (no playwright override), click 'Pay dues with Zeffy' → entire tab navigates to zeffy.com, user can no longer return to confirm. MITIGATION: drop 'noopener,noreferrer' from window.open args (target=_blank already implies opener isolation on modern browsers), OR call setOpened(true) before the popup-block check, OR check `w === undefined` instead of `!w`."
+}

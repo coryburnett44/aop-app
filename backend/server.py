@@ -2522,6 +2522,12 @@ def tx_out(t: dict) -> dict:
         "recorded_by": t.get("recorded_by"),
         "recorded_by_name": t.get("recorded_by_name", ""),
         "created_at": t.get("created_at"),
+        "provider": t.get("provider"),
+        "purpose": t.get("purpose"),
+        "zeffy_confirmation": t.get("zeffy_confirmation"),
+        "approved_at": t.get("approved_at"),
+        "approved_by": t.get("approved_by"),
+        "approved_by_name": t.get("approved_by_name"),
     }
 
 @api.post("/transactions")
@@ -2539,6 +2545,89 @@ async def admin_create_transaction(body: TransactionIn, admin: dict = Depends(re
     })
     await db.transactions.insert_one(doc)
     return tx_out(doc)
+
+
+# ---------- Zeffy dues integration (no webhook — confirmation-on-return pattern) ----------
+ZEFFY_DUES_URL = os.environ.get("ZEFFY_DUES_URL", "https://www.zeffy.com/en-US/ticketing/national-yearly-dues")
+
+
+class ZeffyConfirmIn(BaseModel):
+    confirmation: str = Field(min_length=2, max_length=200)  # reference number / email / receipt id user pastes
+    amount: Optional[float] = Field(60.0, ge=1, le=10000)
+
+
+@api.get("/payments/zeffy/config")
+async def zeffy_config(user: dict = Depends(get_current_user)):
+    """Returns the Zeffy dues URL (with returnUrl auto-set to the user's profile)."""
+    # Zeffy uses redirectUrl param on most embeds — pass it through so the user can
+    # be guided back. They'll still need to manually confirm here for accounting.
+    return {
+        "url": ZEFFY_DUES_URL,
+        "currency": "USD",
+        "default_amount": 60.0,
+        "enabled": True,
+    }
+
+
+@api.post("/payments/zeffy/confirm")
+async def zeffy_confirm(body: ZeffyConfirmIn, user: dict = Depends(get_current_user)):
+    """Member confirms they completed a Zeffy dues payment.
+    Creates a PENDING transaction that an admin must approve. On approval the user's
+    membership_expires_at is extended by 365 days (same path as PayPal dues).
+
+    This mirrors PayPal's flow except for the verification step: instead of trusting
+    PayPal's capture API, we trust the member's confirmation and require admin sign-off
+    to avoid fraudulent renewals.
+    """
+    tx_id = str(uuid.uuid4())
+    doc = {
+        "id": tx_id,
+        "user_id": user["id"],
+        "user_name": user.get("name", ""),
+        "type": "renewal",
+        "amount": float(body.amount or 60.0),
+        "currency": "USD",
+        "description": f"Annual dues via Zeffy (ref: {body.confirmation})",
+        "status": "pending",
+        "purpose": "dues",
+        "provider": "zeffy",
+        "zeffy_confirmation": body.confirmation,
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(doc)
+    return {"transaction_id": tx_id, "status": "pending", "message": "Submitted for admin verification — your dues will be marked paid once approved."}
+
+
+@api.put("/transactions/{tx_id}/approve-zeffy")
+async def admin_approve_zeffy(tx_id: str, admin: dict = Depends(require_admin)):
+    """Admin approves a pending Zeffy dues transaction → extends user membership 365 days."""
+    tx = await db.transactions.find_one({"id": tx_id})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if tx.get("provider") != "zeffy":
+        raise HTTPException(status_code=400, detail="Not a Zeffy transaction")
+    if tx.get("status") == "completed":
+        return {"ok": True, "already": True}
+    await db.transactions.update_one({"id": tx_id}, {"$set": {
+        "status": "completed",
+        "approved_at": iso(now_utc()),
+        "approved_by": admin["id"],
+        "approved_by_name": admin.get("name", "Admin"),
+    }})
+    # Extend membership 365 days from current expiry (or now)
+    if tx.get("purpose") == "dues":
+        u = await db.users.find_one({"id": tx["user_id"]})
+        if u:
+            cur = u.get("membership_expires_at")
+            try:
+                base = datetime.fromisoformat(cur) if cur else now_utc()
+            except Exception:
+                base = now_utc()
+            if base < now_utc():
+                base = now_utc()
+            await db.users.update_one({"id": tx["user_id"]}, {"$set": {"membership_expires_at": iso(base + timedelta(days=365))}})
+    return {"ok": True}
+
 
 @api.get("/transactions")
 async def admin_list_transactions(user_id: Optional[str] = None, type_filter: Optional[str] = None, admin: dict = Depends(require_admin)):
@@ -4419,6 +4508,101 @@ async def report_hours_summary(
                 for k, v in sorted(buckets.items())]
 
     return {"totals": totals, "rows": rows, "period": {"year": year, "quarter": quarter, "month": month, "from": period_from, "to": period_to}, "group_by": group_by}
+
+
+@api.get("/leaderboards/community-service")
+async def leaderboard_community_service(
+    period: str = "quarter",  # "quarter" | "year" | "all"
+    user: dict = Depends(get_current_user),
+):
+    """Public-to-members leaderboard. Returns top-5 chapters and top-5 members by
+    approved volunteer hours within the chosen period.
+
+    Hours-tab admins (and individual users) all see the SAME numbers — this powers
+    a home-page widget so we don't gate it behind admin_tab_dep.
+    """
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    if period == "year":
+        period_from, period_to = _period_to_range(now.year, None, None)
+        label = f"{now.year}"
+    elif period == "all":
+        period_from, period_to = None, None
+        label = "All time"
+    else:
+        # default: current quarter
+        q = (now.month - 1) // 3 + 1
+        period_from, period_to = _period_to_range(now.year, q, None)
+        label = f"Q{q} {now.year}"
+
+    q_filter: dict = {"status": "approved"}
+    if period_from:
+        q_filter["date"] = {"$gte": period_from, "$lte": period_to}
+    items = await db.volunteer_hours.find(q_filter, {"_id": 0}).to_list(20000)
+
+    # Group by member
+    member_groups: dict = {}
+    for h in items:
+        uid = h["user_id"]
+        if uid not in member_groups:
+            member_groups[uid] = {"hours": 0.0, "count": 0, "user_name": h.get("user_name", "")}
+        member_groups[uid]["hours"] += h.get("hours", 0)
+        member_groups[uid]["count"] += 1
+
+    # Enrich members with chapter info + avatar for the UI
+    uids = list(member_groups.keys())
+    user_docs = await db.users.find({"id": {"$in": uids}}, {"id": 1, "chapter_id": 1, "name": 1, "avatar_url": 1, "_id": 0}).to_list(len(uids)) if uids else []
+    users_by_id = {u["id"]: u for u in user_docs}
+    chap_ids = list({u.get("chapter_id") for u in user_docs if u.get("chapter_id")})
+    chap_docs = await db.chapters.find({"id": {"$in": chap_ids}}, {"id": 1, "name": 1, "_id": 0}).to_list(len(chap_ids)) if chap_ids else []
+    chaps_by_id = {c["id"]: c for c in chap_docs}
+
+    top_members = []
+    for uid, g in member_groups.items():
+        udoc = users_by_id.get(uid, {})
+        cid = udoc.get("chapter_id")
+        top_members.append({
+            "user_id": uid,
+            "user_name": udoc.get("name") or g["user_name"] or "Anonymous",
+            "avatar_url": udoc.get("avatar_url", ""),
+            "chapter_id": cid,
+            "chapter_name": chaps_by_id.get(cid, {}).get("name", "") if cid else "Unassigned",
+            "hours": round(g["hours"], 2),
+            "count": g["count"],
+        })
+    top_members.sort(key=lambda r: r["hours"], reverse=True)
+    top_members = top_members[:5]
+
+    # Group by chapter (use chapter_id from user lookup)
+    chap_groups: dict = {}
+    uid_to_chap = {u["id"]: u.get("chapter_id") for u in user_docs}
+    for h in items:
+        cid = uid_to_chap.get(h["user_id"]) or "unassigned"
+        if cid not in chap_groups:
+            chap_groups[cid] = {"hours": 0.0, "count": 0, "members": set()}
+        chap_groups[cid]["hours"] += h.get("hours", 0)
+        chap_groups[cid]["count"] += 1
+        chap_groups[cid]["members"].add(h["user_id"])
+    top_chapters = []
+    for cid, g in chap_groups.items():
+        top_chapters.append({
+            "chapter_id": cid if cid != "unassigned" else None,
+            "chapter_name": chaps_by_id.get(cid, {}).get("name", "") if cid != "unassigned" else "Unassigned",
+            "hours": round(g["hours"], 2),
+            "count": g["count"],
+            "member_count": len(g["members"]),
+        })
+    top_chapters.sort(key=lambda r: r["hours"], reverse=True)
+    top_chapters = top_chapters[:5]
+
+    return {
+        "period": period,
+        "period_label": label,
+        "period_from": period_from,
+        "period_to": period_to,
+        "top_chapters": top_chapters,
+        "top_members": top_members,
+    }
 
 
 @api.get("/me/hours")

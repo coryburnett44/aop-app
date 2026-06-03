@@ -6,6 +6,7 @@ import { useSiteSettings } from "../context/SiteSettingsContext";
 import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogIn, Cake, UserPlus } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import Countdown from "../components/Countdown";
+import CommunityServiceLeaderboard from "../components/CommunityServiceLeaderboard";
 import { BlocksRenderer } from "../components/cms/BlockRenderer";
 
 const AOP_LOGO = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png";
@@ -204,6 +205,9 @@ export default function Home() {
                     </div>
                 </section>
             )}
+
+            {/* Community Service Leader Board (top 5 chapters + top 5 members this quarter) */}
+            {showSection("leaderboard") && <CommunityServiceLeaderboard />}
 
             {/* Family pulse: New Members + Birthdays */}
             {showSection("family_pulse") && user && (newMembers.length > 0 || birthdays.length > 0) && (
