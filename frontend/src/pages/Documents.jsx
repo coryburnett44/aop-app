@@ -5,8 +5,9 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
-import { FileText, Upload, Download, Trash2, ExternalLink, Pencil, Plus, Image as ImageIcon } from "lucide-react";
+import { FileText, Upload, Download, Trash2, ExternalLink, Pencil, Plus, Image as ImageIcon, Folder, FolderPlus, ArrowLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 
@@ -20,7 +21,9 @@ function humanSize(n) {
 export default function Documents() {
     const { user } = useAuth();
     const [docs, setDocs] = useState([]);
+    const [folders, setFolders] = useState([]);
     const [filter, setFilter] = useState("all");
+    const [activeFolder, setActiveFolder] = useState(null); // null = root view; otherwise folder object
     const [links, setLinks] = useState([]);
     const isAdmin = user?.role === "admin";
 
@@ -28,6 +31,12 @@ export default function Documents() {
         const url = "/documents" + (filter !== "all" ? `?category=${encodeURIComponent(filter)}` : "");
         const { data } = await api.get(url);
         setDocs(data);
+    };
+    const loadFolders = async () => {
+        try {
+            const { data } = await api.get("/document-folders");
+            setFolders(data || []);
+        } catch { setFolders([]); }
     };
     const loadLinks = async () => {
         try {
@@ -37,7 +46,7 @@ export default function Documents() {
     };
 
     useEffect(() => { load().catch(() => {}); }, [filter]);
-    useEffect(() => { loadLinks(); }, []);
+    useEffect(() => { loadFolders(); loadLinks(); }, []);
 
     async function remove(id) {
         if (!confirm("Delete this document?")) return;
@@ -46,20 +55,48 @@ export default function Documents() {
         load();
     }
 
+    async function removeFolder(folder) {
+        if (!confirm(`Delete the folder "${folder.name}"? Documents inside will become uncategorized (not deleted).`)) return;
+        try {
+            await api.delete(`/document-folders/${folder.id}`);
+            toast.success("Folder removed");
+            await loadFolders();
+        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    }
+
     const categories = Array.from(new Set(docs.map((d) => d.category))).sort();
+    const rootFolders = folders.filter((f) => !f.parent_id);
+    const childFolders = activeFolder ? folders.filter((f) => f.parent_id === activeFolder.id) : [];
+
+    // Documents shown depend on which folder you're inside
+    const visibleDocs = activeFolder
+        ? docs.filter((d) => d.folder_id === activeFolder.id)
+        : docs.filter((d) => !d.folder_id);
 
     return (
         <div className="max-w-6xl mx-auto px-6 lg:px-10 py-12">
             <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
                 <div>
-                    <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">AOP Forms</h1>
-                    <p className="text-muted-foreground mt-2">Bylaws, minutes, forms, and chapter resources — all in one place.</p>
+                    {activeFolder && (
+                        <button onClick={() => setActiveFolder(null)} className="text-sm text-slate-500 hover:text-primary inline-flex items-center gap-1 mb-2" data-testid="back-to-doc-root">
+                            <ArrowLeft className="h-4 w-4" /> All folders
+                        </button>
+                    )}
+                    <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">
+                        {activeFolder ? activeFolder.name : "AOP Forms"}
+                    </h1>
+                    <p className="text-muted-foreground mt-2">
+                        {activeFolder ? "Documents in this folder. Subfolders show first." : "Bylaws, minutes, forms, and chapter resources — all in one place."}
+                    </p>
                 </div>
-                {user && <UploadDocDialog onDone={load} />}
+                <div className="flex gap-2 flex-wrap">
+                    {isAdmin && <NewFolderDialog folders={folders} activeFolder={activeFolder} onCreated={loadFolders} />}
+                    {user && <UploadDocDialog folder={activeFolder} folders={folders} onDone={() => { load(); loadFolders(); }} />}
+                </div>
             </div>
 
             {/* Picture link cards — admin manages, members click through to external pages */}
-            {(links.length > 0 || isAdmin) && (
+            {!activeFolder && (links.length > 0 || isAdmin) && (
                 <section className="mb-10" data-testid="form-links-section">
                     <div className="flex items-end justify-between mb-4 gap-3 flex-wrap">
                         <div>
@@ -86,7 +123,42 @@ export default function Documents() {
                 </section>
             )}
 
-            {categories.length > 0 && (
+            {/* Folder grid */}
+            {((activeFolder && childFolders.length > 0) || (!activeFolder && rootFolders.length > 0)) && (
+                <section className="mb-8">
+                    <h2 className="font-heading text-2xl font-bold mb-3">{activeFolder ? "Subfolders" : "Folders"}</h2>
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="doc-folder-grid">
+                        {(activeFolder ? childFolders : rootFolders).map((f) => (
+                            <button
+                                key={f.id}
+                                onClick={() => setActiveFolder(f)}
+                                className="group bg-card rounded-2xl border border-border p-4 text-left flex items-center gap-3 shadow-warm hover:-translate-y-0.5 transition-all"
+                                data-testid={`doc-folder-${f.id}`}
+                            >
+                                <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary grid place-items-center shrink-0">
+                                    <Folder className="h-6 w-6" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="font-heading font-bold truncate">{f.name}</div>
+                                    <div className="text-xs text-muted-foreground">{f.doc_count} document{f.doc_count !== 1 ? "s" : ""}{!activeFolder && folders.some((c) => c.parent_id === f.id) ? ` · ${folders.filter((c) => c.parent_id === f.id).length} subfolders` : ""}</div>
+                                </div>
+                                {isAdmin && (
+                                    <span
+                                        onClick={(e) => { e.stopPropagation(); removeFolder(f); }}
+                                        className="text-muted-foreground hover:text-destructive p-1"
+                                        data-testid={`delete-folder-${f.id}`}
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                    </span>
+                                )}
+                                <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                            </button>
+                        ))}
+                    </div>
+                </section>
+            )}
+
+            {categories.length > 0 && !activeFolder && (
                 <div className="flex flex-wrap gap-2 mb-6">
                     <button
                         onClick={() => setFilter("all")}
@@ -108,10 +180,10 @@ export default function Documents() {
                 </div>
             )}
 
-            {docs.length === 0 ? (
+            {visibleDocs.length === 0 ? (
                 <div className="bg-muted/30 border-2 border-dashed border-border rounded-3xl p-16 text-center">
                     <FileText className="h-12 w-12 mx-auto text-muted-foreground/50" />
-                    <p className="mt-4 font-heading text-xl">No AOP forms yet</p>
+                    <p className="mt-4 font-heading text-xl">{activeFolder ? "No documents in this folder yet" : "No AOP forms yet"}</p>
                     <p className="text-sm text-muted-foreground">Upload the bylaws, meeting notes, and chapter resources.</p>
                 </div>
             ) : (
@@ -127,7 +199,7 @@ export default function Documents() {
                             </tr>
                         </thead>
                         <tbody>
-                            {docs.map((d) => (
+                            {visibleDocs.map((d) => (
                                 <tr key={d.id} className="border-t border-border hover:bg-muted/30" data-testid={`doc-row-${d.id}`}>
                                     <td className="px-5 py-3">
                                         <div className="font-medium">{d.title}</div>
@@ -156,6 +228,71 @@ export default function Documents() {
                 </div>
             )}
         </div>
+    );
+}
+
+function NewFolderDialog({ folders, activeFolder, onCreated }) {
+    const [open, setOpen] = useState(false);
+    const [name, setName] = useState("");
+    // When inside a root folder, default the new folder's parent to that folder (creating a subfolder)
+    const [parentId, setParentId] = useState("root");
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        if (open) { setName(""); setParentId(activeFolder ? activeFolder.id : "root"); }
+    }, [open, activeFolder]);
+
+    // Only root folders are eligible to be parents (2-level limit)
+    const eligibleParents = folders.filter((f) => !f.parent_id);
+
+    async function save() {
+        if (!name.trim()) { toast.error("Folder name is required"); return; }
+        setBusy(true);
+        try {
+            await api.post("/document-folders", { name: name.trim(), parent_id: parentId === "root" ? null : parentId });
+            toast.success("Folder created");
+            setOpen(false);
+            onCreated?.();
+        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+        setBusy(false);
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button variant="outline" className="rounded-full" data-testid="new-folder-btn">
+                    <FolderPlus className="h-4 w-4 mr-1.5" /> New folder
+                </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md" data-testid="folder-create-dialog">
+                <DialogHeader><DialogTitle className="font-heading text-2xl">New folder</DialogTitle></DialogHeader>
+                <div className="space-y-4 mt-2">
+                    <div>
+                        <Label>Folder name</Label>
+                        <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="rounded-xl mt-1.5" placeholder="e.g. 2027 Meeting Minutes" data-testid="folder-name-input" />
+                    </div>
+                    <div>
+                        <Label>Parent folder</Label>
+                        <Select value={parentId} onValueChange={setParentId}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="folder-parent-select"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="root">— Top level —</SelectItem>
+                                {eligibleParents.map((f) => (
+                                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground mt-1.5">Subfolders cannot have their own subfolders (max 2 levels).</p>
+                    </div>
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpen(false)} className="rounded-full">Cancel</Button>
+                    <Button onClick={save} disabled={busy || !name.trim()} className="rounded-full bg-primary hover:bg-primary/90" data-testid="folder-create-submit">
+                        {busy ? "Creating…" : "Create folder"}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }
 
@@ -191,47 +328,72 @@ function DocDownloadLink({ doc }) {
     );
 }
 
-function UploadDocDialog({ onDone }) {
+function UploadDocDialog({ onDone, folder, folders }) {
     const [open, setOpen] = useState(false);
-    const [file, setFile] = useState(null);
-    const [title, setTitle] = useState("");
+    const [files, setFiles] = useState([]);
     const [category, setCategory] = useState("general");
-    const [description, setDescription] = useState("");
+    const [folderId, setFolderId] = useState(folder?.id || "");
     const [busy, setBusy] = useState(false);
     const inputRef = useRef(null);
 
+    useEffect(() => { if (open) setFolderId(folder?.id || ""); }, [open, folder]);
+
+    function addFiles(picked) {
+        if (!picked || picked.length === 0) return;
+        // Cap at 50 to mirror backend limit
+        const merged = [...files, ...picked].slice(0, 50);
+        setFiles(merged);
+    }
+
     async function upload() {
-        if (!file) return;
+        if (files.length === 0) return;
         setBusy(true);
         try {
-            const fd = new FormData();
-            fd.append("file", file);
-            fd.append("title", title || file.name);
-            fd.append("category", category);
-            fd.append("description", description);
-            await api.post("/documents", fd, { headers: { "Content-Type": "multipart/form-data" } });
-            toast.success("Document uploaded");
+            if (files.length === 1) {
+                const fd = new FormData();
+                fd.append("file", files[0]);
+                fd.append("title", files[0].name);
+                fd.append("category", category);
+                if (folderId) fd.append("folder_id", folderId);
+                await api.post("/documents", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                toast.success("Document uploaded");
+            } else {
+                const fd = new FormData();
+                for (const f of files) fd.append("files", f);
+                fd.append("category", category);
+                if (folderId) fd.append("folder_id", folderId);
+                const { data } = await api.post("/documents/bulk", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                const ok = (data.uploaded || []).length;
+                const failed = (data.failed || []).length;
+                if (ok && !failed) toast.success(`Uploaded ${ok} documents`);
+                else if (ok && failed) toast.warning(`Uploaded ${ok}, but ${failed} failed`);
+                else toast.error(`All ${failed} uploads failed`);
+            }
             setOpen(false);
-            setFile(null);
-            setTitle("");
+            setFiles([]);
             setCategory("general");
-            setDescription("");
-            onDone();
+            onDone?.();
         } catch (e) {
             toast.error(e.response?.data?.detail || "Upload failed");
         }
         setBusy(false);
     }
 
+    // Flat list of folder choices, with hierarchy hint
+    const folderChoices = (folders || []).map((f) => {
+        const parent = f.parent_id ? (folders || []).find((p) => p.id === f.parent_id) : null;
+        return { id: f.id, label: parent ? `${parent.name} / ${f.name}` : f.name };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
                 <Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="upload-doc-btn">
-                    <Upload className="h-4 w-4 mr-1.5" /> Upload form
+                    <Upload className="h-4 w-4 mr-1.5" /> Upload form{folder ? ` to ${folder.name}` : ""}
                 </Button>
             </DialogTrigger>
             <DialogContent className="max-w-md">
-                <DialogHeader><DialogTitle className="font-heading text-2xl">Upload AOP form</DialogTitle></DialogHeader>
+                <DialogHeader><DialogTitle className="font-heading text-2xl">Upload AOP form{files.length > 1 ? "s" : ""}</DialogTitle></DialogHeader>
                 <div className="space-y-4 mt-2">
                     <div
                         onClick={() => inputRef.current?.click()}
@@ -239,30 +401,49 @@ function UploadDocDialog({ onDone }) {
                         data-testid="doc-dropzone"
                     >
                         <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
-                        <div className="mt-3 text-sm">{file ? <span className="font-medium">{file.name}</span> : "Click to choose a file (PDF, DOC, XLSX, TXT, CSV)"}</div>
+                        <div className="mt-3 text-sm">
+                            {files.length === 0 ? "Click to choose one or more files (PDF, DOC, XLSX, TXT, CSV, PPTX)" : <span className="font-medium">{files.length} file{files.length !== 1 ? "s" : ""} selected</span>}
+                        </div>
                         <input
                             ref={inputRef}
                             type="file"
+                            multiple
                             accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.pptx"
                             hidden
-                            onChange={(e) => setFile(e.target.files?.[0] || null)}
+                            onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
                             data-testid="doc-file-input"
                         />
                     </div>
-                    <div>
-                        <Label>Title</Label>
-                        <Input value={title} onChange={(e) => setTitle(e.target.value)} className="rounded-xl mt-1.5" data-testid="doc-title-input" />
-                    </div>
+                    {files.length > 0 && (
+                        <div className="border border-border rounded-xl p-2 max-h-32 overflow-y-auto space-y-1" data-testid="doc-files-list">
+                            {files.map((f, i) => (
+                                <div key={i} className="flex items-center gap-2 text-xs">
+                                    <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                    <span className="truncate flex-1">{f.name}</span>
+                                    <span className="text-muted-foreground shrink-0">{humanSize(f.size)}</span>
+                                    <button onClick={() => setFiles((p) => p.filter((_, idx) => idx !== i))} className="text-muted-foreground hover:text-destructive">
+                                        <Trash2 className="h-3 w-3" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     <div>
                         <Label>Category</Label>
                         <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. bylaws, minutes, forms" className="rounded-xl mt-1.5" data-testid="doc-category-input" />
                     </div>
                     <div>
-                        <Label>Description (optional)</Label>
-                        <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} className="rounded-xl mt-1.5" />
+                        <Label>Folder <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                        <Select value={folderId || "_root"} onValueChange={(v) => setFolderId(v === "_root" ? "" : v)}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="doc-folder-select"><SelectValue placeholder="— No folder —" /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="_root">— No folder —</SelectItem>
+                                {folderChoices.map((f) => <SelectItem key={f.id} value={f.id}>{f.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
                     </div>
-                    <Button onClick={upload} disabled={!file || busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="doc-upload-submit">
-                        {busy ? "Uploading…" : "Upload"}
+                    <Button onClick={upload} disabled={files.length === 0 || busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="doc-upload-submit">
+                        {busy ? "Uploading…" : files.length > 1 ? `Upload ${files.length} files` : "Upload"}
                     </Button>
                 </div>
             </DialogContent>

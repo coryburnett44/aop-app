@@ -8,12 +8,31 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "../components/ui/dialog";
 import { ScrollArea } from "../components/ui/scroll-area";
-import { Plus, Send, Paperclip, X, Search, Users as UsersIcon, Trash2, LogOut, Settings, FileText, Image as ImageIcon, Download, ArrowLeft, Upload, Camera } from "lucide-react";
+import { Plus, Send, Paperclip, X, Search, Users as UsersIcon, Trash2, LogOut, Settings, FileText, Image as ImageIcon, Download, ArrowLeft, Upload, Camera, Reply, Smile, Timer, AlarmClock } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 
 const NAVY = "#0A2463";
 const RED = "#C8102E";
+
+const EMOJI_CATEGORIES = {
+    "Smileys": ["😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊", "😋", "😎", "😍", "🥰", "😘", "🥺", "🤔", "🤨", "😐", "😑"],
+    "Gestures": ["👍", "👎", "👌", "🤞", "✌️", "🤟", "🤘", "👏", "🙌", "🙏", "💪", "✊", "🤝", "🫡", "🫶"],
+    "Hearts": ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "💔", "❣️", "💕", "💖", "💗", "💘", "💝"],
+    "Celebration": ["🎉", "🎊", "🥳", "🎂", "🎁", "🎈", "🍾", "🥂", "✨", "🌟", "⭐", "🔥", "💯"],
+    "Symbols": ["✅", "❌", "⚠️", "💯", "💢", "💥", "💫", "💦", "💨", "🔴", "🟢", "🔵", "🟡"],
+};
+
+const TTL_OPTIONS = [
+    { value: "off", label: "Off", icon: "—" },
+    { value: "1h", label: "1 hour", icon: "1h" },
+    { value: "24h", label: "24 hours", icon: "24h" },
+    { value: "7d", label: "7 days", icon: "7d" },
+];
+
+function ttlLabel(v) {
+    return TTL_OPTIONS.find((o) => o.value === v)?.label || "Off";
+}
 
 function chatWsUrl() {
     const base = process.env.REACT_APP_BACKEND_URL || "";
@@ -178,6 +197,7 @@ function ChatThread({ conversation, onRefresh, onBack }) {
     const [messages, setMessages] = useState([]);
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
+    const [replyTo, setReplyTo] = useState(null);
     const scrollerRef = useRef(null);
 
     useEffect(() => {
@@ -187,6 +207,7 @@ function ChatThread({ conversation, onRefresh, onBack }) {
             setTimeout(() => scrollToBottom("instant"), 50);
         }).catch(() => {});
         api.post(`/conversations/${conversation.id}/read`).catch(() => {});
+        setReplyTo(null);
     }, [conversation.id]);
 
     useEffect(() => {
@@ -272,19 +293,28 @@ function ChatThread({ conversation, onRefresh, onBack }) {
                         <span className="text-[10px] uppercase tracking-widest font-bold bg-white border border-slate-200 rounded-full px-3 py-1 text-slate-500">{g.day}</span>
                     </div>
                 ) : (
-                    <MessageBubble key={g.msg.id} message={g.msg} mine={g.msg.sender_id === user.id} showSender={conversation.type === "group" && g.msg.sender_id !== user.id} />
+                    <MessageBubble
+                        key={g.msg.id}
+                        message={g.msg}
+                        mine={g.msg.sender_id === user.id}
+                        showSender={conversation.type === "group" && g.msg.sender_id !== user.id}
+                        allMessages={messages}
+                        onReply={() => setReplyTo(g.msg)}
+                    />
                 ))}
             </div>
 
-            <MessageComposer conversation={conversation} onSent={onSent} />
+            <MessageComposer conversation={conversation} onSent={onSent} replyTo={replyTo} clearReply={() => setReplyTo(null)} />
         </>
     );
 }
 
-function MessageBubble({ message, mine, showSender }) {
+function MessageBubble({ message, mine, showSender, allMessages, onReply }) {
     const isDeleted = !!message.deleted_at;
+    const repliedTo = message.reply_to ? (allMessages || []).find((m) => m.id === message.reply_to) : null;
+    const ttl = parseInt(message.ttl_seconds || 0, 10);
     return (
-        <div className={`flex gap-2 my-1.5 ${mine ? "justify-end" : "justify-start"}`} data-testid={`msg-${message.id}`}>
+        <div className={`group flex gap-2 my-1.5 ${mine ? "justify-end" : "justify-start"}`} data-testid={`msg-${message.id}`}>
             {!mine && (
                 <Avatar className="h-7 w-7 shrink-0 mt-1">
                     {message.sender_avatar && <AvatarImage src={message.sender_avatar} />}
@@ -293,21 +323,49 @@ function MessageBubble({ message, mine, showSender }) {
                     </AvatarFallback>
                 </Avatar>
             )}
-            <div className={`max-w-[78%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 ${mine ? "text-white rounded-br-sm" : "bg-white border border-slate-200 rounded-bl-sm"}`} style={mine ? { backgroundColor: NAVY } : {}}>
-                {showSender && <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: RED }}>{message.sender_name}</div>}
-                {isDeleted ? (
-                    <div className="italic text-xs opacity-60">message deleted</div>
-                ) : (
-                    <>
-                        {message.attachments?.length > 0 && (
-                            <div className={`space-y-1.5 ${message.body ? "mb-2" : ""}`}>
-                                {message.attachments.map((a, i) => <Attachment key={i} att={a} mine={mine} />)}
-                            </div>
-                        )}
-                        {message.body && <div className="whitespace-pre-wrap break-words text-sm">{message.body}</div>}
-                    </>
+            <div className="flex items-center gap-1">
+                {mine && !isDeleted && (
+                    <button onClick={onReply} className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-primary p-1" title="Reply" data-testid={`reply-${message.id}`}>
+                        <Reply className="h-3.5 w-3.5" />
+                    </button>
                 )}
-                <div className={`text-[10px] mt-1 ${mine ? "text-white/60" : "text-slate-400"}`}>{format(parseISO(message.created_at), "h:mm a")}</div>
+                <div className={`max-w-[78%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 ${mine ? "text-white rounded-br-sm" : "bg-white border border-slate-200 rounded-bl-sm"}`} style={mine ? { backgroundColor: NAVY } : {}}>
+                    {showSender && <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: RED }}>{message.sender_name}</div>}
+                    {repliedTo && (
+                        <div className={`text-[11px] mb-1.5 border-l-2 pl-2 py-0.5 rounded-sm ${mine ? "border-white/40 bg-white/10" : "border-primary/40 bg-primary/5"}`}>
+                            <div className={`font-bold ${mine ? "text-white/80" : "text-primary"}`}>{repliedTo.sender_name}</div>
+                            <div className={`truncate ${mine ? "text-white/70" : "text-slate-500"}`}>
+                                {repliedTo.body || (repliedTo.attachments?.length ? `📎 ${repliedTo.attachments[0].filename || "attachment"}` : "—")}
+                            </div>
+                        </div>
+                    )}
+                    {isDeleted ? (
+                        <div className="italic text-xs opacity-60">message deleted</div>
+                    ) : (
+                        <>
+                            {message.attachments?.length > 0 && (
+                                <div className={`space-y-1.5 ${message.body ? "mb-2" : ""}`}>
+                                    {message.attachments.map((a, i) => <Attachment key={i} att={a} mine={mine} />)}
+                                </div>
+                            )}
+                            {message.body && <div className="whitespace-pre-wrap break-words text-sm">{message.body}</div>}
+                        </>
+                    )}
+                    <div className={`text-[10px] mt-1 flex items-center gap-1.5 ${mine ? "text-white/60" : "text-slate-400"}`}>
+                        {format(parseISO(message.created_at), "h:mm a")}
+                        {ttl > 0 && (
+                            <span className="inline-flex items-center gap-0.5" title={`Disappears ${ttl/3600 >= 24 ? `${Math.round(ttl/86400)}d` : `${Math.round(ttl/3600)}h`} after first read`}>
+                                <Timer className="h-2.5 w-2.5" />
+                                {ttl >= 86400 ? `${Math.round(ttl/86400)}d` : `${Math.round(ttl/3600)}h`}
+                            </span>
+                        )}
+                    </div>
+                </div>
+                {!mine && !isDeleted && (
+                    <button onClick={onReply} className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-primary p-1" title="Reply" data-testid={`reply-${message.id}`}>
+                        <Reply className="h-3.5 w-3.5" />
+                    </button>
+                )}
             </div>
         </div>
     );
@@ -349,12 +407,30 @@ function formatBytes(b) {
     return `${(b / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function MessageComposer({ conversation, onSent }) {
+function MessageComposer({ conversation, onSent, replyTo, clearReply }) {
     const [text, setText] = useState("");
     const [attachments, setAttachments] = useState([]);
     const [busy, setBusy] = useState(false);
     const [uploading, setUploading] = useState(0);
+    const [showEmoji, setShowEmoji] = useState(false);
+    const [showTtl, setShowTtl] = useState(false);
+    const [ttl, setTtl] = useState(null); // null = use conversation default
     const fileInputRef = useRef(null);
+    const textareaRef = useRef(null);
+    const emojiRef = useRef(null);
+    const ttlRef = useRef(null);
+
+    const effectiveTtl = ttl !== null ? ttl : (conversation.ttl || "off");
+
+    useEffect(() => { setTtl(null); }, [conversation.id]);
+    useEffect(() => {
+        function onDown(e) {
+            if (emojiRef.current && !emojiRef.current.contains(e.target)) setShowEmoji(false);
+            if (ttlRef.current && !ttlRef.current.contains(e.target)) setShowTtl(false);
+        }
+        window.addEventListener("mousedown", onDown);
+        return () => window.removeEventListener("mousedown", onDown);
+    }, []);
 
     async function upload(files) {
         for (const f of files) {
@@ -381,17 +457,41 @@ function MessageComposer({ conversation, onSent }) {
         if (!body && attachments.length === 0) return;
         setBusy(true);
         try {
-            const { data } = await api.post(`/conversations/${conversation.id}/messages`, { body, attachments });
+            const payload = { body, attachments };
+            if (replyTo) payload.reply_to = replyTo.id;
+            if (ttl !== null) payload.ttl = ttl;  // explicit per-message override
+            const { data } = await api.post(`/conversations/${conversation.id}/messages`, payload);
             onSent(data);
-            setText(""); setAttachments([]);
+            setText(""); setAttachments([]); setTtl(null);
+            clearReply?.();
         } catch (e) {
             toast.error(e.response?.data?.detail || "Send failed");
         }
         setBusy(false);
     }
 
+    function insertEmoji(e) {
+        const ta = textareaRef.current;
+        if (!ta) { setText((t) => t + e); return; }
+        const start = ta.selectionStart ?? text.length;
+        const end = ta.selectionEnd ?? text.length;
+        const next = text.slice(0, start) + e + text.slice(end);
+        setText(next);
+        setTimeout(() => { ta.focus(); ta.selectionStart = ta.selectionEnd = start + e.length; }, 0);
+    }
+
     return (
         <div className="border-t bg-white p-3" data-testid="composer">
+            {replyTo && (
+                <div className="flex items-center gap-2 mb-2 bg-primary/5 border-l-4 border-primary rounded-r-xl pl-3 pr-2 py-2" data-testid="reply-preview">
+                    <Reply className="h-4 w-4 text-primary shrink-0" />
+                    <div className="flex-1 min-w-0 text-xs">
+                        <div className="font-bold text-primary">Replying to {replyTo.sender_name}</div>
+                        <div className="text-slate-500 truncate">{replyTo.body || (replyTo.attachments?.length ? `📎 ${replyTo.attachments[0].filename || "attachment"}` : "—")}</div>
+                    </div>
+                    <button onClick={clearReply} className="text-slate-400 hover:text-destructive p-1" data-testid="clear-reply-btn"><X className="h-3.5 w-3.5" /></button>
+                </div>
+            )}
             {attachments.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2">
                     {attachments.map((a, i) => (
@@ -404,7 +504,7 @@ function MessageComposer({ conversation, onSent }) {
                     ))}
                 </div>
             )}
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-1.5">
                 <input
                     ref={fileInputRef}
                     type="file"
@@ -413,19 +513,73 @@ function MessageComposer({ conversation, onSent }) {
                     onChange={(e) => { upload(Array.from(e.target.files || [])); e.target.value = ""; }}
                     data-testid="file-input"
                 />
-                <Button variant="ghost" size="icon" onClick={() => fileInputRef.current?.click()} disabled={busy || uploading > 0} className="shrink-0 rounded-full" data-testid="attach-btn">
+                <Button variant="ghost" size="icon" onClick={() => fileInputRef.current?.click()} disabled={busy || uploading > 0} className="shrink-0 rounded-full h-9 w-9" data-testid="attach-btn">
                     <Paperclip className="h-5 w-5" />
                 </Button>
+                {/* Emoji */}
+                <div className="relative shrink-0" ref={emojiRef}>
+                    <Button variant="ghost" size="icon" onClick={() => { setShowEmoji((s) => !s); setShowTtl(false); }} className="rounded-full h-9 w-9" data-testid="emoji-btn">
+                        <Smile className="h-5 w-5" />
+                    </Button>
+                    {showEmoji && (
+                        <div className="absolute bottom-12 left-0 sm:left-auto sm:right-0 w-[280px] max-h-[280px] bg-white border border-slate-200 rounded-2xl shadow-warm-lg p-3 overflow-y-auto z-40" data-testid="emoji-picker">
+                            {Object.entries(EMOJI_CATEGORIES).map(([cat, list]) => (
+                                <div key={cat} className="mb-2">
+                                    <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400 mb-1">{cat}</div>
+                                    <div className="flex flex-wrap gap-1">
+                                        {list.map((e) => (
+                                            <button key={e} onClick={() => { insertEmoji(e); }} className="text-xl hover:bg-slate-100 rounded p-1 transition-colors" data-testid={`emoji-${e}`}>{e}</button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                {/* TTL */}
+                <div className="relative shrink-0" ref={ttlRef}>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => { setShowTtl((s) => !s); setShowEmoji(false); }}
+                        className={`rounded-full h-9 w-9 ${effectiveTtl !== "off" ? "text-amber-500" : ""}`}
+                        data-testid="ttl-btn"
+                        title={effectiveTtl === "off" ? "Disappearing messages off" : `Disappears ${ttlLabel(effectiveTtl)} after seen`}
+                    >
+                        <AlarmClock className="h-5 w-5" />
+                    </Button>
+                    {showTtl && (
+                        <div className="absolute bottom-12 right-0 w-56 bg-white border border-slate-200 rounded-2xl shadow-warm-lg p-2 z-40" data-testid="ttl-picker">
+                            <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-2 pt-1 pb-1.5">Disappear after seen</div>
+                            <div className="text-xs text-slate-400 px-2 pb-2 leading-snug">Conversation default: <span className="font-bold text-slate-600">{ttlLabel(conversation.ttl || "off")}</span></div>
+                            {TTL_OPTIONS.map((o) => (
+                                <button
+                                    key={o.value}
+                                    onClick={() => { setTtl(o.value); setShowTtl(false); }}
+                                    className={`flex items-center gap-2 w-full px-3 py-1.5 rounded-lg text-sm hover:bg-slate-100 ${effectiveTtl === o.value ? "bg-primary/10 text-primary font-semibold" : ""}`}
+                                    data-testid={`ttl-option-${o.value}`}
+                                >
+                                    <span className="w-8 text-[11px] font-bold text-slate-400">{o.icon}</span>
+                                    {o.label}
+                                </button>
+                            ))}
+                            {ttl !== null && (
+                                <button onClick={() => { setTtl(null); setShowTtl(false); }} className="text-xs text-slate-500 hover:text-primary px-3 py-1 mt-1" data-testid="ttl-reset">Use conversation default</button>
+                            )}
+                        </div>
+                    )}
+                </div>
                 <textarea
+                    ref={textareaRef}
                     rows={1}
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-                    placeholder={uploading > 0 ? "Uploading…" : "Type a message"}
+                    placeholder={uploading > 0 ? "Uploading…" : (replyTo ? `Reply to ${replyTo.sender_name}…` : "Type a message")}
                     className="flex-1 resize-none rounded-2xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 max-h-32"
                     data-testid="message-input"
                 />
-                <Button onClick={send} disabled={busy || (!text.trim() && attachments.length === 0)} className="rounded-full text-white shrink-0" style={{ backgroundColor: NAVY }} data-testid="send-btn">
+                <Button onClick={send} disabled={busy || (!text.trim() && attachments.length === 0)} className="rounded-full text-white shrink-0 h-9 w-9" style={{ backgroundColor: NAVY }} data-testid="send-btn">
                     <Send className="h-4 w-4" />
                 </Button>
             </div>
@@ -658,6 +812,28 @@ function ConversationSettings({ conversation, onChanged }) {
                             </div>
                         </div>
                     )}
+                    <div>
+                        <Label className="text-xs">Disappearing messages</Label>
+                        <div className="grid grid-cols-4 gap-1.5 mt-1.5" data-testid="ttl-conv-grid">
+                            {TTL_OPTIONS.map((o) => (
+                                <button
+                                    key={o.value}
+                                    onClick={async () => {
+                                        try {
+                                            await api.put(`/conversations/${conversation.id}`, { ttl: o.value });
+                                            toast.success(o.value === "off" ? "Disappearing off" : `Set to ${o.label} after seen`);
+                                            onChanged();
+                                        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+                                    }}
+                                    className={`text-xs rounded-xl py-2 font-semibold border-2 transition-all ${conversation.ttl === o.value ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-slate-600 hover:border-primary/40"}`}
+                                    data-testid={`ttl-conv-${o.value}`}
+                                >
+                                    {o.label}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1.5">Timer starts after the first recipient reads the message. You can still override this per-message from the composer.</p>
+                    </div>
                     <div>
                         <Label className="text-xs">Members ({conversation.members?.length || 0})</Label>
                         <div className="mt-2 space-y-1.5 max-h-56 overflow-y-auto">

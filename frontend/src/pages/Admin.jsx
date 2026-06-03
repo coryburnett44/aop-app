@@ -1166,16 +1166,36 @@ function HoursAdmin() {
                 <div className="space-y-3">
                     {items.map((h) => (
                         <div key={h.id} className="bg-card border border-border rounded-2xl p-5 flex items-start gap-4" data-testid={`admin-hours-${h.id}`}>
-                            <div className="w-12 h-12 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold">{h.hours}</div>
+                            <div className="w-14 h-14 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold text-lg shrink-0">{h.hours}<span className="text-[10px] font-normal -mt-0.5">hrs</span></div>
                             <div className="flex-1 min-w-0">
-                                <div className="text-sm font-medium">{h.user_name}</div>
-                                <div className="text-sm leading-relaxed text-muted-foreground">{h.description}</div>
-                                <div className="text-xs text-muted-foreground mt-1">{h.date && format(parseISO(h.date), "MMM d, yyyy")} · status: {h.status}</div>
+                                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                    <div className="font-heading font-bold text-base">{h.user_name}</div>
+                                    <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-accent/40">{h.event_type === "aop_related" ? "AOP-related" : "Other"}</span>
+                                    <span className={`text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 ${h.status === "approved" ? "bg-green-100 text-green-700" : h.status === "rejected" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{h.status}</span>
+                                </div>
+                                <div className="text-xs text-muted-foreground">{h.date && format(parseISO(h.date), "EEE, MMM d, yyyy")}</div>
+                                {h.agency_name && (
+                                    <div className="mt-2 text-sm"><span className="text-xs uppercase tracking-wider text-muted-foreground font-bold">Agency:</span> <span className="font-medium">{h.agency_name}</span></div>
+                                )}
+                                {(h.description || h.activity) && (
+                                    <div className="mt-1.5 text-sm bg-muted/40 rounded-xl p-2.5">
+                                        <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold mb-1">What did they do</div>
+                                        <div className="leading-relaxed">{h.description || h.activity}</div>
+                                    </div>
+                                )}
+                                {(h.host_name || h.host_email || h.host_phone) && (
+                                    <div className="mt-1.5 text-xs grid sm:grid-cols-3 gap-1.5 bg-card border border-border rounded-xl p-2.5" data-testid={`admin-hours-host-${h.id}`}>
+                                        <div className="text-xs uppercase tracking-wider text-muted-foreground font-bold col-span-full mb-0.5">Verification contact</div>
+                                        {h.host_name && <div><span className="font-bold">Host:</span> {h.host_name}</div>}
+                                        {h.host_email && <div className="break-all"><span className="font-bold">Email:</span> <a className="text-primary hover:underline" href={`mailto:${h.host_email}`}>{h.host_email}</a></div>}
+                                        {h.host_phone && <div><span className="font-bold">Phone:</span> <a className="text-primary hover:underline" href={`tel:${h.host_phone}`}>{h.host_phone}</a></div>}
+                                    </div>
+                                )}
                             </div>
                             {h.status === "pending" && (
-                                <div className="flex gap-2">
+                                <div className="flex flex-col sm:flex-row gap-2 shrink-0">
                                     <Button size="sm" onClick={() => review(h.id, "approved")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`admin-approve-${h.id}`}>Approve</Button>
-                                    <Button size="sm" variant="outline" onClick={() => review(h.id, "rejected")} className="rounded-full">Reject</Button>
+                                    <Button size="sm" variant="outline" onClick={() => review(h.id, "rejected")} className="rounded-full" data-testid={`admin-reject-${h.id}`}>Reject</Button>
                                 </div>
                             )}
                         </div>

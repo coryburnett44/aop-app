@@ -32,6 +32,8 @@ import CalendarPage from "./pages/Calendar";
 import Chat from "./pages/Chat";
 import ScheduleMeeting from "./pages/ScheduleMeeting";
 import CheckinScan from "./pages/CheckinScan";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 
 function App() {
     return (
@@ -65,6 +67,8 @@ function App() {
                             <Route path="/chat/:conversationId" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
                             <Route path="/schedule-meeting" element={<ProtectedRoute><ScheduleMeeting /></ProtectedRoute>} />
                             <Route path="/checkin/:token" element={<CheckinScan />} />
+                            <Route path="/forgot-password" element={<ForgotPassword />} />
+                            <Route path="/reset-password" element={<ResetPassword />} />
                             <Route path="/hours" element={<ProtectedRoute><Hours /></ProtectedRoute>} />
                             <Route path="/page/:slug" element={<CmsPage />} />
                             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />

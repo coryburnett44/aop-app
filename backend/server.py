@@ -1036,6 +1036,70 @@ class RefreshIn(BaseModel):
     refresh_token: Optional[str] = None
 
 
+async def _send_password_reset_email(email: str, name: str, token: str) -> bool:
+    if not RESEND_API_KEY or not email:
+        return False
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    link = f"{frontend}/reset-password?token={token}"
+    import html as _h
+    safe_name = _h.escape(name or "")
+    body = f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
+      <h1 style="color:#C8102E;margin:0 0 12px;font-size:26px">Reset your password</h1>
+      <p style="line-height:1.6">Hi {safe_name}, we received a request to reset your Alpha Omega Phi member portal password. This link is valid for <strong>1 hour</strong> and can only be used once.</p>
+      <p><a href="{link}" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Reset my password</a></p>
+      <p style="font-size:12px;color:#888;margin-top:18px;line-height:1.6">If the button doesn't work, paste this URL into your browser:<br><span style="color:#444">{link}</span></p>
+      <p style="font-size:12px;color:#888;margin-top:18px;line-height:1.6">If you didn't request this, you can safely ignore this email — your existing password still works.</p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": RESEND_FROM,
+            "to": [email],
+            "subject": "Reset your Alpha Omega Phi password",
+            "html": body,
+            "tags": [{"name": "type", "value": "password_reset"}],
+        })
+        return True
+    except Exception as e:
+        logger.warning(f"Password reset email failed for {email}: {e}")
+        return False
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordIn):
+    """Request a password reset link. Always returns ok=true to prevent
+    enumeration (the email lookup result isn't leaked back to the caller)."""
+    email = body.email.lower().strip()
+    user = await db.users.find_one({"email": email})
+    if user:
+        token = secrets.token_urlsafe(32)
+        await db.password_reset_tokens.insert_one({
+            "token": token,
+            "user_id": user["id"],
+            "expires_at": iso(now_utc() + timedelta(hours=1)),
+            "used": False,
+            "created_at": iso(now_utc()),
+        })
+        await _send_password_reset_email(email, user.get("name", ""), token)
+    return {"ok": True}
+
+
+@api.post("/auth/reset-password")
+async def reset_password(body: ResetPasswordIn):
+    t = await db.password_reset_tokens.find_one({"token": body.token, "used": False})
+    if not t:
+        raise HTTPException(status_code=400, detail="Invalid or already-used reset link.")
+    if t.get("expires_at") and t["expires_at"] < iso(now_utc()):
+        raise HTTPException(status_code=400, detail="This reset link has expired. Request a new one.")
+    await db.users.update_one(
+        {"id": t["user_id"]},
+        {"$set": {"password_hash": hash_password(body.new_password)}},
+    )
+    await db.password_reset_tokens.update_one({"token": body.token}, {"$set": {"used": True, "used_at": iso(now_utc())}})
+    return {"ok": True}
+
+
 @api.post("/auth/refresh")
 async def refresh(request: Request, response: Response, body: Optional[RefreshIn] = None):
     # Accept refresh token via (in priority order):
@@ -2042,14 +2106,39 @@ async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, admin: di
 
 @api.delete("/members/{user_id}")
 async def admin_delete_member(user_id: str, admin: dict = Depends(admin_tab_dep("members"))):
+    """Hard-delete personal data; soft-delete chat messages so other group
+    members still see context (sender shown as 'Deleted Member'); KEEP PayPal
+    transactions for accounting but anonymize the linked user_name."""
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "name": 1, "email": 1})
+    if not u:
+        raise HTTPException(status_code=404, detail="Member not found")
+    deleted_name = "Deleted Member"
+    # Hard delete personal records
     await db.users.delete_one({"id": user_id})
     await db.rsvps.delete_many({"user_id": user_id})
+    await db.checkins.delete_many({"user_id": user_id})
     await db.volunteer_hours.delete_many({"user_id": user_id})
     await db.award_grants.delete_many({"user_id": user_id})
-    await db.transactions.delete_many({"user_id": user_id})
-    return {"ok": True}
+    await db.applications.delete_many({"email": (u.get("email") or "").lower()})
+    await db.password_set_tokens.delete_many({"user_id": user_id})
+    await db.password_reset_tokens.delete_many({"user_id": user_id})
+    await db.photos.delete_many({"uploaded_by": user_id})
+    await db.documents.delete_many({"uploaded_by": user_id})
+    await db.photo_albums.delete_many({"created_by": user_id, "is_default": {"$ne": True}})
+    await db.omega_tributes.delete_many({"user_id": user_id})
+    await db.chat_notifications.delete_many({"recipient_id": user_id})
+    # Soft-delete chat messages (preserve thread for others)
+    await db.chat_messages.update_many(
+        {"sender_id": user_id},
+        {"$set": {"sender_name": deleted_name, "sender_avatar": "", "body": "(message removed — member deleted)", "attachments": [], "deleted_at": iso(now_utc())}},
+    )
+    # Remove from conversation members lists
+    await db.conversations.update_many({"member_ids": user_id}, {"$pull": {"member_ids": user_id}})
+    # Anonymize PayPal transactions (keep for accounting)
+    await db.transactions.update_many({"user_id": user_id}, {"$set": {"user_name": deleted_name, "anonymized": True}})
+    return {"ok": True, "deleted_user_id": user_id}
 
 @api.put("/members/{user_id}/role")
 async def update_member_role(user_id: str, body: RoleUpdateIn, admin: dict = Depends(admin_tab_dep("members"))):
@@ -2341,9 +2430,31 @@ DEFAULT_PHOTO_ALBUMS = [
 ]
 
 
+PHOTO_ALBUM_CATEGORIES = ["anniversary", "ceremony", "conference", "tournament", "line", "community", "other"]
+
+
+def auto_categorize_album(name: str) -> str:
+    """Pick a category by keyword-matching the album title."""
+    n = (name or "").lower()
+    if any(k in n for k in ["anniversary", "10-year", "10 year", "5-year", "7-year"]):
+        return "anniversary"
+    if "ceremony" in n or "commitment" in n:
+        return "ceremony"
+    if "conference" in n or "summit" in n:
+        return "conference"
+    if "tournament" in n or "golf" in n:
+        return "tournament"
+    if " line" in f" {n}" or n.endswith(" line"):
+        return "line"
+    if any(k in n for k in ["community", "service", "giveaway", "outreach", "va ", " va", "volunteer"]):
+        return "community"
+    return "other"
+
+
 async def seed_default_photo_albums():
     """Insert each canonical album as a row in the photo_albums collection.
-    Only inserts new ones; never overwrites custom albums. Idempotent."""
+    Only inserts new ones; never overwrites custom albums. Idempotent.
+    Also backfills category on every album each boot (cheap, allows recategorizing)."""
     for name in DEFAULT_PHOTO_ALBUMS:
         await db.photo_albums.update_one(
             {"name": name},
@@ -2353,40 +2464,60 @@ async def seed_default_photo_albums():
                 "is_default": True,
                 "created_by": None,
                 "created_by_name": "System",
+                "category": auto_categorize_album(name),
+                "cover_url": "",
                 "created_at": iso(now_utc()),
             }},
             upsert=True,
         )
+    # Backfill category for any album missing it
+    async for a in db.photo_albums.find({"category": {"$in": [None, ""]}}, {"_id": 0, "id": 1, "name": 1}):
+        await db.photo_albums.update_one({"id": a["id"]}, {"$set": {"category": auto_categorize_album(a["name"])}})
 
 
 @api.get("/photos/albums")
-async def list_photo_albums():
+async def list_photo_albums(category: Optional[str] = None):
     """Returns every album the chapter has — canonical + admin-created + any
-    albums a member auto-created on upload."""
-    albums = await db.photo_albums.find({}, {"_id": 0}).sort([("is_default", -1), ("name", 1)]).to_list(500)
-    # Augment with live photo counts so the UI can show 'Album X — 23 photos'.
+    albums a member auto-created on upload. Pass `?category=anniversary` to filter."""
+    q: dict = {}
+    if category and category in PHOTO_ALBUM_CATEGORIES:
+        q["category"] = category
+    albums = await db.photo_albums.find(q, {"_id": 0}).sort([("is_default", -1), ("name", 1)]).to_list(500)
     pipeline = [
         {"$match": {"is_deleted": {"$ne": True}}},
-        {"$group": {"_id": "$album", "count": {"$sum": 1}}},
+        {"$group": {"_id": "$album", "count": {"$sum": 1}, "first_photo": {"$first": "$storage_path"}}},
     ]
-    counts = {}
+    counts: dict = {}
+    first_photos: dict = {}
     async for d in db.photos.aggregate(pipeline):
-        counts[d["_id"] or "general"] = d["count"]
-    return [
-        {
+        key = d["_id"] or "general"
+        counts[key] = d["count"]
+        first_photos[key] = d.get("first_photo")
+    out = []
+    for a in albums:
+        # Cover precedence: admin-set cover_url > first uploaded photo in album > none
+        cover = a.get("cover_url") or ""
+        if not cover:
+            fp = first_photos.get(a["name"])
+            if fp:
+                cover = f"/api/files/{fp}"
+        out.append({
             "id": a.get("id"),
             "name": a["name"],
             "count": counts.get(a["name"], 0),
             "is_default": a.get("is_default", False),
             "created_by": a.get("created_by"),
             "created_by_name": a.get("created_by_name", ""),
-        }
-        for a in albums
-    ]
+            "category": a.get("category", auto_categorize_album(a["name"])),
+            "cover_url": cover,
+        })
+    return out
 
 
 class AlbumIn(BaseModel):
     name: str
+    category: Optional[str] = None
+    cover_url: Optional[str] = None
 
 
 @api.post("/photos/albums")
@@ -2397,16 +2528,54 @@ async def create_photo_album(body: AlbumIn, user: dict = Depends(get_current_use
     existing = await db.photo_albums.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
     if existing:
         raise HTTPException(status_code=400, detail=f"Album '{existing['name']}' already exists.")
+    category = body.category if (body.category in PHOTO_ALBUM_CATEGORIES) else auto_categorize_album(name)
     doc = {
         "id": str(uuid.uuid4()),
         "name": name,
         "is_default": False,
         "created_by": user["id"],
         "created_by_name": user.get("name", ""),
+        "category": category,
+        "cover_url": (body.cover_url or "").strip(),
         "created_at": iso(now_utc()),
     }
     await db.photo_albums.insert_one(doc)
-    return {"id": doc["id"], "name": name, "count": 0, "is_default": False, "created_by_name": user.get("name", "")}
+    return {"id": doc["id"], "name": name, "count": 0, "is_default": False, "created_by_name": user.get("name", ""), "category": category, "cover_url": doc["cover_url"]}
+
+
+class AlbumUpdateIn(BaseModel):
+    category: Optional[str] = None
+    cover_url: Optional[str] = None
+    cover_photo_id: Optional[str] = None  # alternative: pick a photo by its id
+
+
+@api.put("/photos/albums/{album_id}")
+async def update_photo_album(album_id: str, body: AlbumUpdateIn, user: dict = Depends(get_current_user)):
+    a = await db.photo_albums.find_one({"id": album_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Album not found")
+    is_admin = user.get("role") == "admin"
+    is_creator = a.get("created_by") == user["id"]
+    if not (is_admin or is_creator):
+        raise HTTPException(status_code=403, detail="Only the album creator or an admin can edit this album.")
+    updates: dict = {}
+    if body.category and body.category in PHOTO_ALBUM_CATEGORIES:
+        updates["category"] = body.category
+    if body.cover_url is not None:
+        updates["cover_url"] = body.cover_url
+    if body.cover_photo_id:
+        p = await db.photos.find_one({"id": body.cover_photo_id, "album": a["name"]}, {"_id": 0})
+        if p:
+            updates["cover_url"] = f"/api/files/{p['storage_path']}"
+    if updates:
+        await db.photo_albums.update_one({"id": album_id}, {"$set": updates})
+    fresh = await db.photo_albums.find_one({"id": album_id}, {"_id": 0})
+    return {
+        "id": fresh.get("id"),
+        "name": fresh.get("name"),
+        "category": fresh.get("category", "other"),
+        "cover_url": fresh.get("cover_url", ""),
+    }
 
 
 @api.delete("/photos/albums/{album_id}")
@@ -2554,17 +2723,152 @@ def document_out(d: dict) -> dict:
         "size": d.get("size", 0),
         "uploaded_by": d.get("uploaded_by"),
         "uploaded_by_name": d.get("uploaded_by_name", ""),
+        "folder_id": d.get("folder_id"),
         "created_at": d.get("created_at"),
     }
 
 @api.get("/documents")
-async def list_documents(category: Optional[str] = None):
-    query = {"is_deleted": {"$ne": True}}
+async def list_documents(category: Optional[str] = None, folder_id: Optional[str] = None):
+    query: dict = {"is_deleted": {"$ne": True}}
     if category:
         query["category"] = category
+    if folder_id == "root":
+        query["folder_id"] = {"$in": [None, ""]}
+    elif folder_id:
+        query["folder_id"] = folder_id
     cursor = db.documents.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
     items = await cursor.to_list(500)
     return [document_out(d) for d in items]
+
+
+# ---------- Document Folders (2 levels deep) ----------
+class DocumentFolderIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    parent_id: Optional[str] = None
+
+
+@api.get("/document-folders")
+async def list_document_folders():
+    """Return all folders. Frontend can build the 2-level tree from parent_id."""
+    folders = await db.document_folders.find({"is_deleted": {"$ne": True}}, {"_id": 0}).sort("name", 1).to_list(500)
+    # Live document counts per folder
+    counts: dict = {}
+    pipeline = [
+        {"$match": {"is_deleted": {"$ne": True}, "folder_id": {"$ne": None}}},
+        {"$group": {"_id": "$folder_id", "count": {"$sum": 1}}},
+    ]
+    async for d in db.documents.aggregate(pipeline):
+        counts[d["_id"]] = d["count"]
+    return [
+        {
+            "id": f["id"],
+            "name": f["name"],
+            "parent_id": f.get("parent_id"),
+            "created_by_name": f.get("created_by_name", ""),
+            "doc_count": counts.get(f["id"], 0),
+            "created_at": f.get("created_at"),
+        }
+        for f in folders
+    ]
+
+
+@api.post("/document-folders")
+async def create_document_folder(body: DocumentFolderIn, admin: dict = Depends(admin_tab_dep("documents"))):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Folder name is required.")
+    parent_id = body.parent_id or None
+    if parent_id:
+        parent = await db.document_folders.find_one({"id": parent_id, "is_deleted": {"$ne": True}})
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent folder not found")
+        if parent.get("parent_id"):
+            raise HTTPException(status_code=400, detail="Subfolders cannot have their own subfolders (max 2 levels).")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "parent_id": parent_id,
+        "created_by": admin["id"],
+        "created_by_name": admin.get("name", ""),
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.document_folders.insert_one(doc)
+    return {"id": doc["id"], "name": name, "parent_id": parent_id, "doc_count": 0, "created_by_name": doc["created_by_name"], "created_at": doc["created_at"]}
+
+
+@api.put("/document-folders/{folder_id}")
+async def rename_document_folder(folder_id: str, body: DocumentFolderIn, admin: dict = Depends(admin_tab_dep("documents"))):
+    f = await db.document_folders.find_one({"id": folder_id, "is_deleted": {"$ne": True}})
+    if not f:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    await db.document_folders.update_one({"id": folder_id}, {"$set": {"name": body.name.strip()}})
+    return {"ok": True}
+
+
+@api.delete("/document-folders/{folder_id}")
+async def delete_document_folder(folder_id: str, admin: dict = Depends(admin_tab_dep("documents"))):
+    """Delete a folder. Any subfolders become root-level, any documents become uncategorized."""
+    f = await db.document_folders.find_one({"id": folder_id, "is_deleted": {"$ne": True}})
+    if not f:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    await db.document_folders.update_one({"id": folder_id}, {"$set": {"is_deleted": True}})
+    await db.document_folders.update_many({"parent_id": folder_id}, {"$set": {"parent_id": None}})
+    await db.documents.update_many({"folder_id": folder_id}, {"$set": {"folder_id": None}})
+    return {"ok": True}
+
+
+@api.post("/documents/bulk")
+async def upload_documents_bulk(
+    files: List[UploadFile] = File(...),
+    category: str = Form("general"),
+    folder_id: str = Form(""),
+    user: dict = Depends(get_current_user),
+):
+    """Multi-file upload — returns the doc rows that succeeded + the names that failed."""
+    if len(files) == 0:
+        raise HTTPException(status_code=400, detail="Pick at least one file.")
+    if len(files) > 50:
+        raise HTTPException(status_code=400, detail="Max 50 files per batch.")
+    folder = None
+    if folder_id:
+        folder = await db.document_folders.find_one({"id": folder_id, "is_deleted": {"$ne": True}})
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+    uploaded: list = []
+    failed: list = []
+    for f in files:
+        try:
+            ext = (f.filename.rsplit(".", 1)[-1] if f.filename and "." in f.filename else "bin").lower()
+            if ext not in DOC_EXT and ext not in IMAGE_EXT:
+                failed.append({"filename": f.filename, "reason": f"Unsupported type .{ext}"}); continue
+            content_type = f.content_type or MIME_BY_EXT.get(ext, "application/octet-stream")
+            data = await f.read()
+            if len(data) > 25 * 1024 * 1024:
+                failed.append({"filename": f.filename, "reason": "File over 25MB"}); continue
+            path = f"{APP_NAME}/documents/{user['id']}/{uuid.uuid4()}.{ext}"
+            result = put_object(path, data, content_type)
+            doc = {
+                "id": str(uuid.uuid4()),
+                "title": f.filename,
+                "category": category or "general",
+                "description": "",
+                "folder_id": folder_id or None,
+                "storage_path": result["path"],
+                "original_filename": f.filename,
+                "content_type": content_type,
+                "size": result.get("size", len(data)),
+                "uploaded_by": user["id"],
+                "uploaded_by_name": user.get("name", ""),
+                "is_deleted": False,
+                "created_at": iso(now_utc()),
+            }
+            await db.documents.insert_one(doc)
+            uploaded.append(document_out(doc))
+        except Exception as ex:
+            logger.warning(f"Doc upload failed for {f.filename}: {ex}")
+            failed.append({"filename": f.filename, "reason": str(ex)})
+    return {"uploaded": uploaded, "failed": failed}
 
 @api.post("/documents")
 async def upload_document(
@@ -2572,6 +2876,7 @@ async def upload_document(
     title: str = Form(""),
     category: str = Form("general"),
     description: str = Form(""),
+    folder_id: str = Form(""),
     user: dict = Depends(get_current_user),
 ):
     ext = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "bin").lower()
@@ -2588,6 +2893,7 @@ async def upload_document(
         "title": title or file.filename,
         "category": category or "general",
         "description": description,
+        "folder_id": folder_id or None,
         "storage_path": result["path"],
         "original_filename": file.filename,
         "content_type": content_type,
@@ -5201,23 +5507,35 @@ class ChatHub:
 chat_hub = ChatHub()
 
 
+TTL_CHOICES = {"off": 0, "1h": 3600, "24h": 86400, "7d": 604800}
+TTL_VALUES = set(TTL_CHOICES.keys())
+
+
+def _ttl_choice_to_seconds(v: Optional[str]) -> int:
+    if not v: return 0
+    return TTL_CHOICES.get(v, 0)
+
+
 # ---------- Pydantic models ----------
 class ConversationCreateIn(BaseModel):
     member_ids: List[str]  # other members (the current user is auto-included)
     name: Optional[str] = None
     avatar_url: Optional[str] = None  # group photo (any member can change later)
     type: Optional[Literal["dm", "group"]] = None  # auto-detected if None
+    ttl: Optional[Literal["off", "1h", "24h", "7d"]] = "off"
 
 class ConversationUpdateIn(BaseModel):
     name: Optional[str] = None
     avatar_url: Optional[str] = None
     add_member_ids: Optional[List[str]] = None
     remove_member_ids: Optional[List[str]] = None
+    ttl: Optional[Literal["off", "1h", "24h", "7d"]] = None
 
 class MessageIn(BaseModel):
     body: str = ""
     attachments: List[dict] = []
     reply_to: Optional[str] = None
+    ttl: Optional[Literal["off", "1h", "24h", "7d"]] = None  # override conversation default
 
 
 def _now_iso():
@@ -5258,10 +5576,28 @@ async def conversation_out(c: dict, viewer_id: str) -> dict:
         "last_message_at": c.get("last_message_at"),
         "last_message_preview": c.get("last_message_preview", ""),
         "last_read_at": c.get("read_state", {}).get(viewer_id),
+        "ttl": c.get("ttl", "off"),
     }
 
 
-def message_out(m: dict) -> dict:
+def _is_message_expired(m: dict, viewer_id: str) -> bool:
+    """A disappearing message expires {ttl_seconds} after the first time ANY
+    recipient (other than the sender) read it."""
+    ttl = int(m.get("ttl_seconds") or 0)
+    if ttl <= 0:
+        return False
+    first_seen = m.get("first_read_at")
+    if not first_seen:
+        return False  # not yet seen by anyone → keep showing
+    # Sender always sees their own (until expiry too — keeps semantics symmetrical)
+    try:
+        seen_at = datetime.fromisoformat(first_seen)
+    except Exception:
+        return False
+    return (now_utc() - seen_at).total_seconds() >= ttl
+
+
+def message_out(m: dict, viewer_id: str = "") -> dict:
     return {
         "id": m["id"],
         "conversation_id": m["conversation_id"],
@@ -5274,6 +5610,9 @@ def message_out(m: dict) -> dict:
         "created_at": m.get("created_at"),
         "edited_at": m.get("edited_at"),
         "deleted_at": m.get("deleted_at"),
+        "ttl_seconds": int(m.get("ttl_seconds") or 0),
+        "first_read_at": m.get("first_read_at"),
+        "expires_at": m.get("expires_at"),
     }
 
 
@@ -5310,6 +5649,7 @@ async def create_conversation(body: ConversationCreateIn, user: dict = Depends(g
         "avatar_url": body.avatar_url or "",
         "member_ids": members,
         "created_by": user["id"],
+        "ttl": body.ttl or "off",
         "created_at": _now_iso(),
         "last_message_at": _now_iso(),
         "last_message_preview": "",
@@ -5338,6 +5678,8 @@ async def update_conversation(cid: str, body: ConversationUpdateIn, user: dict =
         sets["name"] = body.name
     if body.avatar_url is not None:
         sets["avatar_url"] = body.avatar_url
+    if body.ttl is not None:
+        sets["ttl"] = body.ttl
     # member changes only allowed in group chats
     if c.get("type") == "group":
         members = set(c.get("member_ids", []))
@@ -5392,11 +5734,23 @@ async def mark_read(cid: str, user: dict = Depends(get_current_user)):
     c = await db.conversations.find_one({"id": cid, "member_ids": user["id"]})
     if not c:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    await db.conversations.update_one({"id": cid}, {"$set": {f"read_state.{user['id']}": _now_iso()}})
+    now_iso = _now_iso()
+    await db.conversations.update_one({"id": cid}, {"$set": {f"read_state.{user['id']}": now_iso}})
+    # Stamp first_read_at on any disappearing messages this viewer hasn't seen yet.
+    # We only want the FIRST recipient (other than the sender) to start the timer.
+    await db.messages.update_many(
+        {
+            "conversation_id": cid,
+            "ttl_seconds": {"$gt": 0},
+            "first_read_at": None,
+            "sender_id": {"$ne": user["id"]},
+        },
+        {"$set": {"first_read_at": now_iso}},
+    )
     # Cancel any pending email digest notifications for this user+conversation
     await db.chat_notifications.update_many(
         {"recipient_id": user["id"], "conversation_id": cid, "status": "pending"},
-        {"$set": {"status": "cancelled", "cancelled_at": _now_iso()}},
+        {"$set": {"status": "cancelled", "cancelled_at": now_iso}},
     )
     return {"ok": True}
 
@@ -5417,7 +5771,21 @@ async def list_messages(
         q["created_at"] = {"$lt": before}
     items = await db.messages.find(q, {"_id": 0}).sort("created_at", -1).limit(min(limit, 100)).to_list(100)
     items.reverse()
-    return [message_out(m) for m in items]
+    # Drop expired disappearing messages (and best-effort cleanup so DB doesn't bloat)
+    keep = []
+    expired_ids = []
+    for m in items:
+        if _is_message_expired(m, user["id"]):
+            expired_ids.append(m["id"])
+        else:
+            keep.append(m)
+    if expired_ids:
+        # Soft-delete (mirrors how regular deletes work)
+        asyncio.create_task(db.messages.update_many(
+            {"id": {"$in": expired_ids}},
+            {"$set": {"deleted_at": _now_iso(), "body": "", "attachments": []}},
+        ))
+    return [message_out(m, user["id"]) for m in keep]
 
 
 @api.post("/conversations/{cid}/messages")
@@ -5427,6 +5795,9 @@ async def send_message(cid: str, body: MessageIn, user: dict = Depends(get_curre
         raise HTTPException(status_code=404, detail="Conversation not found")
     if not body.body.strip() and not body.attachments:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
+    # Resolve TTL: per-message override > conversation default
+    effective_ttl_choice = body.ttl if body.ttl is not None else c.get("ttl", "off")
+    ttl_seconds = _ttl_choice_to_seconds(effective_ttl_choice)
     doc = {
         "id": str(uuid.uuid4()),
         "conversation_id": cid,
@@ -5436,6 +5807,8 @@ async def send_message(cid: str, body: MessageIn, user: dict = Depends(get_curre
         "body": body.body,
         "attachments": body.attachments,
         "reply_to": body.reply_to,
+        "ttl_seconds": ttl_seconds,
+        "first_read_at": None,
         "created_at": _now_iso(),
         "edited_at": None,
         "deleted_at": None,
@@ -5446,7 +5819,7 @@ async def send_message(cid: str, body: MessageIn, user: dict = Depends(get_curre
         {"id": cid},
         {"$set": {"last_message_at": doc["created_at"], "last_message_preview": preview[:140], f"read_state.{user['id']}": doc["created_at"]}},
     )
-    payload = message_out(doc)
+    payload = message_out(doc, user["id"])
     await chat_hub.push(c.get("member_ids", []), {"type": "message:new", "message": payload})
     # Queue email digest notifications for offline recipients (debounced 5 min — cancelled when they read)
     try:

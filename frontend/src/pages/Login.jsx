@@ -69,6 +69,11 @@ export default function Login() {
                             className="rounded-xl mt-1.5"
                             data-testid="login-password-input"
                         />
+                        <div className="text-right mt-1.5">
+                            <Link to="/forgot-password" className="text-xs text-primary hover:underline" data-testid="login-forgot-link">
+                                Forgot password?
+                            </Link>
+                        </div>
                     </div>
                     {error && (
                         <div className="text-sm text-destructive bg-destructive/10 rounded-xl px-4 py-2" data-testid="login-error">

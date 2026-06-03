@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, mediaUrl } from "../lib/api";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Input } from "../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import {
     Search, Mail, Phone, MapPin, Calendar, Shield,
@@ -52,8 +53,13 @@ function SocialIcons({ member, size = "h-7 w-7", stop = true }) {
 export default function Directory() {
     const [members, setMembers] = useState([]);
     const [chapters, setChapters] = useState([]);
+    const [tiers, setTiers] = useState([]);
     const [q, setQ] = useState("");
     const [active, setActive] = useState(null);
+    const [statusFilter, setStatusFilter] = useState("all");
+    const [tierFilter, setTierFilter] = useState("all");
+    const [chapterFilter, setChapterFilter] = useState("all");
+    const [sortBy, setSortBy] = useState("name");
 
     const load = async () => {
         const { data } = await api.get("/members", { params: q ? { q } : {} });
@@ -67,16 +73,33 @@ export default function Directory() {
 
     useEffect(() => {
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
+        api.get("/tiers").then(({ data }) => setTiers(data)).catch(() => {});
     }, []);
 
     const chapterName = (id) => chapters.find((c) => c.id === id)?.name || "—";
 
+    const filtered = useMemo(() => {
+        let arr = members.slice();
+        if (statusFilter !== "all") arr = arr.filter((m) => (m.status || "active").toLowerCase() === statusFilter);
+        if (tierFilter !== "all") arr = arr.filter((m) => (m.membership_tier || "standard").toLowerCase() === tierFilter);
+        if (chapterFilter !== "all") arr = arr.filter((m) => (m.chapter_id || "") === chapterFilter);
+        const cmp = (a, b) => (a || "").localeCompare(b || "");
+        if (sortBy === "name") arr.sort((a, b) => cmp(a.name, b.name));
+        else if (sortBy === "chapter") arr.sort((a, b) => cmp(chapterName(a.chapter_id), chapterName(b.chapter_id)) || cmp(a.name, b.name));
+        else if (sortBy === "joined") arr.sort((a, b) => (b.join_date || "").localeCompare(a.join_date || ""));
+        else if (sortBy === "tier") arr.sort((a, b) => cmp(a.membership_tier, b.membership_tier) || cmp(a.name, b.name));
+        return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [members, statusFilter, tierFilter, chapterFilter, sortBy, chapters]);
+
+    const distinctStatuses = useMemo(() => Array.from(new Set(members.map((m) => (m.status || "active").toLowerCase()))).filter(Boolean).sort(), [members]);
+
     return (
         <div className="max-w-7xl mx-auto px-6 lg:px-10 py-12">
-            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-4">
                 <div>
                     <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">Members</h1>
-                    <p className="text-muted-foreground mt-2">{members.length} brothers and sisters · click a card for the full member profile.</p>
+                    <p className="text-muted-foreground mt-2">{filtered.length} of {members.length} · click a card for the full member profile.</p>
                 </div>
                 <div className="relative w-full sm:w-80">
                     <Search className="h-4 w-4 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -90,8 +113,54 @@ export default function Directory() {
                 </div>
             </div>
 
+            {/* Filter + Sort bar */}
+            <div className="bg-card border border-border rounded-2xl p-3 mb-6 flex flex-wrap items-center gap-2" data-testid="directory-filters">
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-auto min-w-[140px] rounded-full text-xs" data-testid="filter-status"><SelectValue placeholder="Status" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {distinctStatuses.map((s) => <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+                <Select value={tierFilter} onValueChange={setTierFilter}>
+                    <SelectTrigger className="w-auto min-w-[140px] rounded-full text-xs" data-testid="filter-tier"><SelectValue placeholder="Tier" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All tiers</SelectItem>
+                        {tiers.map((t) => <SelectItem key={t.id} value={(t.name || "").toLowerCase()}>{t.name}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+                <Select value={chapterFilter} onValueChange={setChapterFilter}>
+                    <SelectTrigger className="w-auto min-w-[160px] rounded-full text-xs" data-testid="filter-chapter"><SelectValue placeholder="Chapter" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All chapters</SelectItem>
+                        {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+                <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>Sort:</span>
+                    <Select value={sortBy} onValueChange={setSortBy}>
+                        <SelectTrigger className="w-auto min-w-[120px] rounded-full text-xs" data-testid="sort-by"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="name">Name (A→Z)</SelectItem>
+                            <SelectItem value="chapter">Chapter</SelectItem>
+                            <SelectItem value="tier">Tier</SelectItem>
+                            <SelectItem value="joined">Recently joined</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+                {(statusFilter !== "all" || tierFilter !== "all" || chapterFilter !== "all") && (
+                    <button
+                        onClick={() => { setStatusFilter("all"); setTierFilter("all"); setChapterFilter("all"); }}
+                        className="text-xs text-primary hover:underline ml-2"
+                        data-testid="clear-filters"
+                    >
+                        Clear filters
+                    </button>
+                )}
+            </div>
+
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {members.map((m) => {
+                {filtered.map((m) => {
                     const initials = (m.name || m.email).split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
                     const fullAddress = [m.address, m.city, m.state, m.zip_code, m.country].filter(Boolean).join(", ");
                     return (
@@ -139,7 +208,7 @@ export default function Directory() {
                         </button>
                     );
                 })}
-                {members.length === 0 && <div className="col-span-full text-muted-foreground">No members match that search.</div>}
+                {filtered.length === 0 && <div className="col-span-full text-muted-foreground">No members match these filters.</div>}
             </div>
 
             <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>

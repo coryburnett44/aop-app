@@ -1,0 +1,50 @@
+{
+  "summary": "Phase N — 9-item batch (forgot password, photo album cover+category+filter, chat emoji/reply/TTL, multi-doc upload, doc folders 2-level, members filter/sort, hours review enrichment, cascade delete, Mac Safari apply). Backend pytest 12/13 PASSING against live preview URL. UI smoke verified on desktop 1280px for all 9 features.\n\nBACKEND PASS (12): forgot_password returns 200 for both valid+unknown emails (no enum leak); reset_password full lifecycle (request → token persisted in db.password_reset_tokens → reset → login with new password → reused token returns 400 → restore original); reset with garbage token 400; GET /photos/albums returns albums with category+cover_url; ?category=tournament filter returns only tournament albums; PUT /photos/albums/{id} {category} updates the category and persists; GET /conversations carries 'ttl' field; PUT /conversations/{id} {ttl:'1h'} persists; POST /conversations/{id}/messages with {reply_to, ttl:'24h'} returns ttl_seconds=86400 + reply_to=base; POST /documents/bulk with 3 files returns {uploaded:[3], failed:[]}; POST /hours with full body (activity, agency_name, host_name/email/phone, event_type=aop_related, description) persists and admin GET /hours returns all fields; DELETE /members/{id} cascades (users row removed).\n\nBACKEND FAIL (1): POST /api/document-folders returns 403 'Your admin role does not have access to documents' for admin@clubhaven.app. Root cause: ADMIN_ROLE_TABS['full'] in server.py line 256 does NOT include 'documents' — so even a full-admin is denied folder create/rename/delete. Documents bulk upload works because it uses get_current_user (any auth'd user). Frontend doc-folder button will return 403 from any admin.\n\nFRONTEND PASS: /forgot-password renders (Forgot your password? card, email field, 'Send me a reset link' button) — submit shows 'Check your inbox' confirmation. /login has Forgot link. /photos page has tournament/ceremony/etc category pills + Create album button. /documents has New folder + Upload buttons. /directory (route — header link 'Members' resolves to /directory) shows filter-status, filter-tier, filter-chapter testid'd dropdowns; tier dropdown opens with 8 options including all tiers from API; Sort dropdown shows 'Name (A→Z)'. /chat: clicking a conversation row opens thread; composer has textarea + smile (emoji) + alarm-clock (TTL) icons + reply button per message; clicking smile opens emoji-picker with 78 emoji testids; clicking alarm opens TTL grid with 6 TTL options visible (Off/1h/24h/7d × 'After seen'/'default'); existing messages render '24h ttl' indicator + 1d countdown next to time. /admin → Hours tab shows hours pill + member name + AOP-RELATED badge + PENDING badge + date + agency + 'WHAT DID THEY DO' box + 'VERIFICATION CONTACT' grid with Host/Email/Phone (verified visually for both Riley Chen test cards).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/document-folders, PUT /api/document-folders/{id}, DELETE /api/document-folders/{id}",
+        "issue": "Every admin (including admin_role='full') receives 403 'Your admin role does not have access to documents'. Cause: ADMIN_ROLE_TABS in server.py line 255-260 omits 'documents' from ALL admin role sets. Either (a) add 'documents' to the 'full' set (and operations_manager if intended), or (b) change the admin_tab_dep('documents') calls on lines 2776, 2801, 2810 to admin_tab_dep('news') / require_admin / a new mapping that exists. Frontend 'New folder' button is wired but the POST will 403 against any admin in production.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/directory (Members)",
+        "issues": ["Sort Select element does not carry data-testid='filter-sort' (only the row data-testid='directory-filters' and the three filter-{status,tier,chapter} are testid'd). Add data-testid='filter-sort' to the Sort SelectTrigger for parity. Minor — current Playwright can still locate it by neighbor text, but contract per spec mentions 'Sort' as a first-class control."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_n.py",
+    "/app/test_reports/pytest/phase_n_results.xml"
+  ],
+  "action_items": [
+    "FIX BACKEND: Add 'documents' to ADMIN_ROLE_TABS['full'] (and any other admin_role that should own docs/folders) in /app/backend/server.py line 256. Without this, NO admin can create/rename/delete document folders even though the frontend exposes the UI.",
+    "MINOR: Add data-testid='filter-sort' to the Sort SelectTrigger in /app/frontend/src/pages/Directory.jsx to match the filter-{status,tier,chapter} testid pattern.",
+    "DOC NOTE: The header link 'Members' routes to /directory (not /members). If a test or future feature relies on /members path, add a redirect or update the route in App.js."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 6537 lines — modular split STILL not done across iterations 13-17. This is the seventh consecutive iteration recommending this; consider it a hard blocker for future maintainability.",
+    "ADMIN_ROLE_TABS missing 'documents' (line 255). This is a regression from the doc-folder feature — the tab key was newly introduced in this iteration's add to admin_tab_dep('documents') but never registered as a tab.",
+    "_send_password_reset_email logs warning on failure but POST /auth/forgot-password still returns 200 — correct per spec, but no metric/alert hook. Recommend logging.error + Sentry integration so silent email failures don't accumulate.",
+    "password_reset_tokens: tokens are never reaped (no TTL index, no cleanup job). Old expired tokens accumulate forever. Recommend MongoDB TTL index on expires_at, or background sweep.",
+    "/auth/reset-password does not invalidate active sessions for the user — if a member's account was compromised, the attacker's existing access_token cookie still works for its full lifetime after password change. Recommend bumping a 'token_version' / 'security_stamp' field on the user and validating it during get_current_user.",
+    "POST /hours: pydantic schema requires both 'activity' (new, required) and 'description' (legacy, optional). Frontend Member hours form should be checked that it sends BOTH or that the schema accepts activity-only — current schema makes 'description' Optional so that's fine. But the admin HoursAdmin card displays 'What did they do' from `description` (legacy field). Verify the hours form is populating description (not just activity) so admin sees the value."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_n.py (new — 13 tests, 12 passing, 1 failure exposes the documents-tab bug)"
+  ],
+  "success_rate": {"backend": "92% (12/13)", "frontend": "~95%"},
+  "test_credentials": "Used admin@clubhaven.app/Admin123! and member@clubhaven.app/Member123! from /app/memory/test_credentials.md. Member password was reset to TempReset123! mid-test then restored to Member123! at end (verified login after restore).",
+  "seed_data_creation": "Test data created during run: (a) a few unused password_reset_tokens in db.password_reset_tokens (one consumed during reset test, others unused — will expire in 1h); (b) one TEST_packed care boxes Hours log was POSTed and then DELETEd at end of test; (c) one TEST Cascade Member was created and immediately DELETEd. No stray data should remain.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: /app/backend/tests/test_phase_n.py (13 tests). Uses MongoClient on mongodb://localhost:27017, DB_NAME='clubhaven_db' (from backend/.env — NOT 'clubhaven'). Hours POST schema requires {hours, activity, date(datetime), event_type, agency_name, host_name, host_email, host_phone} — note 'activity' is required separately from the legacy 'description' field. Admin create-member endpoint is POST /api/admin/members (NOT /api/members). Member directory route is /directory (header link text is 'Members' but path is /directory). Chat composer testids: data-testid='emoji-picker' (78 emojis), TTL grid (no testid yet — selected by 'Off'/'1 hour'/'24 hours'/'7 days' text). Conversation row click target: use page.locator('text=<conversation title>').first — NOT the first button (that's the '+' new chat). For /chat MessageBubble reply preview block — verified renders inline above reply body. KEY BUG: ADMIN_ROLE_TABS['full'] missing 'documents' → folder create returns 403 for admin@clubhaven.app — main agent must fix server.py line 256 before doc-folder feature ships.",
+  "rca of the issue": "Document-folder 403 RCA: server.py line 255-260 defines ADMIN_ROLE_TABS with sets for 'full', 'membership_manager', 'operations_manager', 'governor_manager'. None of these sets contain the string 'documents'. Routes at lines 2776/2801/2810 wrap admin_tab_dep('documents') which lookups admin_can(user, 'documents') → ADMIN_ROLE_TABS.get('full', set()) which returns a set NOT containing 'documents' → returns False → raises 403. Reproduction: login as admin@clubhaven.app, POST /api/document-folders {name:'X', parent_id:null} → 403. Fix: change line 256 to: 'full': {'dashboard', 'members', 'chapters', 'tiers', 'events', 'hours', 'awards', 'gear', 'causes', 'reports', 'email', 'news', 'pages', 'documents'} (add 'documents' to full at minimum; consider also adding to operations_manager). After fix re-run test_phase_n.py::TestDocsFolders::test_create_root_subfolder_and_block_third_level to confirm 200 + 400 on 3rd level."
+}
