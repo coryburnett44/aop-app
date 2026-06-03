@@ -16,6 +16,7 @@ import Reports from "./Reports";
 import RichEditor from "../components/RichEditor";
 import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
 import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
+import PageBuilder from "../components/cms/PageBuilder";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
@@ -365,11 +366,16 @@ function PagesAdmin() {
 
 function PageDialog({ page, onSaved, trigger }) {
     const [open, setOpen] = useState(false);
-    const [form, setForm] = useState({ slug: page?.slug || "", title: page?.title || "", body: page?.body || "" });
+    const [form, setForm] = useState({ slug: page?.slug || "", title: page?.title || "", body: page?.body || "", blocks: page?.blocks || [] });
+    const [mode, setMode] = useState((page?.blocks && page.blocks.length > 0) ? "blocks" : "blocks");
     async function save() {
         try {
-            if (page) await api.put(`/pages/${page.slug}`, { title: form.title, body: form.body });
-            else await api.post("/pages", form);
+            const payload = { title: form.title, body: form.body, blocks: form.blocks };
+            if (page) {
+                await api.put(`/pages/${page.slug}`, payload);
+            } else {
+                await api.post("/pages", { slug: form.slug, ...payload });
+            }
             toast.success("Saved");
             setOpen(false);
             onSaved();
@@ -380,12 +386,22 @@ function PageDialog({ page, onSaved, trigger }) {
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>{trigger}</DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">{page ? "Edit page" : "New page"}</DialogTitle></DialogHeader>
                 <div className="space-y-4 mt-2">
-                    <div><Label>Slug</Label><Input disabled={!!page} value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/\s+/g, "-") })} className="rounded-xl mt-1.5" data-testid="page-slug-input" /></div>
-                    <div><Label>Title</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="rounded-xl mt-1.5" /></div>
-                    <div><Label>Body</Label><Textarea rows={10} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                        <div><Label>Slug</Label><Input disabled={!!page} value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/\s+/g, "-") })} className="rounded-xl mt-1.5" data-testid="page-slug-input" /></div>
+                        <div><Label>Title</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="rounded-xl mt-1.5" data-testid="page-title-input" /></div>
+                    </div>
+                    <div className="flex items-center gap-2 border-b pb-2">
+                        <Button size="sm" variant={mode === "blocks" ? "default" : "outline"} onClick={() => setMode("blocks")} className="rounded-full" data-testid="page-mode-blocks">Visual editor</Button>
+                        <Button size="sm" variant={mode === "body" ? "default" : "outline"} onClick={() => setMode("body")} className="rounded-full" data-testid="page-mode-body">Legacy text</Button>
+                    </div>
+                    {mode === "blocks" ? (
+                        <PageBuilder blocks={form.blocks} onChange={(blocks) => setForm({ ...form, blocks })} testIdPrefix="page-builder" />
+                    ) : (
+                        <div><Label>Body</Label><Textarea rows={10} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    )}
                 </div>
                 <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="page-save-btn">Save</Button></DialogFooter>
             </DialogContent>

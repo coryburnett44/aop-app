@@ -4,9 +4,21 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
-import { Plus, Trash2, Save, Home as HomeIcon, FileText } from "lucide-react";
+import { Plus, Trash2, Save, Home as HomeIcon, FileText, Layers, ToggleLeft } from "lucide-react";
 import { toast } from "sonner";
 import { useSiteSettings } from "../context/SiteSettingsContext";
+import PageBuilder from "./cms/PageBuilder";
+
+const HOME_SECTION_KEYS = [
+    { key: "founders", label: "Founders photo strip" },
+    { key: "hero_text", label: "Hero headline + CTAs" },
+    { key: "countdown", label: "10-year countdown" },
+    { key: "pillars", label: "Three pillars" },
+    { key: "family_pulse", label: "New members + birthdays" },
+    { key: "secondary_banner", label: "Secondary banner photo" },
+    { key: "upcoming_events", label: "Upcoming events" },
+    { key: "news", label: "News & stories" },
+];
 
 const PAGE_KEYS = [
     { slug: "home", label: "Home" },
@@ -49,12 +61,19 @@ export default function SiteSettingsAdmin() {
                 hero_cta_label: form.hero_cta_label, hero_cta_href: form.hero_cta_href,
                 footer_text: form.footer_text, footer_links: form.footer_links,
                 page_titles: form.page_titles, nav_labels: form.nav_labels,
+                home_sections: form.home_sections,
+                home_blocks_top: form.home_blocks_top || [],
+                home_blocks_bottom: form.home_blocks_bottom || [],
             };
             await api.put("/site-settings", payload);
             toast.success("Site copy saved");
             await refresh();
         } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
         setBusy(false);
+    }
+
+    function toggleSection(key) {
+        setForm((p) => ({ ...p, home_sections: { ...(p.home_sections || {}), [key]: !(p.home_sections?.[key] ?? true) } }));
     }
 
     return (
@@ -102,6 +121,38 @@ export default function SiteSettingsAdmin() {
                         <Plus className="h-3 w-3 mr-1" /> Add link
                     </Button>
                 </div>
+            </div>
+
+            {/* Home page section toggles */}
+            <div>
+                <h4 className="font-bold uppercase tracking-wider text-xs text-muted-foreground mb-2 flex items-center gap-2"><ToggleLeft className="h-4 w-4" />Home page sections</h4>
+                <p className="text-xs text-muted-foreground mb-3">Toggle which sections appear on the homepage.</p>
+                <div className="grid sm:grid-cols-2 gap-2">
+                    {HOME_SECTION_KEYS.map((s) => {
+                        const on = form.home_sections?.[s.key] ?? true;
+                        return (
+                            <label key={s.key} className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${on ? "bg-primary/5 border-primary/30" : "bg-slate-50 border-slate-200"}`} data-testid={`home-section-${s.key}`}>
+                                <input type="checkbox" checked={on} onChange={() => toggleSection(s.key)} className="h-4 w-4 rounded" />
+                                <span className="text-sm font-semibold flex-1">{s.label}</span>
+                                <span className={`text-[10px] uppercase tracking-wider font-bold ${on ? "text-emerald-600" : "text-slate-400"}`}>{on ? "On" : "Off"}</span>
+                            </label>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* Home blocks — top */}
+            <div>
+                <h4 className="font-bold uppercase tracking-wider text-xs text-muted-foreground mb-2 flex items-center gap-2"><Layers className="h-4 w-4" />Custom blocks — top of home</h4>
+                <p className="text-xs text-muted-foreground mb-3">Inserted between the hero and the countdown. Drag to reorder.</p>
+                <PageBuilder blocks={form.home_blocks_top || []} onChange={(b) => set("home_blocks_top", b)} testIdPrefix="home-builder-top" />
+            </div>
+
+            {/* Home blocks — bottom */}
+            <div>
+                <h4 className="font-bold uppercase tracking-wider text-xs text-muted-foreground mb-2 flex items-center gap-2"><Layers className="h-4 w-4" />Custom blocks — bottom of home</h4>
+                <p className="text-xs text-muted-foreground mb-3">Inserted after the News section. Drag to reorder.</p>
+                <PageBuilder blocks={form.home_blocks_bottom || []} onChange={(b) => set("home_blocks_bottom", b)} testIdPrefix="home-builder-bottom" />
             </div>
 
             {/* Per-page titles + nav labels */}

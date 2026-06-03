@@ -1,0 +1,49 @@
+{
+  "summary": "Phase T — Tested CMS Page Builder (10 block types, page CRUD + invalid block validation), home_sections toggles + home_blocks_top/bottom site-settings, founder hero images, chat emoji picker desktop+mobile, and regression after models.py extraction. BACKEND: 24/24 pytest passing against live preview URL. FRONTEND: All admin Pages tab UI verified (8 home-section-* toggles, home-builder-top/bottom, save-site-settings-btn, new-page-btn, page-builder dialog with page-mode-blocks + all 10 add-block-* buttons). Homepage hero-founders renders with 4 new founder URLs (Christian/Cory/Ken/Lekita). Emoji picker stays inside viewport on desktop (1440x900: x=512, y=467, 320x280) and on mobile (390x800: x=35, y=440, 320x280) — no clipping. about legacy page correctly renders [data-testid='cms-page-body'] and no cms-page-blocks. ONE UI FLOW issue observed (see frontend_issues): UI-created custom page (slug filled, 2 blocks added, Save clicked) was not retrievable at /page/<slug> (frontend 404). Backend API tests prove the POST /pages with blocks works end-to-end; this is most likely an issue with the New-page dialog save flow in Admin.jsx PageDialog (e.g., save handler not posting blocks, or wrong save button data-testid wiring). Main agent should verify Admin → Pages → New page → add blocks → Save → /page/<slug> end-to-end manually.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/site-settings", "issue": "home_blocks_top/bottom accept block.type='HACK' without 400 — block-type allowlist is only enforced for /api/pages, not for site-settings. site_settings PUT returned 200 for {type:'HACK'} blocks. Recommend validating PAGE_BLOCK_TYPES inside update_site_settings too (mirror the check in update_page)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Admin → Pages → New page dialog (PageDialog)", "issue": "After filling slug+title, switching to Visual editor (page-mode-blocks), clicking add-block-heading + add-block-paragraph, then Save — visiting /page/<slug> returns the SPA 'Page not found' view (GET /api/pages/<slug> → 404 in console). DELETE /api/pages/<slug> later returned 200 (idempotent — does not confirm existence). Backend POST /api/pages with blocks works perfectly from pytest. Suspect the New-page dialog is either (a) using a stale slug-state, (b) not posting blocks correctly, or (c) the Save button I clicked wasn't the dialog's save (no data-testid='page-save-btn' could be located — I fell back to button:has-text('Save')).", "selector": "[data-testid='page-save-btn'] (missing or not on the dialog Save button)", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin → Pages → New page dialog", "issues": ["Dialog has no data-testid='page-save-btn' on its primary Save button — spec mentioned it. Add it to /app/frontend/src/pages/Admin.jsx PageDialog Save button for deterministic Playwright clicks."]},
+      {"screen": "Admin dashboard charts", "issues": ["Recharts emits 'The width(-1) and height(-1) of chart should be greater than 0' warnings on initial load — chart container height not set. Cosmetic but worth tightening minWidth/minHeight."]},
+      {"screen": "DialogContent (PageDialog and possibly others)", "issues": ["A11y warning: 'Missing Description or aria-describedby={undefined} for {DialogContent}' on the New-page dialog. Add a DialogDescription or aria-describedby for screen-reader compliance."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_t.py",
+    "/app/test_reports/pytest/phase_t_results.xml"
+  ],
+  "action_items": [
+    "HIGH: Investigate Admin → Pages → New page → Save flow. Reproduce: open new-page dialog, type slug 'test-foo', title 'X', switch to Visual editor, click add-block-heading + add-block-paragraph, click Save. Then visit /page/test-foo. Frontend showed 'Page not found' (GET /api/pages/test-foo → 404). Backend API works from pytest — so this is a wiring issue between PageDialog state and the POST /api/pages call (blocks may be empty or slug may be normalized differently in the UI).",
+    "HIGH: Add data-testid='page-save-btn' to the primary Save button of the PageDialog in /app/frontend/src/pages/Admin.jsx so testing agents can target it deterministically.",
+    "MEDIUM: Mirror the PAGE_BLOCK_TYPES check (currently in server.py:1522 and :1533) inside update_site_settings (~line 1621) so home_blocks_top/bottom reject invalid block types with 400.",
+    "MINOR: Add DialogDescription / aria-describedby to PageDialog DialogContent for a11y.",
+    "MINOR: Fix recharts container width/height warnings in admin dashboard."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 6903→6904+ lines; models.py extraction (~310 lines moved) is a good first step but the file is still far too large. Continue the split: extract route handlers into routers/auth.py, routers/pages.py, routers/site_settings.py, etc.",
+    "Block-type allowlist duplication: PAGE_BLOCK_TYPES validation is open-coded twice in server.py (create_page line 1522, update_page line 1533). Refactor into a `validate_blocks(blocks)` helper, then call it from create_page, update_page, AND update_site_settings (currently missing).",
+    "PageBlockIn (models.py:266) declares `type: str` with no validator — relying on the route handler for the allowlist is risky. Switch to `type: Literal[...PAGE_BLOCK_TYPES]` so Pydantic enforces 422 at the schema layer (and the open-coded raises become defensive belt-and-suspenders).",
+    "PageBlockIn.props is `Dict[str, Any]` with no constraint on size or depth — a malicious admin could embed megabytes of nested JSON. Consider a max-depth check or pydantic constr on serialized size.",
+    "site_settings home_blocks_top/bottom are `Field(None, max_length=50)` — good. But home_sections is `Dict[str, bool]` with no key allowlist; an admin could write arbitrary keys. Constrain to the 8 expected section keys (founders, hero_text, countdown, pillars, family_pulse, secondary_banner, upcoming_events, news).",
+    "CmsPage rendering: the frontend falls back to 'Page not found' when neither blocks nor body resolve — this can mask a real fetch failure. Consider distinguishing between 404 (true not-found) and 'empty page' so admins can tell why a saved page isn't appearing."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_t.py (new — 24 tests, all 24 passing)"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "~85% — emoji picker + founders + admin Pages UI verified; New-page save→/page/<slug> end-to-end failed"},
+  "test_credentials": "admin@clubhaven.app / Admin123! and member@clubhaven.app / Member123! from /app/memory/test_credentials.md — no credential changes made.",
+  "seed_data_creation": "Test artifacts: created+deleted TEST CMS pages with random slugs (test-cms-*, test-bad-*, test-all-types-*) within the same pytest run — all cleaned up. Site_settings home_sections + home_blocks_top temporarily mutated for one test, then restored via test_zz_restore_site_settings. UI-test created one page test-cms-ui-0aafe4 — cleanup DELETE returned 200 (idempotent, may or may not have existed). No stray data should remain. Built-in pages 'about' and 'contact' untouched.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: /app/backend/tests/test_phase_t.py (24 tests, all passing). It covers: (a) auth/login + /auth/me + 401 unauth, (b) site-settings GET public, home_sections 8-key presence, member 401/403 on PUT, admin save+persist of section toggle + home_blocks_top, restore at end, (c) /pages list public, member 401/403 on POST, create-with-blocks, GET returns blocks, invalid block type → 400, update with invalid → 400, valid update persists, all 10 block types accepted, legacy 'about' still works, delete + verify 404, (d) regression smoke on /events, /members, /chapters, /tiers, /automated-emails. KNOWN UI BUG to verify: Admin → Pages → New page → Save flow does not produce a retrievable page at /page/<slug>. data-testid='page-save-btn' is MISSING on the dialog's Save button — adding it would help future testing. PAGE_BLOCK_TYPES validation is NOT enforced on site_settings home_blocks_top/bottom (only on /pages). Emoji picker is positioning correctly on both desktop (absolute) and mobile (fixed-centered, x=35 of 390-width).",
+  "rca of the issue": "UI New-page save flow: From the screenshot I confirmed the dialog has Slug + Title inputs, a Visual-editor / Legacy-text toggle, 10 add-block buttons in a left palette, and a Save button at the bottom-right. The flow filled slug, title, switched to Visual editor, added 2 blocks, clicked Save. Then GET /api/pages/<slug> returned 404. Possible causes (highest probability first): (1) PageDialog Save handler does not include `blocks` in its POST body OR posts to a different endpoint — yet the page itself isn't being created either (404 on GET), so this is more likely (2) the dialog state for `slug` is being overridden by an auto-slug-from-title effect that runs AFTER my fill, producing a different slug than what I typed, or (3) the Save button I targeted ('button:has-text(\"Save\")') was a different button (e.g., the Site-copy Save changes outside the dialog). Recommended reproduction by main agent: open browser devtools Network tab → Admin → Pages → New page → type slug 'mvp-test', title 'MVP Test', visual editor, add a heading + paragraph, Save. Inspect the POST /api/pages request body — verify slug='mvp-test' and blocks is a non-empty array. If blocks=[] in the request, fix PageDialog state binding. If slug is different, fix the auto-slug effect. Adding data-testid='page-save-btn' to the dialog Save will also make this verifiable from Playwright in future."
+}

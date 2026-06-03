@@ -6,12 +6,13 @@ import { useSiteSettings } from "../context/SiteSettingsContext";
 import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogIn, Cake, UserPlus } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import Countdown from "../components/Countdown";
+import { BlocksRenderer } from "../components/cms/BlockRenderer";
 
 const FOUNDERS = [
-    { name: "Christian", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/q9y9o5h5_Christian.jpg" },
-    { name: "Cory", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/7mxdup41_Cory.jpg" },
-    { name: "Ken", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/r6or7z7l_Ken.jpg" },
-    { name: "Lekita", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/u8b6ulb2_Lekita.jpg" },
+    { name: "Christian", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/2i9inws2_Christian.jpg" },
+    { name: "Cory", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/ug9oq343_Cory.jpg" },
+    { name: "Ken", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/ao1sl6gp_Ken.jpg" },
+    { name: "Lekita", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/p1mxh7ni_Lekita.jpg" },
 ];
 const SECONDARY_BANNER = "https://images.clubexpress.com/211315/photos/original/Kendra_Brandy_Banner_2074356465.jpg";
 const AOP_LOGO = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png";
@@ -38,6 +39,11 @@ export default function Home() {
     if (loading) return null;
     if (!user) return <Navigate to="/login" replace />;
 
+    const sec = settings?.home_sections || {};
+    const showSection = (key) => sec[key] !== false; // default-true
+    const topBlocks = settings?.home_blocks_top || [];
+    const bottomBlocks = settings?.home_blocks_bottom || [];
+
     return (
         <div className="bg-white text-[#0A2463]" data-testid="home-aop">
             {/* Hero with group photo */}
@@ -51,27 +57,26 @@ export default function Home() {
 
                 <div className="relative w-full bg-slate-50">
                     {/* Founders row — 4 side-by-side on tablet+, 2x2 grid on mobile */}
+                    {showSection("founders") && (
                     <div className="w-full" style={{ backgroundColor: NAVY }} data-testid="hero-founders">
                         <div className="grid grid-cols-2 sm:grid-cols-4 max-w-7xl mx-auto">
                             {FOUNDERS.map((f) => (
-                                <div key={f.name} className="relative aspect-[3/4] bg-slate-900 overflow-hidden border border-white/10 group" data-testid={`founder-${f.name}`}>
+                                <div key={f.name} className="relative aspect-square bg-slate-900 overflow-hidden border border-white/10 group" data-testid={`founder-${f.name}`}>
                                     <img
                                         src={f.url}
                                         alt={`Founder ${f.name}`}
                                         loading="lazy"
-                                        className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                        className="absolute inset-0 w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
                                         onError={(e) => { e.currentTarget.style.display = "none"; }}
                                     />
-                                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 sm:p-4">
-                                        <div className="text-[10px] sm:text-xs uppercase tracking-[0.2em] font-bold opacity-80" style={{ color: "#fff" }}>Founder</div>
-                                        <div className="font-heading text-base sm:text-xl font-black text-white">{f.name}</div>
-                                    </div>
                                 </div>
                             ))}
                         </div>
                     </div>
+                    )}
 
                     {/* Headline below image so neither crops the other */}
+                    {showSection("hero_text") && (
                     <div className="max-w-7xl mx-auto px-6 lg:px-10 py-12 sm:py-16 grid lg:grid-cols-[1fr_auto] gap-8 items-center">
                         <div>
                             <div
@@ -136,13 +141,22 @@ export default function Home() {
                             onError={(e) => { e.currentTarget.style.display = "none"; }}
                         />
                     </div>
+                    )}
                 </div>
             </section>
 
+            {/* Custom top blocks */}
+            {topBlocks.length > 0 && (
+                <section className="max-w-4xl mx-auto px-6 lg:px-10 py-8" data-testid="home-blocks-top">
+                    <BlocksRenderer blocks={topBlocks} />
+                </section>
+            )}
+
             {/* 10-Year Anniversary Countdown */}
-            <Countdown />
+            {showSection("countdown") && <Countdown />}
 
             {/* Pillars */}
+            {showSection("pillars") && (
             <section className="bg-white border-b-2" style={{ borderColor: NAVY }}>
                 <div className="max-w-7xl mx-auto px-6 lg:px-10 py-16">
                     <div className="text-center mb-12">
@@ -161,9 +175,10 @@ export default function Home() {
                     </div>
                 </div>
             </section>
+            )}
 
             {/* Family pulse: New Members + Birthdays */}
-            {user && (newMembers.length > 0 || birthdays.length > 0) && (
+            {showSection("family_pulse") && user && (newMembers.length > 0 || birthdays.length > 0) && (
                 <section className="bg-slate-50 border-b" style={{ borderColor: `${NAVY}20` }}>
                     <div className="max-w-7xl mx-auto px-6 lg:px-10 py-12 sm:py-16">
                         <div className="text-center mb-10">
@@ -261,6 +276,7 @@ export default function Home() {
             )}
 
             {/* Secondary banner photo — full image */}
+            {showSection("secondary_banner") && (
             <section className="max-w-7xl mx-auto px-6 lg:px-10 py-14">
                 <div className="rounded-3xl overflow-hidden shadow-warm-lg border-4" style={{ borderColor: NAVY, backgroundColor: NAVY }}>
                     <img
@@ -277,8 +293,10 @@ export default function Home() {
                     </h3>
                 </div>
             </section>
+            )}
 
             {/* Upcoming events */}
+            {showSection("upcoming_events") && (
             <section className="bg-slate-50 py-16">
                 <div className="max-w-7xl mx-auto px-6 lg:px-10">
                     <div className="flex items-end justify-between mb-8">
@@ -323,8 +341,10 @@ export default function Home() {
                     </div>
                 </div>
             </section>
+            )}
 
             {/* News */}
+            {showSection("news") && (
             <section className="py-16 bg-white">
                 <div className="max-w-7xl mx-auto px-6 lg:px-10">
                     <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>From the chapter house</div>
@@ -356,6 +376,14 @@ export default function Home() {
                     </div>
                 </div>
             </section>
+            )}
+
+            {/* Custom bottom blocks */}
+            {bottomBlocks.length > 0 && (
+                <section className="max-w-4xl mx-auto px-6 lg:px-10 py-8" data-testid="home-blocks-bottom">
+                    <BlocksRenderer blocks={bottomBlocks} />
+                </section>
+            )}
         </div>
     );
 }
