@@ -14,6 +14,7 @@ import { format, parseISO } from "date-fns";
 import AdminDashboard from "./AdminDashboard";
 import Reports from "./Reports";
 import RichEditor from "../components/RichEditor";
+import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
@@ -1715,6 +1716,7 @@ function EmailBlastAdmin() {
                     <TabsTrigger value="signatures" className="rounded-full" data-testid="email-tab-signatures"><PenSquare className="h-4 w-4 mr-1.5" />Signatures</TabsTrigger>
                     <TabsTrigger value="history" className="rounded-full" data-testid="email-tab-history"><Clock className="h-4 w-4 mr-1.5" />History</TabsTrigger>
                     <TabsTrigger value="test-send" className="rounded-full" data-testid="email-tab-test-send"><Send className="h-4 w-4 mr-1.5" />Test send</TabsTrigger>
+                    <TabsTrigger value="automated" className="rounded-full" data-testid="email-tab-automated"><Clock className="h-4 w-4 mr-1.5" />Automated</TabsTrigger>
                 </TabsList>
             </div>
             <TabsContent value="compose" className="mt-6"><ComposeBlast /></TabsContent>
@@ -1722,6 +1724,7 @@ function EmailBlastAdmin() {
             <TabsContent value="signatures" className="mt-6"><EmailSignatures /></TabsContent>
             <TabsContent value="history" className="mt-6"><BlastHistory /></TabsContent>
             <TabsContent value="test-send" className="mt-6"><EmailTestSend /></TabsContent>
+            <TabsContent value="automated" className="mt-6"><AutomatedEmailsAdmin /></TabsContent>
         </Tabs>
     );
 }

@@ -65,18 +65,19 @@ def verify_password(pw: str, hashed: str) -> bool:
 def jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
+def create_access_token(user_id: str, email: str, role: str, token_version: int = 0) -> str:
     payload = {
         "sub": user_id,
         "email": email,
         "role": role,
+        "tv": token_version,
         "exp": now_utc() + timedelta(minutes=ACCESS_TOKEN_MINUTES),
         "type": "access",
     }
     return jwt.encode(payload, jwt_secret(), algorithm=JWT_ALGORITHM)
 
-def create_refresh_token(user_id: str) -> str:
-    payload = {"sub": user_id, "exp": now_utc() + timedelta(days=REFRESH_TOKEN_DAYS), "type": "refresh"}
+def create_refresh_token(user_id: str, token_version: int = 0) -> str:
+    payload = {"sub": user_id, "tv": token_version, "exp": now_utc() + timedelta(days=REFRESH_TOKEN_DAYS), "type": "refresh"}
     return jwt.encode(payload, jwt_secret(), algorithm=JWT_ALGORITHM)
 
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
@@ -239,6 +240,12 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        # Token version check: if the user reset their password (or admin force-logout),
+        # bump `token_version` and every existing JWT becomes invalid immediately.
+        tv_token = int(payload.get("tv", 0) or 0)
+        tv_user = int(user.get("token_version", 0) or 0)
+        if tv_token < tv_user:
+            raise HTTPException(status_code=401, detail="Session expired — please sign in again.")
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -656,8 +663,8 @@ async def register(body: RegisterIn, response: Response):
     frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
     verify_link = f"{frontend}/verify-email?token={verify_token}"
     logger.info(f"[email-verify] Link for {email}: {verify_link}")
-    at = create_access_token(uid, email, "member")
-    rt = create_refresh_token(uid)
+    at = create_access_token(uid, email, "member", int(doc.get("token_version", 0) or 0))
+    rt = create_refresh_token(uid, int(doc.get("token_version", 0) or 0))
     set_auth_cookies(response, at, rt)
     out = public_user(doc)
     out["verify_link"] = verify_link  # dev: returned so UI can surface; replace with email provider later
@@ -685,8 +692,9 @@ async def login(body: LoginIn, request: Request, response: Response):
         )
         raise HTTPException(status_code=401, detail="Invalid email or password")
     await db.login_attempts.delete_one({"identifier": identifier})
-    at = create_access_token(user["id"], user["email"], user.get("role", "member"))
-    rt = create_refresh_token(user["id"])
+    tv = int(user.get("token_version", 0) or 0)
+    at = create_access_token(user["id"], user["email"], user.get("role", "member"), tv)
+    rt = create_refresh_token(user["id"], tv)
     set_auth_cookies(response, at, rt)
     out = public_user(user)
     # Return tokens in the body so mobile clients (iOS Safari ITP can evict
@@ -1074,10 +1082,12 @@ async def forgot_password(body: ForgotPasswordIn):
     user = await db.users.find_one({"email": email})
     if user:
         token = secrets.token_urlsafe(32)
+        expires_dt = now_utc() + timedelta(hours=1)
         await db.password_reset_tokens.insert_one({
             "token": token,
             "user_id": user["id"],
-            "expires_at": iso(now_utc() + timedelta(hours=1)),
+            "expires_at": iso(expires_dt),
+            "expires_at_dt": expires_dt,  # BSON Date for TTL index
             "used": False,
             "created_at": iso(now_utc()),
         })
@@ -1094,7 +1104,7 @@ async def reset_password(body: ResetPasswordIn):
         raise HTTPException(status_code=400, detail="This reset link has expired. Request a new one.")
     await db.users.update_one(
         {"id": t["user_id"]},
-        {"$set": {"password_hash": hash_password(body.new_password)}},
+        {"$set": {"password_hash": hash_password(body.new_password)}, "$inc": {"token_version": 1}},
     )
     await db.password_reset_tokens.update_one({"token": body.token}, {"$set": {"used": True, "used_at": iso(now_utc())}})
     return {"ok": True}
@@ -1124,8 +1134,12 @@ async def refresh(request: Request, response: Response, body: Optional[RefreshIn
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        at = create_access_token(user["id"], user["email"], user.get("role", "member"))
-        rt = create_refresh_token(user["id"])
+        tv = int(user.get("token_version", 0) or 0)
+        tv_token = int(payload.get("tv", 0) or 0)
+        if tv_token < tv:
+            raise HTTPException(status_code=401, detail="Session expired — please sign in again.")
+        at = create_access_token(user["id"], user["email"], user.get("role", "member"), tv)
+        rt = create_refresh_token(user["id"], tv)
         set_auth_cookies(response, at, rt)
         return {"ok": True, "access_token": at, "refresh_token": rt}
     except jwt.InvalidTokenError:
@@ -3267,8 +3281,19 @@ async def startup():
     await db.form_links.create_index("id", unique=True)
     await db.form_links.create_index([("order", 1), ("created_at", 1)])
     await db.password_set_tokens.create_index("token", unique=True)
+    await db.password_reset_tokens.create_index("token", unique=True)
+    # MongoDB will auto-delete reset tokens 1 minute after they expire.
+    # Note: TTL index uses BSON Date, but `expires_at` is stored as ISO string.
+    # We store an extra `expires_at_dt` Date field on insert, indexed with expireAfterSeconds=60.
+    try:
+        await db.password_reset_tokens.create_index("expires_at_dt", expireAfterSeconds=60)
+    except Exception as e:
+        logger.warning(f"password_reset_tokens TTL index error: {e}")
     await db.omega_tributes.create_index("id", unique=True)
     await db.omega_tributes.create_index("user_id", unique=True)
+    # Automated emails
+    await db.automated_emails.create_index("id", unique=True)
+    await db.automated_emails.create_index([("is_active", 1), ("next_run_at", 1)])
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -3282,8 +3307,10 @@ async def startup():
     await reconcile_awards()
     await seed_anniversary_subevents()
     await seed_default_photo_albums()
+    await seed_builtin_automated_emails()
     # Start background tasks
     asyncio.create_task(_chat_digest_loop())
+    asyncio.create_task(_automated_email_loop())
 
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")
@@ -6517,6 +6544,345 @@ async def _send_chat_digest_sms(recipient: dict, conv: dict, notifs: list) -> bo
     frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
     body = f"You have a new message in Alpha Omega Phi chat. Open the portal to read it: {frontend.rstrip('/')}/chat"
     return await send_sms(recipient["phone"], body)
+
+
+# ============================================================
+# Automated Emails — admin-defined campaigns with cron schedule
+# ============================================================
+from croniter import croniter as _croniter
+
+AUTOMATED_SECTIONS = ["events", "photos", "documents", "new_members", "my_rsvps", "pending_hours", "birthday_greeting"]
+
+MERGE_TAGS = [
+    {"tag": "{{member_name}}", "desc": "Recipient's first name"},
+    {"tag": "{{upcoming_events}}", "desc": "Events in next 7 days"},
+    {"tag": "{{new_photos}}", "desc": "New photo albums this week"},
+    {"tag": "{{new_documents}}", "desc": "New AOP forms this week"},
+    {"tag": "{{new_members}}", "desc": "Members who joined this week"},
+    {"tag": "{{my_rsvps}}", "desc": "Recipient's upcoming RSVPs with re-RSVP link"},
+    {"tag": "{{pending_hours}}", "desc": "Hours waiting approval (admin recipients only)"},
+    {"tag": "{{birthday_greeting}}", "desc": "Personalized birthday wish when applicable"},
+]
+
+
+class AutomatedEmailAudienceIn(BaseModel):
+    type: Literal["all", "chapter", "tier", "status"] = "all"
+    ids: List[str] = []  # chapter ids, tier ids, or status strings depending on `type`
+
+
+class AutomatedEmailIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    subject: str = Field(min_length=1, max_length=200)
+    body_html: str = ""
+    cron_expression: str = "0 9 * * 1"  # default: Mondays 9am UTC
+    is_active: bool = True
+    audience: AutomatedEmailAudienceIn = Field(default_factory=AutomatedEmailAudienceIn)
+    sections: dict = Field(default_factory=dict)  # {events:True, photos:True, ...}
+
+
+def _next_cron_run(cron_expr: str, base: Optional[datetime] = None) -> Optional[datetime]:
+    try:
+        c = _croniter(cron_expr, base or now_utc())
+        return c.get_next(datetime)
+    except Exception as e:
+        logger.warning(f"Bad cron expression '{cron_expr}': {e}")
+        return None
+
+
+def _automated_email_out(d: dict) -> dict:
+    return {
+        "id": d["id"],
+        "name": d.get("name", ""),
+        "subject": d.get("subject", ""),
+        "body_html": d.get("body_html", ""),
+        "cron_expression": d.get("cron_expression", "0 9 * * 1"),
+        "is_active": bool(d.get("is_active", True)),
+        "is_builtin": bool(d.get("is_builtin", False)),
+        "audience": d.get("audience", {"type": "all", "ids": []}),
+        "sections": d.get("sections", {}),
+        "last_run_at": d.get("last_run_at"),
+        "next_run_at": d.get("next_run_at"),
+        "last_sent_count": d.get("last_sent_count", 0),
+        "created_by_name": d.get("created_by_name", ""),
+        "created_at": d.get("created_at"),
+    }
+
+
+@api.get("/automated-emails")
+async def list_automated_emails(_: dict = Depends(admin_tab_dep("email"))):
+    docs = await db.automated_emails.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return [_automated_email_out(d) for d in docs]
+
+
+@api.get("/automated-emails/merge-tags")
+async def list_merge_tags(_: dict = Depends(admin_tab_dep("email"))):
+    return {"tags": MERGE_TAGS, "sections": AUTOMATED_SECTIONS}
+
+
+@api.post("/automated-emails")
+async def create_automated_email(body: AutomatedEmailIn, admin: dict = Depends(admin_tab_dep("email"))):
+    if not _croniter.is_valid(body.cron_expression):
+        raise HTTPException(status_code=400, detail="Invalid cron expression. Try '0 9 * * 1' for Mondays at 9am UTC.")
+    next_run = _next_cron_run(body.cron_expression)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip(),
+        "subject": body.subject.strip(),
+        "body_html": body.body_html,
+        "cron_expression": body.cron_expression,
+        "is_active": body.is_active,
+        "is_builtin": False,
+        "audience": body.audience.model_dump(),
+        "sections": body.sections or {},
+        "last_run_at": None,
+        "next_run_at": iso(next_run) if next_run else None,
+        "last_sent_count": 0,
+        "created_by": admin["id"],
+        "created_by_name": admin.get("name", ""),
+        "created_at": iso(now_utc()),
+    }
+    await db.automated_emails.insert_one(doc)
+    return _automated_email_out(doc)
+
+
+@api.put("/automated-emails/{eid}")
+async def update_automated_email(eid: str, body: AutomatedEmailIn, _: dict = Depends(admin_tab_dep("email"))):
+    e = await db.automated_emails.find_one({"id": eid})
+    if not e:
+        raise HTTPException(status_code=404, detail="Automated email not found")
+    if not _croniter.is_valid(body.cron_expression):
+        raise HTTPException(status_code=400, detail="Invalid cron expression.")
+    next_run = _next_cron_run(body.cron_expression)
+    sets = {
+        "name": body.name.strip(),
+        "subject": body.subject.strip(),
+        "body_html": body.body_html,
+        "cron_expression": body.cron_expression,
+        "is_active": body.is_active,
+        "audience": body.audience.model_dump(),
+        "sections": body.sections or {},
+        "next_run_at": iso(next_run) if next_run else None,
+    }
+    await db.automated_emails.update_one({"id": eid}, {"$set": sets})
+    fresh = await db.automated_emails.find_one({"id": eid}, {"_id": 0})
+    return _automated_email_out(fresh)
+
+
+@api.delete("/automated-emails/{eid}")
+async def delete_automated_email(eid: str, _: dict = Depends(admin_tab_dep("email"))):
+    e = await db.automated_emails.find_one({"id": eid})
+    if not e:
+        raise HTTPException(status_code=404, detail="Automated email not found")
+    if e.get("is_builtin"):
+        raise HTTPException(status_code=400, detail="Built-in automated emails can be disabled but not deleted.")
+    await db.automated_emails.delete_one({"id": eid})
+    return {"ok": True}
+
+
+@api.post("/automated-emails/{eid}/run-now")
+async def run_automated_email_now(eid: str, admin: dict = Depends(admin_tab_dep("email"))):
+    """Manually trigger the campaign (sends to the full audience right now). Useful for testing."""
+    e = await db.automated_emails.find_one({"id": eid})
+    if not e:
+        raise HTTPException(status_code=404, detail="Automated email not found")
+    sent = await _send_automated_email(e)
+    next_run = _next_cron_run(e.get("cron_expression", "0 9 * * 1"))
+    await db.automated_emails.update_one({"id": eid}, {"$set": {
+        "last_run_at": iso(now_utc()),
+        "last_sent_count": sent,
+        "next_run_at": iso(next_run) if next_run else None,
+    }})
+    return {"sent": sent}
+
+
+@api.post("/automated-emails/{eid}/preview")
+async def preview_automated_email(eid: str, admin: dict = Depends(admin_tab_dep("email"))):
+    """Render the email body for the calling admin (uses their merge data)."""
+    e = await db.automated_emails.find_one({"id": eid})
+    if not e:
+        raise HTTPException(status_code=404, detail="Automated email not found")
+    rendered = await _render_automated_body(e, admin)
+    return {"subject": e["subject"], "body_html": rendered}
+
+
+async def _audience_recipients(audience: dict) -> List[dict]:
+    """Resolve audience filter to a list of user dicts with valid emails."""
+    q: dict = {}
+    atype = audience.get("type", "all") if audience else "all"
+    ids = audience.get("ids", []) if audience else []
+    if atype == "chapter" and ids:
+        q["chapter_id"] = {"$in": ids}
+    elif atype == "tier" and ids:
+        q["membership_tier"] = {"$in": ids}
+    elif atype == "status" and ids:
+        q["status"] = {"$in": ids}
+    else:
+        q["status"] = {"$ne": "inactive"}
+    return await db.users.find(q, {"_id": 0, "id": 1, "email": 1, "name": 1, "role": 1, "birthday": 1}).to_list(2000)
+
+
+async def _render_automated_body(campaign: dict, user: dict) -> str:
+    """Replace merge tags in body_html with personalized HTML for `user`."""
+    import html as _h
+    body = campaign.get("body_html") or ""
+    sections = campaign.get("sections") or {}
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+
+    def section_card(title: str, inner: str) -> str:
+        return f'<div style="background:#fff;border-radius:14px;padding:16px;margin:12px 0;border:1px solid #eee"><div style="font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:#C8102E;font-weight:700;margin-bottom:8px">{_h.escape(title)}</div>{inner}</div>'
+
+    # member_name
+    first_name = (user.get("name") or "Member").split(" ")[0]
+    body = body.replace("{{member_name}}", _h.escape(first_name))
+
+    # upcoming_events
+    if "{{upcoming_events}}" in body:
+        if sections.get("events", True):
+            soon = now_utc() + timedelta(days=7)
+            evs = await db.events.find({"start_at": {"$gte": iso(now_utc()), "$lte": iso(soon)}, "parent_event_id": {"$in": [None, ""]}}, {"_id": 0, "id": 1, "title": 1, "start_at": 1, "location": 1}).sort("start_at", 1).to_list(20)
+            inner = "".join(f'<div style="margin:6px 0"><a href="{frontend}/events/{e["id"]}" style="color:#0A2463;font-weight:600;text-decoration:none">{_h.escape(e.get("title",""))}</a><div style="font-size:12px;color:#666">{e.get("start_at","")[:10]}{" · " + _h.escape(e["location"]) if e.get("location") else ""}</div></div>' for e in evs) or '<div style="color:#888;font-size:13px">Nothing on the calendar in the next 7 days.</div>'
+            body = body.replace("{{upcoming_events}}", section_card("Upcoming events", inner))
+        else:
+            body = body.replace("{{upcoming_events}}", "")
+
+    # new_photos / new_documents / new_members — last 7 days
+    week_ago = iso(now_utc() - timedelta(days=7))
+    for tag, enabled, fn in [
+        ("{{new_photos}}", "photos", lambda: db.photo_albums.find({"created_at": {"$gte": week_ago}, "is_default": {"$ne": True}}, {"_id": 0, "name": 1}).to_list(20)),
+        ("{{new_documents}}", "documents", lambda: db.documents.find({"created_at": {"$gte": week_ago}, "is_deleted": {"$ne": True}}, {"_id": 0, "title": 1}).to_list(20)),
+        ("{{new_members}}", "new_members", lambda: db.users.find({"created_at": {"$gte": week_ago}}, {"_id": 0, "name": 1}).to_list(50)),
+    ]:
+        if tag in body:
+            if sections.get(enabled, True):
+                items = await fn()
+                inner = "".join(f'<div style="margin:4px 0;font-size:13px;color:#333">• {_h.escape(it.get("name") or it.get("title") or "")}</div>' for it in items) or '<div style="color:#888;font-size:13px">Nothing new this week.</div>'
+                title = {"photos": "New photo albums", "documents": "New AOP forms", "new_members": "New members this week"}[enabled]
+                body = body.replace(tag, section_card(title, inner))
+            else:
+                body = body.replace(tag, "")
+
+    # my_rsvps (personal)
+    if "{{my_rsvps}}" in body:
+        if sections.get("my_rsvps", True):
+            rsvps = await db.rsvps.find({"user_id": user["id"]}, {"_id": 0, "event_id": 1, "ticket_id": 1, "ticket_type": 1}).to_list(20)
+            event_ids = [r["event_id"] for r in rsvps]
+            evs = await db.events.find({"id": {"$in": event_ids}, "start_at": {"$gte": iso(now_utc())}}, {"_id": 0, "id": 1, "title": 1, "start_at": 1}).to_list(20)
+            ev_by_id = {e["id"]: e for e in evs}
+            rows = []
+            for r in rsvps:
+                e = ev_by_id.get(r["event_id"])
+                if not e: continue
+                rows.append(f'<div style="margin:6px 0;font-size:13px"><a href="{frontend}/events/{e["id"]}" style="color:#0A2463;font-weight:600">{_h.escape(e["title"])}</a><div style="color:#666;font-size:12px">{e["start_at"][:10]} · {_h.escape((r.get("ticket_type") or "general").replace("_"," ").title())}</div></div>')
+            inner = "".join(rows) or '<div style="color:#888;font-size:13px">You have no upcoming RSVPs.</div>'
+            body = body.replace("{{my_rsvps}}", section_card("Your upcoming RSVPs", inner))
+        else:
+            body = body.replace("{{my_rsvps}}", "")
+
+    # pending_hours (admins only)
+    if "{{pending_hours}}" in body:
+        if sections.get("pending_hours", True) and user.get("role") == "admin":
+            n = await db.volunteer_hours.count_documents({"status": "pending"})
+            inner = f'<div style="font-size:13px"><strong>{n}</strong> hour log{"s" if n != 1 else ""} waiting on approval. <a href="{frontend}/admin" style="color:#C8102E">Open the admin queue →</a></div>'
+            body = body.replace("{{pending_hours}}", section_card("Hours waiting approval", inner))
+        else:
+            body = body.replace("{{pending_hours}}", "")
+
+    # birthday
+    if "{{birthday_greeting}}" in body:
+        if sections.get("birthday_greeting", True):
+            bd = user.get("birthday")  # expected MM-DD or YYYY-MM-DD
+            this_week_md = {(now_utc() + timedelta(days=i)).strftime("%m-%d") for i in range(7)}
+            if bd and bd[-5:] in this_week_md:
+                inner = f'<div style="font-size:14px">🎂 Happy birthday week, {_h.escape(first_name)}! The whole chapter is celebrating with you. Stop by the chat and share a memory.</div>'
+                body = body.replace("{{birthday_greeting}}", section_card("It's your birthday week!", inner))
+            else:
+                body = body.replace("{{birthday_greeting}}", "")
+        else:
+            body = body.replace("{{birthday_greeting}}", "")
+
+    return body
+
+
+async def _send_automated_email(campaign: dict) -> int:
+    """Resolve audience, render per-recipient HTML, send via Resend. Returns count sent."""
+    if not RESEND_API_KEY:
+        logger.info(f"Automated email '{campaign.get('name')}' skipped — no RESEND_API_KEY")
+        return 0
+    recipients = await _audience_recipients(campaign.get("audience") or {})
+    sent = 0
+    for u in recipients:
+        email = (u.get("email") or "").strip()
+        if not email: continue
+        try:
+            html = await _render_automated_body(campaign, u)
+            await asyncio.to_thread(resend_sdk.Emails.send, {
+                "from": RESEND_FROM,
+                "to": [email],
+                "subject": campaign["subject"],
+                "html": html,
+                "tags": [{"name": "type", "value": "automated"}, {"name": "campaign_id", "value": campaign["id"]}],
+            })
+            sent += 1
+        except Exception as e:
+            logger.warning(f"Automated email send failed to {email}: {e}")
+    return sent
+
+
+async def _automated_email_loop():
+    """Once a minute, send any campaigns whose `next_run_at` has elapsed."""
+    while True:
+        try:
+            cursor = db.automated_emails.find({"is_active": True, "next_run_at": {"$lte": iso(now_utc())}}, {"_id": 0})
+            async for campaign in cursor:
+                logger.info(f"Running automated email campaign '{campaign.get('name')}' (id={campaign['id']})")
+                sent = await _send_automated_email(campaign)
+                next_run = _next_cron_run(campaign.get("cron_expression", "0 9 * * 1"))
+                await db.automated_emails.update_one(
+                    {"id": campaign["id"]},
+                    {"$set": {"last_run_at": iso(now_utc()), "last_sent_count": sent, "next_run_at": iso(next_run) if next_run else None}},
+                )
+        except Exception as e:
+            logger.warning(f"Automated email loop error: {e}")
+        await asyncio.sleep(60)
+
+
+async def seed_builtin_automated_emails():
+    """Insert the default Weekly Digest campaign if it doesn't exist yet."""
+    existing = await db.automated_emails.find_one({"id": "builtin_weekly_digest"})
+    if existing:
+        return
+    body_html = """<div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f7f5f0">
+  <h1 style="color:#0A2463;margin:0 0 4px;font-size:28px">Good morning, {{member_name}}</h1>
+  <p style="color:#666;font-size:14px">Here's what's happening this week in Alpha Omega Phi.</p>
+  {{birthday_greeting}}
+  {{my_rsvps}}
+  {{upcoming_events}}
+  {{new_photos}}
+  {{new_documents}}
+  {{new_members}}
+  {{pending_hours}}
+  <p style="font-size:12px;color:#888;margin-top:24px">You're receiving this because you're a member of Alpha Omega Phi. Replies go to info@aop-app.org.</p>
+</div>"""
+    next_run = _next_cron_run("0 9 * * 1")
+    doc = {
+        "id": "builtin_weekly_digest",
+        "name": "Weekly Digest",
+        "subject": "Your AOP weekly digest — {{member_name}}",
+        "body_html": body_html,
+        "cron_expression": "0 9 * * 1",
+        "is_active": True,
+        "is_builtin": True,
+        "audience": {"type": "all", "ids": []},
+        "sections": {s: True for s in AUTOMATED_SECTIONS},
+        "last_run_at": None,
+        "next_run_at": iso(next_run) if next_run else None,
+        "last_sent_count": 0,
+        "created_by": None,
+        "created_by_name": "System",
+        "created_at": iso(now_utc()),
+    }
+    await db.automated_emails.insert_one(doc)
+    logger.info("Seeded built-in Weekly Digest campaign")
 
 
 # ---------- Mount ----------

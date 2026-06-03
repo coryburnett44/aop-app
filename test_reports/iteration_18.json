@@ -1,0 +1,59 @@
+{
+  "summary": "Phase O — Verified (1) MongoDB TTL index on password_reset_tokens, (2) JWT token_version session invalidation on password reset (access + refresh), (3) Automated emails CRUD/preview/run-now/permissions, and (4) TTL grid data-testids in chat composer + conversation settings. Backend pytest 15/16 PASSING against live preview URL. Frontend Playwright smoke confirmed admin → Email → Automated UI loads with built-in Weekly Digest card, New campaign editor with 8 merge-tag buttons. TTL data-testids (ttl-option-{off,1h,24h,7d} and ttl-conv-{off,1h,24h,7d}) all present.\n\nBACKEND PASS (15): (a) TTL index on db.password_reset_tokens.expires_at_dt with expireAfterSeconds=60 confirmed via list_indexes(); (b) Inserted an already-expired token doc with BSON Date expires_at_dt — insert succeeds & TTL sweeper will reap it; (c) Fresh user register → JWT payload carries tv=0 and db.users.token_version=0; (d) After forgot-password → reset-password flow: db.users.token_version=1, OLD access_token returns 401 'Session expired — please sign in again' on /auth/me; (e) OLD refresh_token rejected with 401 on /auth/refresh; (f) Re-login returns JWT with tv=1 and /auth/me works; (g) GET /automated-emails returns builtin_weekly_digest (is_builtin=True, next_run_at populated, 5-part cron); (h) Member calling /automated-emails returns 403; (i) POST with invalid cron 'NOT A CRON' returns 400; (j) POST valid 3-day-of-week cron '0 10 * * 1,3,5' returns 200 + next_run_at; (k) PUT builtin updates subject+sections+cron, changes persist on subsequent GET; (l) DELETE builtin returns 400 'Built-in automated emails can be disabled but not deleted.'; (m) POST run-now returns {sent: N} integer; (n) DELETE custom campaign returns 200 + verified gone; (o) Restored builtin to factory defaults at end of run (no state leak).\n\nBACKEND FAIL (1, NEW BUG): POST /api/automated-emails/{id}/preview does NOT substitute merge tags in the `subject` field (only in body_html). Spec explicitly requires '{member_name} substituted with caller's first name' in the subject. Current code (server.py:6705) returns `e['subject']` raw. Same bug also affects real sends — _send_automated_email uses `campaign['subject']` raw at line 6821, so recipients will receive subject lines like 'Your AOP weekly digest — {{member_name}}' literally.\n\nFRONTEND PASS: /admin → Email tab (data-testid='admin-tab-email') → Automated sub-tab (data-testid='email-tab-automated') — automated-emails-admin panel renders, built-in Weekly Digest card with data-testid='auto-email-builtin_weekly_digest' shows ACTIVE toggle, Edit/Run now buttons, audience pill 'audience: all', 0 9 * * 1 cron line, 'Next: Mon, Jun 8 · 9:00 AM' & 'Last: Jun 3, 2:43 PM (10 sent)'. 'New campaign' dialog opens with 8 [data-testid^=merge-tag-] buttons ({{member_name}},{{upcoming_events}},{{new_photos}},{{new_documents}},{{new_members}},{{my_rsvps}},{{pending_hours}},{{birthday_greeting}}), Schedule cron input, 'Presets…' dropdown, Subject line, body textarea, Recipient audience selector ('All active members'), Sections-to-include checkboxes (events / photos / documents / new_members / my_rsvps / pending_hours / birthday_greeting). /chat composer alarm-clock button opens TTL picker — confirmed [data-testid='ttl-option-off'], 'ttl-option-1h', 'ttl-option-24h', 'ttl-option-7d' all visible. Chat-settings gear opens 'Disappearing messages' grid with [data-testid='ttl-conv-off'], 'ttl-conv-1h', 'ttl-conv-24h', 'ttl-conv-7d' all visible.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/automated-emails/{id}/preview AND _send_automated_email",
+        "issue": "Subject merge tags are NOT substituted. Preview returns subject raw (server.py:6705: `return {'subject': e['subject'], 'body_html': rendered}`). _send_automated_email also passes campaign['subject'] verbatim to Resend (line 6821). Fix: rendering should apply merge tags to subject too. Suggest extracting a small `_render_subject(subject, user)` that at minimum replaces {{member_name}} with the user's first name, then call it from both preview and _send.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/admin → Email → Automated → New campaign dialog",
+        "issues": [
+          "Schedule cron 'Presets…' Select has no data-testid='cron-preset'. The spec mentioned 'cron-preset' for tighter selector — Playwright count returned 0. Recommend adding data-testid='cron-preset' to the SelectTrigger of the cron-presets dropdown."
+        ]
+      },
+      {
+        "screen": "/chat — conversation list",
+        "issues": [
+          "Conversation rows in the messages list have no [data-testid='conversation-row-{id}'] (only the conversation title text). Adding this would make per-conversation Playwright selection deterministic across iterations."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_o.py",
+    "/app/test_reports/pytest/phase_o_results.xml"
+  ],
+  "action_items": [
+    "FIX BACKEND (HIGH): Apply merge-tag substitution to email subject in both preview and _send_automated_email. server.py:6705 returns subject raw; line 6821 sends subject raw. At minimum replace {{member_name}}. Affects both preview UI and live Resend sends.",
+    "MINOR: Add data-testid='cron-preset' to the cron-presets SelectTrigger in /app/frontend/src/components/AutomatedEmailsAdmin.jsx for tighter Playwright selection.",
+    "MINOR: Add data-testid='conversation-row-{conv_id}' to each conversation row in /app/frontend/src/pages/Chat.jsx ConversationList so tests can deterministically click a specific conversation."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 6903 lines — modular split STILL not done. 8th consecutive iteration recommending this. The 4 newly added route handlers (list/create/update/delete/run-now/preview automated-emails) + the 200-line render + send loop pushed past 7000. Hard blocker for future maintainability.",
+    "_render_automated_body only substitutes tags in body_html. Subject is treated as a plain string everywhere — preview, run-now, and the scheduled loop. This is the bug above and a one-line fix: apply at least {{member_name}} substitution to subject.",
+    "_send_automated_email returns 0 silently when RESEND_API_KEY is unset (logs info only). For a 'run now' admin action that returns {sent: 0}, the UI may show 'Sent to 0 recipients' which is confusing. Recommend including a `reason` field in the response when zero is due to no Resend key vs no audience matched.",
+    "_automated_email_loop has no jitter/lock — if two workers run, they will both dispatch the same campaign. Single-instance now but consider a `running_at` advisory lock once horizontal scaling lands.",
+    "AutomatedEmailIn does not validate `sections` shape (it's `dict`). A malicious admin could put any keys in `sections` and bloat the doc. Pydantic should constrain keys to AUTOMATED_SECTIONS.",
+    "AutomatedEmailAudienceIn `ids` is unbounded — could DoS by passing thousands of ids. Limit to e.g. 200.",
+    "Refresh-token tv check at line 1139 uses `tv_token < tv`. After the new reset_password $inc, tv=1 and old token has tv=0, so 0<1 is True → 401 — correct. But initial bootstrap users have no `token_version` field at all in db.users — current code defaults to 0 via `int(user.get('token_version', 0) or 0)`. Fine, but recommend a one-time migration to backfill the field for index uniformity."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_o.py (new — 16 tests, 15 passing, 1 expected-failure exposes subject-merge-tag bug)"
+  ],
+  "success_rate": {"backend": "94% (15/16)", "frontend": "~95%"},
+  "test_credentials": "Used admin@clubhaven.app/Admin123! and member@clubhaven.app/Member123! from /app/memory/test_credentials.md. A throwaway test user TEST_tv_{uuid}@test.com was created and DELETEd at end of token-version test class (along with its password_reset_tokens). Member account password was NOT touched this run.",
+  "seed_data_creation": "Test artifacts created: (a) one TEST_phase_o_campaign automated email — created then DELETEd in same run; (b) one already-expired password_reset_token TEST_expired_{...} — created and manually deleted (didn't wait for TTL sweep); (c) one throwaway user TEST_tv_{...}@test.com — deleted at fixture teardown. Built-in Weekly Digest mutated (subject/body/cron) during test_update_builtin and test_preview_substitutes_merge_tags, then RESTORED to factory defaults via test_zz_restore_builtin_defaults at end of run. No stray data should remain.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: /app/backend/tests/test_phase_o.py (16 tests). Uses MongoClient('mongodb://localhost:27017')['clubhaven_db']. Token-version tests register a fresh user (lowercase 'test_tv_*@test.com' — registration normalizes email to lowercase so use lowercase in the test fixture). Automated email tests RESTORE the builtin to defaults at the end via test_zz_restore_builtin_defaults — keep this if you edit. The one expected failure (test_preview_substitutes_merge_tags) verifies subject-merge-tag substitution per spec — once main agent fixes server.py:6705 + 6821 to apply substitution to subject, this will pass. Frontend testids confirmed: admin-tab-email, email-tab-automated, automated-emails-admin, auto-email-builtin_weekly_digest, merge-tag-* (8 tags), ttl-option-{off,1h,24h,7d}, ttl-conv-{off,1h,24h,7d}. Missing: cron-preset, conversation-row-{id}. Chat composer ttl button is data-testid='ttl-btn' (not 'composer-ttl-btn').",
+  "rca of the issue": "Subject merge-tag substitution missing — RCA: in /app/backend/server.py the helper `_render_automated_body(campaign, user)` (line 6724) only mutates body_html. The preview endpoint at line 6698-6705 returns `{'subject': e['subject'], 'body_html': rendered}` — subject is the raw DB value. Likewise `_send_automated_email` at line 6816-6824 sends `'subject': campaign['subject']` verbatim. Reproduction: PUT /api/automated-emails/builtin_weekly_digest with subject='Hi {{member_name}}', then POST /preview → response.subject still contains the literal '{{member_name}}'. Fix (1-liner): define `def _render_subject(subj, user): return (subj or '').replace('{{member_name}}', (user.get('name') or 'Member').split(' ')[0])` and call it in both the preview endpoint (line 6705) AND _send_automated_email (line 6821, per-recipient). After the fix re-run test_phase_o.py::TestAutomatedEmails::test_preview_substitutes_merge_tags."
+}
