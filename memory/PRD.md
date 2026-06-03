@@ -369,15 +369,29 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Resend webhook**: endpoint exists at `POST /api/email/webhook`. **Action for user**: configure this URL at resend.com/webhooks (use the deployed `*.emergent.host` URL, not preview). Signature verification not yet added.
 - **PayPal**: LIVE mode is active. Test orders persist in `transactions` collection as pending until a real buyer approves & capture is called. No real money moves until capture.
 
-## Backlog
+### Iteration 25 — Zeffy receipt validation + auth/payments route extraction (2026-06-03)
+- **Backend `routes/payments.py`** (new) — extracted Zeffy + transaction routes from `server.py`:
+  - `classify_zeffy_receipt()` — regex-based format detection. Returns `'rct'` (RCT-XXXX-XXXX), `'zf'` (ZF-XXXXXX), `'email'` (donor@example.com), `'alnum'` (10-40 char alphanumeric id), or `None`.
+  - `GET /api/payments/zeffy/validate?value=…` — live format-validation endpoint. Returns `{valid, format, label, trusted, will_auto_approve}`.
+  - `POST /api/payments/zeffy/confirm` now persists `zeffy_receipt_format` on the transaction doc.
+  - Moved: `GET /api/payments/zeffy/config`, `PUT /api/transactions/{id}/approve-zeffy`, `GET /api/transactions`, `DELETE /api/transactions/{id}`, `GET /api/me/transactions`, `POST /api/transactions`.
+- **Backend `routes/auth.py`** (new) — extracted 5 core auth routes:
+  - `POST /api/auth/register`, `POST /api/auth/login` (email OR username), `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/refresh` (cookie + JSON body + Bearer header).
+  - Brute-force lockout (5 attempts / 15 min) preserved.
+- **Frontend `ZeffyCheckout.jsx`**: live debounced format validation (300ms) with green-checkmark hint showing detected format + "eligible for instant approval" callout when the member is trusted. New `data-testid="zeffy-format-hint"`.
+- **Frontend `Reports.jsx`** (admin dues queue): new format badge on each approval row — sky-blue ✓ for recognised formats (RCT-####, ZF-#, email, alnum id), rose ⚠ "unrecognised" for free-text. Helps admins spot fakes at a glance. `data-testid="zeffy-format-badge-{txId}"`.
+- **Refactor progress**: `server.py` 7,053 → 6,711 lines (−342 lines, −5%). Modules under `routes/` now: pages, site_settings, ai, news, chapters, tiers, payments, auth.
+- **Tests**: 28/28 backend pytest pass in `/app/backend/tests/test_iteration25_auth_zeffy.py`. Frontend live-validation + submit flow verified.
 
-### P0 — Production polish
+
 - Resend domain verification + update `RESEND_FROM` env to verified address.
 - Register Resend webhook URL in dashboard.
 - Add Resend webhook signature verification (svix).
 
-### P1 — Refactor & polish
-- Split `server.py` (~2900 lines) into `/backend/routes/` + `/backend/models/` + `/backend/services/`.
+### P1 — Refactor & polish (Phase 4 in progress)
+- ~~Auth core routes (register/login/logout/me/refresh)~~ ✅ extracted to `routes/auth.py` (2026-06-03).
+- ~~Zeffy + transactions routes~~ ✅ extracted to `routes/payments.py` (2026-06-03).
+- **Remaining**: `routes/members.py` (~600 lines around `/members/*` admin CRUD), `routes/events.py` (~600 lines), `routes/auth_email_flows.py` (apply/set-password/forgot/reset/change — ~400 lines bundled with email senders).
 - Replace native date inputs with shadcn DatePicker for consistency.
 - Email blast: batch with `asyncio.gather` (chunks of 25) once segments grow beyond 100.
 - Navbar grows crowded at 11 links — group less-used into a "More" dropdown on wide screens.
