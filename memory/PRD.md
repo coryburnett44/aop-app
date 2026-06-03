@@ -87,7 +87,27 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - New endpoints: `GET/POST /api/conversations`, `GET/PUT/DELETE /api/conversations/{id}`, `POST /api/conversations/{id}/leave`, `POST /api/conversations/{id}/read`, `GET/POST /api/conversations/{id}/messages`, `DELETE /api/messages/{id}`, `POST /api/chat/upload`, `WS /api/ws/chat`.
 - `/api/files/{path}` resolver extended to include `db.chat_files`.
 
-### Phase Y — Community Service Leader Board + Zeffy dues integration (2026-06-03)
+### Phase Z — Chat TTL/emoji picker tablet cutoff fix + Zeffy auto-approve for trusted members (2026-06-03)
+- **REAL ROOT CAUSE OF CHAT TTL CUTOFF FOUND** — Phase W had partially fixed mobile but **tablet was still broken**. The picker used `sm:right-0 sm:absolute` which anchored to the parent (the tiny TTL button's `relative` wrapper). At tablet 768x1024 the picker rendered at x=-102 (102px off-screen left) because the 260px-wide picker extended beyond the button's right edge. **Fix**: use a single positioning class for all viewports — `fixed bottom-[5.5rem] left-1/2 -translate-x-1/2 w-[min(280px,calc(100vw-1.5rem))] z-[60]`. Picker is now viewport-centered above the composer on every device. Same fix applied to the emoji picker. **Verified at 390/768/1440 — all unclipped** (TTL at tablet now x=244, fully inside 768px viewport).
+- **Chat settings dialog TTL grid** — changed from `grid-cols-4` to `grid-cols-2 sm:grid-cols-4` so the "1 hour / 24 hours / 7 days" labels don't get squeezed at narrow widths.
+- **Zeffy auto-approve for trusted members** — `routes/site_settings` style backend logic in `server.py`:
+  - New `ZEFFY_RECEIPT_PATTERNS` tuple: 10+ uppercase alphanumeric, `ZF[-_]?` prefix (case-insensitive), email format. Min 6 chars hard floor.
+  - `_is_valid_zeffy_receipt(s)` helper.
+  - `POST /api/payments/zeffy/confirm` now: if `user.trust_zeffy=true` AND pattern match → transaction created with `status='completed'`, `approved_by='system:zeffy-trust'`, `zeffy_auto_approved=true`, AND `membership_expires_at` extended 365 days inline. Otherwise → pending (manual admin queue, unchanged).
+  - `trust_zeffy: Optional[bool]` added to `AdminUpdateMemberIn`. `user_out` exposes `trust_zeffy: bool`. `tx_out` exposes `zeffy_auto_approved: bool` (testing-agent fix).
+- **Admin UI** — `Admin.jsx` Edit Member dialog has a new amber-50 callout with "Auto-approve Zeffy dues payments" checkbox (`em-trust-zeffy`) above the password reset field. Pre-populates from `trust_zeffy`. Stored via existing `PUT /api/members/{id}` flow.
+- **Behavior matrix verified**:
+  | trust_zeffy | confirmation | result |
+  |---|---|---|
+  | true | `ZF-ABC123DEF` | ✅ auto-approved + extended |
+  | true | `ABCDEFGHIJ` | ✅ auto-approved |
+  | true | `user@example.com` | ✅ auto-approved |
+  | true | `bad` (3 chars) | ❌ stays pending |
+  | true | `12345` (5 chars) | ❌ stays pending |
+  | false | `ZF-ABCDEF` | ❌ stays pending |
+- **Test coverage**: 13 new tests in `/app/backend/tests/test_phase_z.py` + 15 Phase Y regression — **28/28 passing**. Frontend verified at 390/768/1440 viewports for chat pickers + dialog grid + admin checkbox. Cumulative: **184/184 backend pytest passing** across Phases T–Z.
+
+
 - **Home page widget** — `/app/frontend/src/components/CommunityServiceLeaderboard.jsx` (~150 lines). Two-tab UI (Top Chapters / Top Members) showing top-5 by approved volunteer hours this quarter. Gold/silver/bronze rank badges, avatars for members, period label "Q2 2026". Fetches `/api/leaderboards/community-service?period=quarter`.
 - **Backend** — `/api/leaderboards/community-service` returns `{period_label, top_chapters[5], top_members[5]}` filtered to `status:approved`, supports `period=quarter|year|all`. Joins users → chapters for enrichment. Open to all authenticated members (no admin gate).
 - **Home section toggle** `leaderboard` added to `home_sections` defaults + migration. SiteSettingsAdmin shows "Community Service Leader Board" toggle.
