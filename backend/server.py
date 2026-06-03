@@ -6702,7 +6702,8 @@ async def preview_automated_email(eid: str, admin: dict = Depends(admin_tab_dep(
     if not e:
         raise HTTPException(status_code=404, detail="Automated email not found")
     rendered = await _render_automated_body(e, admin)
-    return {"subject": e["subject"], "body_html": rendered}
+    subject = _render_subject(e["subject"], admin)
+    return {"subject": subject, "body_html": rendered}
 
 
 async def _audience_recipients(audience: dict) -> List[dict]:
@@ -6719,6 +6720,14 @@ async def _audience_recipients(audience: dict) -> List[dict]:
     else:
         q["status"] = {"$ne": "inactive"}
     return await db.users.find(q, {"_id": 0, "id": 1, "email": 1, "name": 1, "role": 1, "birthday": 1}).to_list(2000)
+
+
+def _render_subject(subj: str, user: dict) -> str:
+    """Apply merge tags to the email subject line. Mirrors body rendering but
+    cheap — subjects only need the recipient's first name."""
+    first_name = (user.get("name") or "Member").split(" ")[0]
+    import html as _h
+    return (subj or "").replace("{{member_name}}", _h.escape(first_name))
 
 
 async def _render_automated_body(campaign: dict, user: dict) -> str:
@@ -6815,10 +6824,11 @@ async def _send_automated_email(campaign: dict) -> int:
         if not email: continue
         try:
             html = await _render_automated_body(campaign, u)
+            subject = _render_subject(campaign["subject"], u)
             await asyncio.to_thread(resend_sdk.Emails.send, {
                 "from": RESEND_FROM,
                 "to": [email],
-                "subject": campaign["subject"],
+                "subject": subject,
                 "html": html,
                 "tags": [{"name": "type", "value": "automated"}, {"name": "campaign_id", "value": campaign["id"]}],
             })

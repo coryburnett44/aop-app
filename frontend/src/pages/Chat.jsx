@@ -170,7 +170,7 @@ function ConversationItem({ conv, active, onClick, viewerId }) {
         <button
             onClick={onClick}
             className={`w-full text-left px-4 py-3 flex items-center gap-3 border-b border-slate-100 transition-colors ${active ? "bg-primary/10" : "hover:bg-slate-50"}`}
-            data-testid={`conv-${conv.id}`}
+            data-testid={`conversation-row-${conv.id}`}
         >
             <Avatar className="h-11 w-11 border-2 border-white shadow-sm shrink-0">
                 {conv.avatar_url && <AvatarImage src={conv.avatar_url} />}

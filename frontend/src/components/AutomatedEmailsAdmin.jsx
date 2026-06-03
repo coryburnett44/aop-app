@@ -207,7 +207,7 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                             <div className="flex gap-2 mt-1.5">
                                 <Input value={form.cron_expression || ""} onChange={(e) => set("cron_expression", e.target.value)} className="rounded-xl flex-1 font-mono text-sm" placeholder="0 9 * * 1" data-testid="auto-cron-input" />
                                 <Select value="_custom" onValueChange={(v) => v !== "_custom" && set("cron_expression", v)}>
-                                    <SelectTrigger className="w-auto rounded-xl text-xs" data-testid="auto-cron-presets"><SelectValue placeholder="Presets" /></SelectTrigger>
+                                    <SelectTrigger className="w-auto rounded-xl text-xs" data-testid="cron-preset"><SelectValue placeholder="Presets" /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="_custom">Presets…</SelectItem>
                                         {COMMON_SCHEDULES.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
