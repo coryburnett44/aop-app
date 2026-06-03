@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 25 features tested end-to-end. Backend: 28/28 pytest tests passed covering extracted auth routes (login email+username, /me, /logout, /refresh via cookie+body+bearer, /register dup-email, brute-force lockout) and Zeffy routes (/payments/zeffy/config, /validate for all 4 formats + invalid, /confirm untrusted=pending and trusted=auto-approved, admin approve-zeffy 400/404 cases, admin list surfaces zeffy_receipt_format, /me/transactions). Smoke-checked unmoved endpoints (/members, /chapters, /tiers, /events, /auth/forgot-password). Frontend: login with email redirects off /login, ZeffyCheckout live validation hint renders correct labels for RCT/email/garbage strings within ~300ms, and submitting a valid RCT- as an untrusted member toasts 'Submitted for admin verification 🎉' and closes the dialog.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Profile (member)", "issues": ["PayPal SDK throws 'paypal_js_sdk_v5_unhandled_exception: zoid destroyed all components' on mount — surfaces as a CRA red error overlay in dev mode. Pre-existing, not caused by this iteration. Does NOT block the Zeffy flow but is visually noisy on /profile."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration25_auth_zeffy.py",
+    "/app/test_reports/pytest/iter25.xml"
+  ],
+  "action_items": [
+    "(Low priority) Investigate the pre-existing PayPalCheckout 'zoid destroyed all components' error so it stops triggering the dev error overlay on /profile.",
+    "(Low priority) React warning 'A component is changing an uncontrolled input to be controlled' fires on /profile — likely from a Profile form field initialised with undefined; harmless but worth a default-empty-string fix."
+  ],
+  "critical_code_review_comments": [
+    "routes/auth.py: solid — refresh accepts cookie / JSON body / Bearer (good); brute-force lock keyed by ip+identifier (good). Minor: the lock branch raises 429 *only* if locked_until is in the future, but it does not refresh the locked_until on subsequent attempts during the window — that's fine, just FYI.",
+    "routes/payments.py: classify_zeffy_receipt correctly excludes strings with spaces (unless email). The 'alnum' fallback (10-40 uppercase/digits) is fairly permissive — strings like 'ABC123DEF456' classify as 'alnum'; admins should still verify. Auto-approve only fires for trust_zeffy=true AND pattern_ok, which is correct.",
+    "routes/payments.py: approve-zeffy is idempotent (returns {ok:true, already:true} on already-completed) — good.",
+    "ZeffyCheckout.jsx: debounce is implemented correctly (cleanup on dep change). Hint visible only when reference.trim().length>=4 which matches the >= 4 backend tolerance.",
+    "server.py is still 6711 lines after the extraction — further extraction (members, chapters, events, etc.) would help long-term maintainability but is out of scope for this iteration."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration25_auth_zeffy.py (new)"
+  ],
+  "success_rate": {"backend": "100% (28/28)", "frontend": "100% (login + live validation hints + submit toast)"},
+  "test_credentials": "admin@clubhaven.app/Admin123!  member@clubhaven.app/Member123! — both verified working post-test (brute-force test used disposable email so no lockout side effect on real users).",
+  "seed_data_creation": "None persisted. Test created/cleaned up: temporary registered user, several Zeffy pending+completed transactions, and one non-Zeffy fee transaction — all deleted via admin endpoints in their respective tests. trust_zeffy on member@clubhaven.app is reset to false at end of suite.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 25 (auth-route + payments-route extraction + Zeffy live validation) is fully green. Reusable regression file: /app/backend/tests/test_iteration25_auth_zeffy.py (28 tests, ~16s wall). Important: test_admin_list_surfaces_format leaves the listing query intact — it now relies on the admin endpoint returning the zeffy_receipt_format passthrough from tx_out(), which is a contract worth keeping. PayPal SDK error overlay on /profile is pre-existing — not in scope.",
+  "rca of the issue": "No bugs to report."
+}

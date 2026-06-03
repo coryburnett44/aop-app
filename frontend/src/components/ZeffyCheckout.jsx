@@ -22,10 +22,25 @@ export default function ZeffyCheckout({ onComplete }) {
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [reference, setReference] = useState("");
     const [busy, setBusy] = useState(false);
+    const [validation, setValidation] = useState(null); // {valid, format, label, will_auto_approve}
 
     useEffect(() => {
         api.get("/payments/zeffy/config").then(({ data }) => setCfg(data)).catch(() => setCfg({ enabled: false }));
     }, []);
+
+    // Live validate Zeffy receipt format as the user types (debounced 300ms).
+    // Backend classifies the string and tells us whether it matches a known
+    // Zeffy receipt pattern (RCT-XXXX-XXXX, ZF-XXXXXX, email, alphanumeric id).
+    useEffect(() => {
+        const v = reference.trim();
+        if (v.length < 4) { setValidation(null); return; }
+        const t = setTimeout(() => {
+            api.get(`/payments/zeffy/validate?value=${encodeURIComponent(v)}`)
+                .then(({ data }) => setValidation(data))
+                .catch(() => setValidation(null));
+        }, 300);
+        return () => clearTimeout(t);
+    }, [reference]);
 
     if (!cfg) return <div className="text-xs text-slate-500 py-2 text-center">Loading Zeffy…</div>;
     if (!cfg.enabled) return null;
@@ -117,11 +132,29 @@ export default function ZeffyCheckout({ onComplete }) {
                                 id="zeffy-ref"
                                 value={reference}
                                 onChange={(e) => setReference(e.target.value)}
-                                placeholder="e.g. ZF-12345 or you@example.com"
+                                placeholder="e.g. RCT-0401-5406 or you@example.com"
                                 className="rounded-xl mt-1.5"
                                 data-testid="zeffy-ref-input"
                                 autoFocus
                             />
+                            {validation && reference.trim().length >= 4 && (
+                                <div
+                                    className={`mt-2 text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${
+                                        validation.valid
+                                            ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+                                            : "bg-slate-50 border border-slate-200 text-slate-600"
+                                    }`}
+                                    data-testid="zeffy-format-hint"
+                                >
+                                    {validation.valid ? <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" /> : <span className="text-slate-400">•</span>}
+                                    <span>
+                                        {validation.label}
+                                        {validation.will_auto_approve && (
+                                            <strong className="ml-1 text-emerald-700">— eligible for instant approval</strong>
+                                        )}
+                                    </span>
+                                </div>
+                            )}
                         </div>
                         <div className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded-xl p-3">
                             <strong>Note:</strong> Your dues transaction will be marked <em>pending</em> until an admin verifies your Zeffy receipt.

@@ -805,6 +805,23 @@ function ZeffyDuesApprovals() {
                                                 Pending review
                                             </span>
                                         )}
+                                        {t.zeffy_receipt_format ? (
+                                            <span
+                                                className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200"
+                                                title={`Receipt format detected: ${t.zeffy_receipt_format}`}
+                                                data-testid={`zeffy-format-badge-${t.id}`}
+                                            >
+                                                ✓ {t.zeffy_receipt_format === "rct" ? "RCT-####" : t.zeffy_receipt_format === "zf" ? "ZF-#" : t.zeffy_receipt_format === "email" ? "email" : "alnum id"}
+                                            </span>
+                                        ) : t.zeffy_confirmation ? (
+                                            <span
+                                                className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200"
+                                                title="Receipt did not match a known Zeffy format — verify carefully"
+                                                data-testid={`zeffy-format-badge-${t.id}`}
+                                            >
+                                                ⚠ unrecognised
+                                            </span>
+                                        ) : null}
                                     </div>
                                     <div className="text-sm text-muted-foreground">${t.amount} · {t.description}</div>
                                     <div className="text-xs text-muted-foreground mt-0.5">

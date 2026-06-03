@@ -329,101 +329,6 @@ from models import (  # noqa: E402
     AssignChapterIn, AssignTierIn, PhotoMetaIn, DocumentMetaIn,
 )
 
-# ---------- Auth Routes ----------
-@api.post("/auth/register")
-async def register(body: RegisterIn, response: Response):
-    email = body.email.lower()
-    existing = await db.users.find_one({"email": email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    uid = str(uuid.uuid4())
-    created = now_utc()
-    verify_token = secrets.token_urlsafe(32)
-    doc = {
-        "id": uid,
-        "email": email,
-        "password_hash": hash_password(body.password),
-        "name": body.name,
-        "role": "member",
-        "bio": "",
-        "city": body.city or "",
-        "interests": body.interests or [],
-        "avatar_url": "",
-        "membership_tier": "standard",
-        "membership_expires_at": iso(created + timedelta(days=365)),
-        "email_verified": False,
-        "created_at": iso(created),
-    }
-    await db.users.insert_one(doc)
-    await db.email_verification_tokens.insert_one({
-        "token": verify_token,
-        "user_id": uid,
-        "expires_at": iso(created + timedelta(days=7)),
-    })
-    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-    verify_link = f"{frontend}/verify-email?token={verify_token}"
-    logger.info(f"[email-verify] Link for {email}: {verify_link}")
-    at = create_access_token(uid, email, "member", int(doc.get("token_version", 0) or 0))
-    rt = create_refresh_token(uid, int(doc.get("token_version", 0) or 0))
-    set_auth_cookies(response, at, rt)
-    out = public_user(doc)
-    out["verify_link"] = verify_link  # dev: returned so UI can surface; replace with email provider later
-    out["access_token"] = at
-    out["refresh_token"] = rt
-    return out
-
-@api.post("/auth/login")
-async def login(body: LoginIn, request: Request, response: Response):
-    # Accept either an email address OR a username. We normalize the identifier
-    # to lowercase and look up by either field.
-    identifier_raw = (body.email or "").strip()
-    is_email_form = "@" in identifier_raw
-    email = identifier_raw.lower() if is_email_form else ""
-    username_lc = identifier_raw.lower() if not is_email_form else ""
-
-    xff = request.headers.get("x-forwarded-for", "")
-    ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")
-    identifier = f"{ip}:{identifier_raw.lower()}"
-    attempt = await db.login_attempts.find_one({"identifier": identifier})
-    if attempt and attempt.get("count", 0) >= 5:
-        locked_until = attempt.get("locked_until")
-        if locked_until and datetime.fromisoformat(locked_until) > now_utc():
-            raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
-    user = None
-    if is_email_form:
-        user = await db.users.find_one({"email": email})
-    else:
-        # Username lookup is case-insensitive
-        user = await db.users.find_one({"username": {"$regex": f"^{re.escape(username_lc)}$", "$options": "i"}})
-    if not user or not verify_password(body.password, user["password_hash"]):
-        await db.login_attempts.update_one(
-            {"identifier": identifier},
-            {"$inc": {"count": 1}, "$set": {"locked_until": iso(now_utc() + timedelta(minutes=15))}},
-            upsert=True,
-        )
-        raise HTTPException(status_code=401, detail="Invalid email/username or password")
-    await db.login_attempts.delete_one({"identifier": identifier})
-    tv = int(user.get("token_version", 0) or 0)
-    at = create_access_token(user["id"], user["email"], user.get("role", "member"), tv)
-    rt = create_refresh_token(user["id"], tv)
-    set_auth_cookies(response, at, rt)
-    out = public_user(user)
-    # Return tokens in the body so mobile clients (iOS Safari ITP can evict
-    # third-party-ish cookies) can store them in localStorage and send them
-    # as Authorization: Bearer headers. Cookies still work for non-mobile.
-    out["access_token"] = at
-    out["refresh_token"] = rt
-    return out
-
-@api.post("/auth/logout")
-async def logout(response: Response, _: dict = Depends(get_current_user)):
-    clear_auth_cookies(response)
-    return {"ok": True}
-
-@api.get("/auth/me")
-async def me(user: dict = Depends(get_current_user)):
-    return public_user(user)
-
 
 # ---------- Public registration applications (admin-approval flow) ----------
 def application_out(a: dict) -> dict:
@@ -751,10 +656,6 @@ async def set_password_from_token(body: SetPasswordIn):
     return {"ok": True, "email": user.get("email") if user else None}
 
 
-class RefreshIn(BaseModel):
-    refresh_token: Optional[str] = None
-
-
 async def _send_password_reset_email(email: str, name: str, token: str) -> bool:
     if not RESEND_API_KEY or not email:
         return False
@@ -820,41 +721,6 @@ async def reset_password(body: ResetPasswordIn):
     await db.password_reset_tokens.update_one({"token": body.token}, {"$set": {"used": True, "used_at": iso(now_utc())}})
     return {"ok": True}
 
-
-@api.post("/auth/refresh")
-async def refresh(request: Request, response: Response, body: Optional[RefreshIn] = None):
-    # Accept refresh token via (in priority order):
-    # 1. JSON body { refresh_token } — mobile/localStorage path
-    # 2. Authorization: Bearer  — non-cookie clients
-    # 3. refresh_token cookie — desktop/laptop path
-    token = None
-    if body and body.refresh_token:
-        token = body.refresh_token
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    if not token:
-        token = request.cookies.get("refresh_token")
-    if not token:
-        raise HTTPException(status_code=401, detail="No refresh token")
-    try:
-        payload = jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGORITHM])
-        if payload.get("type") != "refresh":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        tv = int(user.get("token_version", 0) or 0)
-        tv_token = int(payload.get("tv", 0) or 0)
-        if tv_token < tv:
-            raise HTTPException(status_code=401, detail="Session expired — please sign in again.")
-        at = create_access_token(user["id"], user["email"], user.get("role", "member"), tv)
-        rt = create_refresh_token(user["id"], tv)
-        set_auth_cookies(response, at, rt)
-        return {"ok": True, "access_token": at, "refresh_token": rt}
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 # ---------- Profile / Members ----------
 @api.get("/members")
@@ -2509,197 +2375,6 @@ async def download_file(storage_path: str, user: dict = Depends(get_current_user
         raise HTTPException(status_code=404, detail="File not found in storage")
     return FastResponse(content=data, media_type=rec.get("content_type", content_type))
 
-# ---------- Transactions / Payments / Donations ----------
-def tx_out(t: dict) -> dict:
-    return {
-        "id": t["id"],
-        "user_id": t["user_id"],
-        "user_name": t.get("user_name", ""),
-        "type": t.get("type", "fee"),
-        "amount": t.get("amount", 0.0),
-        "currency": t.get("currency", "USD"),
-        "description": t.get("description", ""),
-        "status": t.get("status", "completed"),
-        "recorded_by": t.get("recorded_by"),
-        "recorded_by_name": t.get("recorded_by_name", ""),
-        "created_at": t.get("created_at"),
-        "provider": t.get("provider"),
-        "purpose": t.get("purpose"),
-        "zeffy_confirmation": t.get("zeffy_confirmation"),
-        "zeffy_auto_approved": bool(t.get("zeffy_auto_approved")),
-        "approved_at": t.get("approved_at"),
-        "approved_by": t.get("approved_by"),
-        "approved_by_name": t.get("approved_by_name"),
-    }
-
-@api.post("/transactions")
-async def admin_create_transaction(body: TransactionIn, admin: dict = Depends(require_admin)):
-    user = await db.users.find_one({"id": body.user_id}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=404, detail="Member not found")
-    doc = body.model_dump()
-    doc.update({
-        "id": str(uuid.uuid4()),
-        "user_name": user.get("name", ""),
-        "recorded_by": admin["id"],
-        "recorded_by_name": admin.get("name", "Admin"),
-        "created_at": iso(now_utc()),
-    })
-    await db.transactions.insert_one(doc)
-    return tx_out(doc)
-
-
-# ---------- Zeffy dues integration (no webhook — confirmation-on-return pattern) ----------
-ZEFFY_DUES_URL = os.environ.get("ZEFFY_DUES_URL", "https://www.zeffy.com/en-US/ticketing/national-yearly-dues")
-
-# Heuristic patterns Zeffy uses on receipts. If the confirmation matches one of these
-# AND the member is flagged with `trust_zeffy: true`, the dues payment is auto-approved
-# and the member's membership is extended immediately (no admin step). Otherwise it
-# falls through to the manual admin-approval queue at Reports → Dues approvals.
-ZEFFY_RECEIPT_PATTERNS = (
-    re.compile(r"^[A-Z0-9]{10,}$"),                                # raw confirmation code
-    re.compile(r"^ZF[-_]?[A-Z0-9]{6,}$", re.IGNORECASE),           # "ZF-XXXXXX"
-    re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"),  # confirmation email
-)
-
-
-def _is_valid_zeffy_receipt(s: str) -> bool:
-    s = (s or "").strip()
-    if len(s) < 6:
-        return False
-    return any(p.match(s) for p in ZEFFY_RECEIPT_PATTERNS)
-
-
-class ZeffyConfirmIn(BaseModel):
-    confirmation: str = Field(min_length=2, max_length=200)  # reference number / email / receipt id user pastes
-    amount: Optional[float] = Field(105.0, ge=1, le=10000)
-
-
-@api.get("/payments/zeffy/config")
-async def zeffy_config(user: dict = Depends(get_current_user)):
-    """Returns the Zeffy dues URL (with returnUrl auto-set to the user's profile)."""
-    # Zeffy uses redirectUrl param on most embeds — pass it through so the user can
-    # be guided back. They'll still need to manually confirm here for accounting.
-    return {
-        "url": ZEFFY_DUES_URL,
-        "currency": "USD",
-        "default_amount": 105.0,
-        "enabled": True,
-    }
-
-
-@api.post("/payments/zeffy/confirm")
-async def zeffy_confirm(body: ZeffyConfirmIn, user: dict = Depends(get_current_user)):
-    """Member confirms they completed a Zeffy dues payment.
-
-    Behavior:
-    - Default: creates a PENDING transaction that an admin must approve.
-    - If the member's user record has `trust_zeffy: true` AND the confirmation
-      string matches a known Zeffy receipt pattern (or confirmation email format),
-      the transaction is auto-approved and membership_expires_at is extended 365
-      days immediately (mirrors the PayPal capture flow).
-
-    `trust_zeffy` is an admin-managed flag (set via admin member edit) so trusted
-    long-time members don't have to wait on manual verification.
-    """
-    tx_id = str(uuid.uuid4())
-    confirmation = (body.confirmation or "").strip()
-    pattern_ok = _is_valid_zeffy_receipt(confirmation)
-    auto_approve = bool(user.get("trust_zeffy")) and pattern_ok
-
-    doc = {
-        "id": tx_id,
-        "user_id": user["id"],
-        "user_name": user.get("name", ""),
-        "type": "renewal",
-        "amount": float(body.amount or 105.0),
-        "currency": "USD",
-        "description": f"Annual dues via Zeffy (ref: {confirmation})",
-        "status": "completed" if auto_approve else "pending",
-        "purpose": "dues",
-        "provider": "zeffy",
-        "zeffy_confirmation": confirmation,
-        "zeffy_auto_approved": auto_approve,
-        "created_at": iso(now_utc()),
-    }
-    if auto_approve:
-        doc["approved_at"] = iso(now_utc())
-        doc["approved_by"] = "system:zeffy-trust"
-        doc["approved_by_name"] = "Auto-approval (trusted member)"
-    await db.transactions.insert_one(doc)
-
-    if auto_approve:
-        # Extend membership 365 days immediately
-        cur = user.get("membership_expires_at")
-        try:
-            base = datetime.fromisoformat(cur) if cur else now_utc()
-        except Exception:
-            base = now_utc()
-        if base < now_utc():
-            base = now_utc()
-        await db.users.update_one({"id": user["id"]}, {"$set": {"membership_expires_at": iso(base + timedelta(days=365))}})
-        return {"transaction_id": tx_id, "status": "completed", "auto_approved": True, "message": "🎉 Auto-approved — your annual dues are paid and your membership is extended 365 days."}
-
-    return {"transaction_id": tx_id, "status": "pending", "auto_approved": False, "message": "Submitted for admin verification — your dues will be marked paid once approved."}
-
-
-@api.put("/transactions/{tx_id}/approve-zeffy")
-async def admin_approve_zeffy(tx_id: str, admin: dict = Depends(require_admin)):
-    """Admin approves a pending Zeffy dues transaction → extends user membership 365 days."""
-    tx = await db.transactions.find_one({"id": tx_id})
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    if tx.get("provider") != "zeffy":
-        raise HTTPException(status_code=400, detail="Not a Zeffy transaction")
-    if tx.get("status") == "completed":
-        return {"ok": True, "already": True}
-    await db.transactions.update_one({"id": tx_id}, {"$set": {
-        "status": "completed",
-        "approved_at": iso(now_utc()),
-        "approved_by": admin["id"],
-        "approved_by_name": admin.get("name", "Admin"),
-    }})
-    # Extend membership 365 days from current expiry (or now)
-    if tx.get("purpose") == "dues":
-        u = await db.users.find_one({"id": tx["user_id"]})
-        if u:
-            cur = u.get("membership_expires_at")
-            try:
-                base = datetime.fromisoformat(cur) if cur else now_utc()
-            except Exception:
-                base = now_utc()
-            if base < now_utc():
-                base = now_utc()
-            await db.users.update_one({"id": tx["user_id"]}, {"$set": {"membership_expires_at": iso(base + timedelta(days=365))}})
-    return {"ok": True}
-
-
-@api.get("/transactions")
-async def admin_list_transactions(user_id: Optional[str] = None, type_filter: Optional[str] = None, admin: dict = Depends(require_admin)):
-    query = {}
-    if user_id:
-        query["user_id"] = user_id
-    if type_filter:
-        query["type"] = type_filter
-    if is_chapter_scoped(admin):
-        ids = await chapter_scope_user_ids(admin)
-        query["user_id"] = {"$in": ids or []}
-    cursor = db.transactions.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
-    items = await cursor.to_list(500)
-    return [tx_out(t) for t in items]
-
-@api.delete("/transactions/{tx_id}")
-async def admin_delete_transaction(tx_id: str, _: dict = Depends(require_admin)):
-    res = await db.transactions.delete_one({"id": tx_id})
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Not found")
-    return {"ok": True}
-
-@api.get("/me/transactions")
-async def my_transactions(user: dict = Depends(get_current_user)):
-    cursor = db.transactions.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(500)
-    items = await cursor.to_list(500)
-    return [tx_out(t) for t in items]
 
 @api.get("/me/activity")
 async def my_activity(user: dict = Depends(get_current_user)):
@@ -6970,6 +6645,8 @@ from routes import ai as routes_ai  # noqa: E402
 from routes import news as routes_news  # noqa: E402
 from routes import chapters as routes_chapters  # noqa: E402
 from routes import tiers as routes_tiers  # noqa: E402
+from routes import payments as routes_payments  # noqa: E402
+from routes import auth as routes_auth  # noqa: E402
 
 routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
@@ -6977,6 +6654,32 @@ routes_ai.register(api, require_admin=require_admin)
 routes_news.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_chapters.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_tiers.register(api, db=db, admin_tab_dep=admin_tab_dep)
+routes_payments.register(
+    api,
+    db=db,
+    get_current_user=get_current_user,
+    require_admin=require_admin,
+    is_chapter_scoped=is_chapter_scoped,
+    chapter_scope_user_ids=chapter_scope_user_ids,
+    iso=iso,
+    now_utc=now_utc,
+)
+routes_auth.register(
+    api,
+    db=db,
+    get_current_user=get_current_user,
+    hash_password=hash_password,
+    verify_password=verify_password,
+    create_access_token=create_access_token,
+    create_refresh_token=create_refresh_token,
+    set_auth_cookies=set_auth_cookies,
+    clear_auth_cookies=clear_auth_cookies,
+    public_user=public_user,
+    jwt_secret=jwt_secret,
+    JWT_ALGORITHM=JWT_ALGORITHM,
+    iso=iso,
+    now_utc=now_utc,
+)
 
 # Patch the back-compat _ensure_site_settings shim to delegate to the route module
 _ensure_site_settings = routes_site_settings.register.ensure
