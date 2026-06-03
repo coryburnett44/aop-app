@@ -1871,12 +1871,6 @@ async def list_hours(status_filter: Optional[str] = None, admin: dict = Depends(
     items = await cursor.to_list(500)
     return [hours_out(h) for h in items]
 
-@api.get("/me/hours")
-async def my_hours(user: dict = Depends(get_current_user)):
-    cursor = db.volunteer_hours.find({"user_id": user["id"]}, {"_id": 0}).sort("date", -1)
-    items = await cursor.to_list(500)
-    return [hours_out(h) for h in items]
-
 @api.put("/hours/{hours_id}/review")
 async def review_hours(hours_id: str, body: HoursReviewIn, admin: dict = Depends(admin_tab_dep("hours"))):
     await db.volunteer_hours.update_one(
@@ -4218,9 +4212,13 @@ async def report_rsvps(
 async def report_hours(
     status_filter: Optional[str] = None,
     user_id: Optional[str] = None,
+    chapter_id: Optional[str] = None,
     event_type: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
+    year: Optional[int] = None,
+    quarter: Optional[int] = None,  # 1-4
+    month: Optional[int] = None,    # 1-12
     admin: dict = Depends(admin_tab_dep("reports")),
 ):
     q: dict = {}
@@ -4230,18 +4228,273 @@ async def report_hours(
         q["user_id"] = user_id
     if event_type:
         q["event_type"] = event_type
-    if from_date or to_date:
+    if chapter_id:
+        chapter_user_ids = [u["id"] async for u in db.users.find({"chapter_id": chapter_id}, {"id": 1, "_id": 0})]
+        q["user_id"] = {"$in": chapter_user_ids or [None]}
+
+    # Period filters — derive ISO date range from year/quarter/month when provided
+    period_from, period_to = _period_to_range(year, quarter, month)
+    eff_from = from_date or period_from
+    eff_to = to_date or period_to
+    if eff_from or eff_to:
         q["date"] = {}
-        if from_date:
-            q["date"]["$gte"] = from_date
-        if to_date:
-            q["date"]["$lte"] = to_date
+        if eff_from:
+            q["date"]["$gte"] = eff_from
+        if eff_to:
+            q["date"]["$lte"] = eff_to
+
     if is_chapter_scoped(admin):
-        ids = await chapter_scope_user_ids(admin)
-        q["user_id"] = {"$in": ids or []}
+        scope_ids = await chapter_scope_user_ids(admin)
+        if "user_id" in q and isinstance(q["user_id"], dict):
+            # intersect with chapter-filter ids if both given
+            current = set(q["user_id"].get("$in", []))
+            q["user_id"] = {"$in": list(current & set(scope_ids or []))}
+        else:
+            q["user_id"] = {"$in": scope_ids or []}
     cursor = db.volunteer_hours.find(q, {"_id": 0}).sort("date", -1).limit(2000)
     items = await cursor.to_list(2000)
     return [hours_out(h) for h in items]
+
+
+def _period_to_range(year: Optional[int], quarter: Optional[int], month: Optional[int]):
+    """Returns (from_iso, to_iso) inclusive for the requested period. Any param can be None.
+    Quarter takes precedence over month if both provided. Returns ("", "") when no period given."""
+    from calendar import monthrange
+    if not year:
+        return None, None
+    if month:
+        m = max(1, min(12, month))
+        last = monthrange(year, m)[1]
+        return f"{year:04d}-{m:02d}-01T00:00:00Z", f"{year:04d}-{m:02d}-{last:02d}T23:59:59Z"
+    if quarter:
+        q = max(1, min(4, quarter))
+        start_m = (q - 1) * 3 + 1
+        end_m = start_m + 2
+        last = monthrange(year, end_m)[1]
+        return f"{year:04d}-{start_m:02d}-01T00:00:00Z", f"{year:04d}-{end_m:02d}-{last:02d}T23:59:59Z"
+    # Just year
+    return f"{year:04d}-01-01T00:00:00Z", f"{year:04d}-12-31T23:59:59Z"
+
+
+@api.get("/reports/hours/summary")
+async def report_hours_summary(
+    year: Optional[int] = None,
+    quarter: Optional[int] = None,
+    month: Optional[int] = None,
+    chapter_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    group_by: str = "member",  # member | chapter | overall | month | quarter | year
+    admin: dict = Depends(admin_tab_dep("reports")),
+):
+    """Aggregate approved hours grouped by member/chapter/period.
+    Returns: { totals: {approved, pending, rejected, count}, rows: [...] }
+    Each row depends on group_by:
+      - member: {user_id, user_name, chapter_id, chapter_name, hours, count}
+      - chapter: {chapter_id, chapter_name, hours, count, member_count}
+      - overall: {label, hours, count}
+      - month/quarter/year: {period_label, hours, count}
+    """
+    period_from, period_to = _period_to_range(year, quarter, month)
+    q: dict = {"status": "approved"}
+    if event_type:
+        q["event_type"] = event_type
+    if period_from:
+        q["date"] = {"$gte": period_from, "$lte": period_to}
+    user_filter_ids = None
+    if chapter_id:
+        user_filter_ids = [u["id"] async for u in db.users.find({"chapter_id": chapter_id}, {"id": 1, "_id": 0})]
+        q["user_id"] = {"$in": user_filter_ids or [None]}
+    if is_chapter_scoped(admin):
+        scope_ids = await chapter_scope_user_ids(admin)
+        if user_filter_ids is not None:
+            q["user_id"] = {"$in": list(set(user_filter_ids) & set(scope_ids or []))}
+        else:
+            q["user_id"] = {"$in": scope_ids or []}
+
+    # Pull all entries for the filter window (cap to a generous limit)
+    raw_items = await db.volunteer_hours.find(q, {"_id": 0}).to_list(10000)
+
+    # Also compute totals across all 4 statuses for the same period+chapter scope so the UI
+    # can show pending/rejected counts even when grouping by approved.
+    totals_q: dict = {}
+    if period_from:
+        totals_q["date"] = {"$gte": period_from, "$lte": period_to}
+    if "user_id" in q:
+        totals_q["user_id"] = q["user_id"]
+    if event_type:
+        totals_q["event_type"] = event_type
+    totals_items = await db.volunteer_hours.find(totals_q, {"_id": 0}).to_list(20000)
+    totals = {
+        "approved_hours": sum(h.get("hours", 0) for h in totals_items if h.get("status") == "approved"),
+        "pending_hours": sum(h.get("hours", 0) for h in totals_items if h.get("status") == "pending"),
+        "rejected_hours": sum(h.get("hours", 0) for h in totals_items if h.get("status") == "rejected"),
+        "approved_count": sum(1 for h in totals_items if h.get("status") == "approved"),
+        "pending_count": sum(1 for h in totals_items if h.get("status") == "pending"),
+        "rejected_count": sum(1 for h in totals_items if h.get("status") == "rejected"),
+    }
+
+    rows: list = []
+    if group_by == "member":
+        # group raw_items by user_id
+        groups: dict = {}
+        for h in raw_items:
+            uid = h["user_id"]
+            groups.setdefault(uid, {"hours": 0.0, "count": 0, "user_name": h.get("user_name", "")})
+            groups[uid]["hours"] += h.get("hours", 0)
+            groups[uid]["count"] += 1
+        # Enrich with chapter info
+        uids = list(groups.keys())
+        user_docs = await db.users.find({"id": {"$in": uids}}, {"id": 1, "chapter_id": 1, "name": 1, "_id": 0}).to_list(len(uids))
+        users_by_id = {u["id"]: u for u in user_docs}
+        chap_ids = list({u.get("chapter_id") for u in user_docs if u.get("chapter_id")})
+        chap_docs = await db.chapters.find({"id": {"$in": chap_ids}}, {"id": 1, "name": 1, "_id": 0}).to_list(len(chap_ids)) if chap_ids else []
+        chaps_by_id = {c["id"]: c for c in chap_docs}
+        for uid, g in groups.items():
+            udoc = users_by_id.get(uid, {})
+            cid = udoc.get("chapter_id")
+            rows.append({
+                "user_id": uid,
+                "user_name": udoc.get("name") or g["user_name"],
+                "chapter_id": cid,
+                "chapter_name": chaps_by_id.get(cid, {}).get("name", "") if cid else "",
+                "hours": round(g["hours"], 2),
+                "count": g["count"],
+            })
+        rows.sort(key=lambda r: r["hours"], reverse=True)
+    elif group_by == "chapter":
+        # join hours → users → chapters
+        uids = list({h["user_id"] for h in raw_items})
+        user_docs = await db.users.find({"id": {"$in": uids}}, {"id": 1, "chapter_id": 1, "_id": 0}).to_list(len(uids))
+        uid_to_chap = {u["id"]: u.get("chapter_id") for u in user_docs}
+        groups: dict = {}
+        for h in raw_items:
+            cid = uid_to_chap.get(h["user_id"]) or "unassigned"
+            groups.setdefault(cid, {"hours": 0.0, "count": 0, "members": set()})
+            groups[cid]["hours"] += h.get("hours", 0)
+            groups[cid]["count"] += 1
+            groups[cid]["members"].add(h["user_id"])
+        chap_ids = [cid for cid in groups.keys() if cid and cid != "unassigned"]
+        chap_docs = await db.chapters.find({"id": {"$in": chap_ids}}, {"id": 1, "name": 1, "_id": 0}).to_list(len(chap_ids)) if chap_ids else []
+        chaps_by_id = {c["id"]: c for c in chap_docs}
+        for cid, g in groups.items():
+            rows.append({
+                "chapter_id": cid if cid != "unassigned" else None,
+                "chapter_name": chaps_by_id.get(cid, {}).get("name", "") if cid != "unassigned" else "Unassigned",
+                "hours": round(g["hours"], 2),
+                "count": g["count"],
+                "member_count": len(g["members"]),
+            })
+        rows.sort(key=lambda r: r["hours"], reverse=True)
+    elif group_by == "overall":
+        total = sum(h.get("hours", 0) for h in raw_items)
+        rows.append({
+            "label": "All hours",
+            "hours": round(total, 2),
+            "count": len(raw_items),
+        })
+    else:
+        # Period groupings: month / quarter / year — auto-bucket by `date`
+        from datetime import datetime as _dt
+        buckets: dict = {}
+        for h in raw_items:
+            ds = (h.get("date") or "")[:10]
+            try:
+                dt = _dt.fromisoformat(ds.replace("Z", ""))
+            except Exception:
+                continue
+            if group_by == "month":
+                key = f"{dt.year:04d}-{dt.month:02d}"
+                label = dt.strftime("%b %Y")
+            elif group_by == "quarter":
+                qn = (dt.month - 1) // 3 + 1
+                key = f"{dt.year:04d}-Q{qn}"
+                label = key
+            else:  # year
+                key = f"{dt.year:04d}"
+                label = key
+            buckets.setdefault(key, {"label": label, "hours": 0.0, "count": 0})
+            buckets[key]["hours"] += h.get("hours", 0)
+            buckets[key]["count"] += 1
+        rows = [{"period_label": v["label"], "period_key": k, "hours": round(v["hours"], 2), "count": v["count"]}
+                for k, v in sorted(buckets.items())]
+
+    return {"totals": totals, "rows": rows, "period": {"year": year, "quarter": quarter, "month": month, "from": period_from, "to": period_to}, "group_by": group_by}
+
+
+@api.get("/me/hours")
+async def my_hours(
+    user: dict = Depends(get_current_user),
+    year: Optional[int] = None,
+    quarter: Optional[int] = None,
+    month: Optional[int] = None,
+    status_filter: Optional[str] = None,
+):
+    q: dict = {"user_id": user["id"]}
+    if status_filter:
+        q["status"] = status_filter
+    period_from, period_to = _period_to_range(year, quarter, month)
+    if period_from:
+        q["date"] = {"$gte": period_from, "$lte": period_to}
+    cursor = db.volunteer_hours.find(q, {"_id": 0}).sort("date", -1)
+    items = await cursor.to_list(500)
+    return [hours_out(h) for h in items]
+
+
+@api.get("/me/hours/summary")
+async def my_hours_summary(
+    user: dict = Depends(get_current_user),
+    year: Optional[int] = None,
+):
+    """Per-member rollup: hours by month for the requested year (defaults to current).
+    Returns: { year, total_approved, total_pending, by_month: [{label, hours, count, approved_hours}], by_quarter: [...] }
+    """
+    from datetime import datetime as _dt
+    target_year = year or _dt.utcnow().year
+    period_from, period_to = _period_to_range(target_year, None, None)
+    items = await db.volunteer_hours.find({"user_id": user["id"], "date": {"$gte": period_from, "$lte": period_to}}, {"_id": 0}).to_list(2000)
+
+    by_month = [{"label": _dt(target_year, m, 1).strftime("%b"), "key": f"{target_year}-{m:02d}",
+                 "hours": 0.0, "approved_hours": 0.0, "count": 0} for m in range(1, 13)]
+    by_quarter = [{"label": f"Q{q}", "key": f"{target_year}-Q{q}", "hours": 0.0, "approved_hours": 0.0, "count": 0} for q in range(1, 5)]
+
+    total_approved = 0.0
+    total_pending = 0.0
+    for h in items:
+        ds = (h.get("date") or "")[:10]
+        try:
+            dt = _dt.fromisoformat(ds.replace("Z", ""))
+        except Exception:
+            continue
+        hrs = h.get("hours", 0) or 0
+        is_approved = h.get("status") == "approved"
+        is_pending = h.get("status") == "pending"
+        if is_approved:
+            total_approved += hrs
+        if is_pending:
+            total_pending += hrs
+        m_idx = dt.month - 1
+        by_month[m_idx]["hours"] += hrs
+        by_month[m_idx]["count"] += 1
+        if is_approved:
+            by_month[m_idx]["approved_hours"] += hrs
+        q_idx = (dt.month - 1) // 3
+        by_quarter[q_idx]["hours"] += hrs
+        by_quarter[q_idx]["count"] += 1
+        if is_approved:
+            by_quarter[q_idx]["approved_hours"] += hrs
+
+    # round
+    for row in by_month + by_quarter:
+        row["hours"] = round(row["hours"], 2)
+        row["approved_hours"] = round(row["approved_hours"], 2)
+
+    return {
+        "year": target_year,
+        "total_approved": round(total_approved, 2),
+        "total_pending": round(total_pending, 2),
+        "by_month": by_month,
+        "by_quarter": by_quarter,
+    }
 
 @api.get("/reports/donations")
 async def report_donations(

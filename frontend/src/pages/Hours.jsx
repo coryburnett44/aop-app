@@ -145,31 +145,74 @@ function LogHoursDialog() {
 
 function MyHours() {
     const [entries, setEntries] = useState([]);
+    const now = new Date();
+    const [year, setYear] = useState(now.getFullYear());
+    const [period, setPeriod] = useState("all"); // all | q1..q4 | m1..m12
 
-    const load = () => api.get("/me/hours").then(({ data }) => setEntries(data));
+    const load = () => {
+        const params = new URLSearchParams();
+        params.set("year", year);
+        if (period.startsWith("q")) params.set("quarter", period.slice(1));
+        else if (period.startsWith("m")) params.set("month", period.slice(1));
+        api.get(`/me/hours?${params.toString()}`).then(({ data }) => setEntries(data));
+    };
     useEffect(() => {
         load();
         const h = () => load();
         window.addEventListener("hours-logged", h);
         return () => window.removeEventListener("hours-logged", h);
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [year, period]);
 
     const approved = entries.filter((e) => e.status === "approved").reduce((s, e) => s + e.hours, 0);
     const pending = entries.filter((e) => e.status === "pending").reduce((s, e) => s + e.hours, 0);
 
+    // Year options: current year and 4 prior
+    const years = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2, now.getFullYear() - 3, now.getFullYear() - 4];
+    const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
     return (
         <div>
-            <div className="grid grid-cols-3 gap-4 mb-6">
+            {/* Period filters */}
+            <div className="mb-5 bg-muted/30 rounded-2xl p-4 border border-border" data-testid="my-hours-filters">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                    <div className="flex items-center gap-2">
+                        <Label className="text-xs uppercase tracking-wider font-bold text-muted-foreground">Year</Label>
+                        <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
+                            <SelectTrigger className="rounded-full h-9 w-28 text-sm" data-testid="my-hours-year"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                {years.map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Label className="text-xs uppercase tracking-wider font-bold text-muted-foreground shrink-0">Period</Label>
+                        <Select value={period} onValueChange={setPeriod}>
+                            <SelectTrigger className="rounded-full h-9 text-sm flex-1" data-testid="my-hours-period"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">Entire year</SelectItem>
+                                <SelectItem value="q1">Q1 (Jan–Mar)</SelectItem>
+                                <SelectItem value="q2">Q2 (Apr–Jun)</SelectItem>
+                                <SelectItem value="q3">Q3 (Jul–Sep)</SelectItem>
+                                <SelectItem value="q4">Q4 (Oct–Dec)</SelectItem>
+                                {MONTH_NAMES.map((mn, i) => <SelectItem key={i + 1} value={`m${i + 1}`}>{mn}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-6">
                 <StatBox label="Approved" value={`${approved.toFixed(1)}h`} tint="bg-accent/40" testid="stat-approved" />
                 <StatBox label="Pending" value={`${pending.toFixed(1)}h`} tint="bg-secondary/40" testid="stat-pending" />
                 <StatBox label="Entries" value={entries.length} tint="bg-primary/15" testid="stat-entries" />
             </div>
 
             {entries.length === 0 ? (
-                <div className="bg-muted/30 border-2 border-dashed border-border rounded-3xl p-12 text-center">
+                <div className="bg-muted/30 border-2 border-dashed border-border rounded-3xl p-12 text-center" data-testid="my-hours-empty">
                     <Clock className="h-10 w-10 mx-auto text-muted-foreground/50" />
-                    <p className="mt-4 font-heading text-lg">No hours logged yet</p>
-                    <p className="text-sm text-muted-foreground">Your service goes here. Log it to get it counted.</p>
+                    <p className="mt-4 font-heading text-lg">No hours in this period</p>
+                    <p className="text-sm text-muted-foreground">Adjust the year/period filters, or log new hours.</p>
                 </div>
             ) : (
                 <div className="space-y-3">

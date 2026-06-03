@@ -239,75 +239,213 @@ function RsvpsReport() {
 }
 
 function HoursReport() {
+    const now = new Date();
+    const [view, setView] = useState("entries"); // entries | by_member | by_chapter | by_period
+    const [chapters, setChapters] = useState([]);
+    const [year, setYear] = useState(now.getFullYear());
+    const [period, setPeriod] = useState("all"); // all | q1..q4 | m1..m12
+    const [chapterId, setChapterId] = useState("");
+    const [eventType, setEventType] = useState("");
+    const [status, setStatus] = useState("");
     const [rows, setRows] = useState([]);
-    const [filters, setFilters] = useState({ status_filter: "", event_type: "", from_date: "", to_date: "" });
+    const [summary, setSummary] = useState(null);
+
+    useEffect(() => { api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {}); }, []);
+
+    function buildParams() {
+        const p = { year };
+        if (period.startsWith("q")) p.quarter = period.slice(1);
+        else if (period.startsWith("m")) p.month = period.slice(1);
+        if (chapterId) p.chapter_id = chapterId;
+        if (eventType) p.event_type = eventType;
+        if (status) p.status_filter = status;
+        return p;
+    }
 
     async function run() {
-        const params = Object.fromEntries(Object.entries(filters).filter(([_, v]) => v));
-        const { data } = await api.get("/reports/hours", { params });
-        setRows(data);
+        const params = buildParams();
+        if (view === "entries") {
+            const { data } = await api.get("/reports/hours", { params });
+            setRows(data); setSummary(null);
+        } else {
+            const groupBy = view === "by_member" ? "member" : view === "by_chapter" ? "chapter" : "month";
+            const { data } = await api.get("/reports/hours/summary", { params: { ...params, group_by: groupBy } });
+            setRows(data.rows || []); setSummary(data);
+        }
     }
-    useEffect(() => { run(); }, []); // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => { run(); }, [view, year, period, chapterId, eventType, status]);
 
     function exportCSV() {
-        downloadCSV(`hours-report-${new Date().toISOString().slice(0, 10)}.csv`, csvify(rows, [
-            { label: "Member", get: (h) => h.user_name },
-            { label: "Hours", get: (h) => h.hours },
-            { label: "Event type", get: (h) => h.event_type },
-            { label: "Agency", get: (h) => h.agency_name },
-            { label: "Activity", get: (h) => h.activity || h.description },
-            { label: "Host", get: (h) => h.host_name },
-            { label: "Date", get: (h) => h.date?.slice(0, 10) || "" },
-            { label: "Status", get: (h) => h.status },
-        ]));
+        let headers;
+        let fname = `hours-${view}-${year}${period !== "all" ? "-" + period : ""}.csv`;
+        if (view === "entries") {
+            headers = [
+                { label: "Member", get: (h) => h.user_name },
+                { label: "Hours", get: (h) => h.hours },
+                { label: "Event type", get: (h) => h.event_type },
+                { label: "Agency", get: (h) => h.agency_name },
+                { label: "Activity", get: (h) => h.activity || h.description },
+                { label: "Host", get: (h) => h.host_name },
+                { label: "Date", get: (h) => h.date?.slice(0, 10) || "" },
+                { label: "Status", get: (h) => h.status },
+            ];
+        } else if (view === "by_member") {
+            headers = [
+                { label: "Member", get: (r) => r.user_name },
+                { label: "Chapter", get: (r) => r.chapter_name || "Unassigned" },
+                { label: "Approved hours", get: (r) => r.hours },
+                { label: "Entries", get: (r) => r.count },
+            ];
+        } else if (view === "by_chapter") {
+            headers = [
+                { label: "Chapter", get: (r) => r.chapter_name },
+                { label: "Approved hours", get: (r) => r.hours },
+                { label: "Entries", get: (r) => r.count },
+                { label: "Active members", get: (r) => r.member_count },
+            ];
+        } else {
+            headers = [
+                { label: "Period", get: (r) => r.period_label },
+                { label: "Approved hours", get: (r) => r.hours },
+                { label: "Entries", get: (r) => r.count },
+            ];
+        }
+        downloadCSV(fname, csvify(rows, headers));
     }
 
-    const totalApproved = rows.filter((r) => r.status === "approved").reduce((s, r) => s + r.hours, 0);
+    const years = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2, now.getFullYear() - 3, now.getFullYear() - 4];
+    const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
     return (
-        <div>
+        <div data-testid="hours-report">
             <div className="bg-card rounded-2xl border p-5 mb-4">
                 <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
-                <div className="grid sm:grid-cols-4 gap-3">
-                    <FilterSelect label="Status" value={filters.status_filter} onChange={(v) => setFilters({ ...filters, status_filter: v })} options={[
+                <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    <FilterSelect label="Year" value={String(year)} onChange={(v) => setYear(Number(v))} options={years.map((y) => ({ value: String(y), label: String(y) }))} testid="hours-filter-year" />
+                    <div>
+                        <Label className="text-xs">Period</Label>
+                        <Select value={period} onValueChange={setPeriod}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="hours-filter-period"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">Entire year</SelectItem>
+                                <SelectItem value="q1">Q1</SelectItem>
+                                <SelectItem value="q2">Q2</SelectItem>
+                                <SelectItem value="q3">Q3</SelectItem>
+                                <SelectItem value="q4">Q4</SelectItem>
+                                {MONTH_NAMES.map((mn, i) => <SelectItem key={i + 1} value={`m${i + 1}`}>{mn}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <FilterSelect label="Chapter" value={chapterId} onChange={setChapterId} options={[{ value: "", label: "All chapters" }, ...chapters.map((c) => ({ value: c.id, label: c.name }))]} testid="hours-filter-chapter" />
+                    <FilterSelect label="Status" value={status} onChange={setStatus} options={[
                         { value: "", label: "Any" }, { value: "approved", label: "Approved" }, { value: "pending", label: "Pending" }, { value: "rejected", label: "Rejected" },
                     ]} testid="hours-filter-status" />
-                    <FilterSelect label="Event type" value={filters.event_type} onChange={(v) => setFilters({ ...filters, event_type: v })} options={[
+                    <FilterSelect label="Event type" value={eventType} onChange={setEventType} options={[
                         { value: "", label: "Any" }, { value: "aop_related", label: "AOP event" }, { value: "other", label: "Other" },
                     ]} testid="hours-filter-type" />
-                    <div>
-                        <Label className="text-xs">From</Label>
-                        <Input type="date" value={filters.from_date} onChange={(e) => setFilters({ ...filters, from_date: e.target.value })} className="rounded-xl mt-1.5" />
-                    </div>
-                    <div>
-                        <Label className="text-xs">To</Label>
-                        <Input type="date" value={filters.to_date} onChange={(e) => setFilters({ ...filters, to_date: e.target.value })} className="rounded-xl mt-1.5" />
-                    </div>
                 </div>
-                <div className="flex justify-end gap-2 mt-4">
+                <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="hours-report-run">Run report</Button>
-                    <Button onClick={exportCSV} variant="outline" className="rounded-full"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
+                    <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="hours-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
                 </div>
             </div>
-            <div className="text-sm text-muted-foreground mb-2">{rows.length} entries · {totalApproved.toFixed(1)}h approved</div>
+
+            {/* View switcher */}
+            <Tabs value={view} onValueChange={setView}>
+                <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
+                    <TabsTrigger value="entries" className="rounded-full" data-testid="hours-view-entries">Individual entries</TabsTrigger>
+                    <TabsTrigger value="by_member" className="rounded-full" data-testid="hours-view-by-member">By member</TabsTrigger>
+                    <TabsTrigger value="by_chapter" className="rounded-full" data-testid="hours-view-by-chapter">By chapter</TabsTrigger>
+                    <TabsTrigger value="by_period" className="rounded-full" data-testid="hours-view-by-period">By period</TabsTrigger>
+                </TabsList>
+            </Tabs>
+
+            {/* Totals */}
+            {summary?.totals && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4" data-testid="hours-totals">
+                    <Stat label="Approved" value={`${summary.totals.approved_hours?.toFixed(1)}h`} />
+                    <Stat label="Approved entries" value={summary.totals.approved_count} />
+                    <Stat label="Pending" value={`${summary.totals.pending_hours?.toFixed(1)}h`} />
+                    <Stat label="Rejected" value={`${summary.totals.rejected_hours?.toFixed(1)}h`} />
+                </div>
+            )}
+
+            <div className="text-sm text-muted-foreground mt-4 mb-2">{rows.length} row{rows.length !== 1 ? "s" : ""}</div>
+
             <div className="bg-card rounded-2xl border overflow-x-auto">
                 <table className="w-full text-sm">
-                    <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-                        <tr><th className="text-left px-4 py-2.5">Member</th><th className="text-left px-4 py-2.5">Hrs</th><th className="text-left px-4 py-2.5">Type</th><th className="text-left px-4 py-2.5">Activity</th><th className="text-left px-4 py-2.5">Date</th><th className="text-left px-4 py-2.5">Status</th></tr>
-                    </thead>
-                    <tbody>
-                        {rows.map((h) => (
-                            <tr key={h.id} className="border-t border-border" data-testid={`hours-report-row-${h.id}`}>
-                                <td className="px-4 py-2.5">{h.user_name}</td>
-                                <td className="px-4 py-2.5 font-bold">{h.hours}</td>
-                                <td className="px-4 py-2.5 text-xs">{h.event_type}</td>
-                                <td className="px-4 py-2.5 text-muted-foreground max-w-sm truncate">{h.activity || h.description}</td>
-                                <td className="px-4 py-2.5 text-muted-foreground">{h.date && format(parseISO(h.date), "MMM d, yyyy")}</td>
-                                <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{h.status}</td>
-                            </tr>
-                        ))}
-                    </tbody>
+                    {view === "entries" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr><th className="text-left px-4 py-2.5">Member</th><th className="text-left px-4 py-2.5">Hrs</th><th className="text-left px-4 py-2.5">Type</th><th className="text-left px-4 py-2.5">Activity</th><th className="text-left px-4 py-2.5">Date</th><th className="text-left px-4 py-2.5">Status</th></tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((h) => (
+                                    <tr key={h.id} className="border-t border-border" data-testid={`hours-report-row-${h.id}`}>
+                                        <td className="px-4 py-2.5">{h.user_name}</td>
+                                        <td className="px-4 py-2.5 font-bold">{h.hours}</td>
+                                        <td className="px-4 py-2.5 text-xs">{h.event_type}</td>
+                                        <td className="px-4 py-2.5 text-muted-foreground max-w-sm truncate">{h.activity || h.description}</td>
+                                        <td className="px-4 py-2.5 text-muted-foreground">{h.date && format(parseISO(h.date), "MMM d, yyyy")}</td>
+                                        <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{h.status}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_member" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr><th className="text-left px-4 py-2.5">Member</th><th className="text-left px-4 py-2.5">Chapter</th><th className="text-right px-4 py-2.5">Approved hours</th><th className="text-right px-4 py-2.5">Entries</th></tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.user_id} className="border-t border-border" data-testid={`hours-by-member-row-${r.user_id}`}>
+                                        <td className="px-4 py-2.5 font-medium">{r.user_name}</td>
+                                        <td className="px-4 py-2.5 text-muted-foreground">{r.chapter_name || "Unassigned"}</td>
+                                        <td className="px-4 py-2.5 text-right font-bold">{r.hours.toFixed(1)}h</td>
+                                        <td className="px-4 py-2.5 text-right text-muted-foreground">{r.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_chapter" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr><th className="text-left px-4 py-2.5">Chapter</th><th className="text-right px-4 py-2.5">Active members</th><th className="text-right px-4 py-2.5">Approved hours</th><th className="text-right px-4 py-2.5">Entries</th></tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r, i) => (
+                                    <tr key={r.chapter_id || `unassigned-${i}`} className="border-t border-border" data-testid={`hours-by-chapter-row-${r.chapter_id || "unassigned"}`}>
+                                        <td className="px-4 py-2.5 font-medium">{r.chapter_name}</td>
+                                        <td className="px-4 py-2.5 text-right text-muted-foreground">{r.member_count}</td>
+                                        <td className="px-4 py-2.5 text-right font-bold">{r.hours.toFixed(1)}h</td>
+                                        <td className="px-4 py-2.5 text-right text-muted-foreground">{r.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_period" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr><th className="text-left px-4 py-2.5">Period</th><th className="text-right px-4 py-2.5">Approved hours</th><th className="text-right px-4 py-2.5">Entries</th></tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.period_key} className="border-t border-border" data-testid={`hours-by-period-row-${r.period_key}`}>
+                                        <td className="px-4 py-2.5 font-medium">{r.period_label}</td>
+                                        <td className="px-4 py-2.5 text-right font-bold">{r.hours.toFixed(1)}h</td>
+                                        <td className="px-4 py-2.5 text-right text-muted-foreground">{r.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
                 </table>
+                {rows.length === 0 && <div className="p-6 text-center text-sm text-muted-foreground">No hours match these filters.</div>}
             </div>
         </div>
     );
