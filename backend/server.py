@@ -153,6 +153,7 @@ def public_user(u: dict) -> dict:
         "is_expired": is_expired,
         "within_grace": within_grace,
         "email_verified": u.get("email_verified", False),
+        "trust_zeffy": bool(u.get("trust_zeffy")),
         "created_at": u.get("created_at"),
         # Social media handles (members manage on profile)
         "facebook_url": u.get("facebook_url", ""),
@@ -2525,6 +2526,7 @@ def tx_out(t: dict) -> dict:
         "provider": t.get("provider"),
         "purpose": t.get("purpose"),
         "zeffy_confirmation": t.get("zeffy_confirmation"),
+        "zeffy_auto_approved": bool(t.get("zeffy_auto_approved")),
         "approved_at": t.get("approved_at"),
         "approved_by": t.get("approved_by"),
         "approved_by_name": t.get("approved_by_name"),
@@ -2550,6 +2552,23 @@ async def admin_create_transaction(body: TransactionIn, admin: dict = Depends(re
 # ---------- Zeffy dues integration (no webhook — confirmation-on-return pattern) ----------
 ZEFFY_DUES_URL = os.environ.get("ZEFFY_DUES_URL", "https://www.zeffy.com/en-US/ticketing/national-yearly-dues")
 
+# Heuristic patterns Zeffy uses on receipts. If the confirmation matches one of these
+# AND the member is flagged with `trust_zeffy: true`, the dues payment is auto-approved
+# and the member's membership is extended immediately (no admin step). Otherwise it
+# falls through to the manual admin-approval queue at Reports → Dues approvals.
+ZEFFY_RECEIPT_PATTERNS = (
+    re.compile(r"^[A-Z0-9]{10,}$"),                                # raw confirmation code
+    re.compile(r"^ZF[-_]?[A-Z0-9]{6,}$", re.IGNORECASE),           # "ZF-XXXXXX"
+    re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"),  # confirmation email
+)
+
+
+def _is_valid_zeffy_receipt(s: str) -> bool:
+    s = (s or "").strip()
+    if len(s) < 6:
+        return False
+    return any(p.match(s) for p in ZEFFY_RECEIPT_PATTERNS)
+
 
 class ZeffyConfirmIn(BaseModel):
     confirmation: str = Field(min_length=2, max_length=200)  # reference number / email / receipt id user pastes
@@ -2572,14 +2591,22 @@ async def zeffy_config(user: dict = Depends(get_current_user)):
 @api.post("/payments/zeffy/confirm")
 async def zeffy_confirm(body: ZeffyConfirmIn, user: dict = Depends(get_current_user)):
     """Member confirms they completed a Zeffy dues payment.
-    Creates a PENDING transaction that an admin must approve. On approval the user's
-    membership_expires_at is extended by 365 days (same path as PayPal dues).
 
-    This mirrors PayPal's flow except for the verification step: instead of trusting
-    PayPal's capture API, we trust the member's confirmation and require admin sign-off
-    to avoid fraudulent renewals.
+    Behavior:
+    - Default: creates a PENDING transaction that an admin must approve.
+    - If the member's user record has `trust_zeffy: true` AND the confirmation
+      string matches a known Zeffy receipt pattern (or confirmation email format),
+      the transaction is auto-approved and membership_expires_at is extended 365
+      days immediately (mirrors the PayPal capture flow).
+
+    `trust_zeffy` is an admin-managed flag (set via admin member edit) so trusted
+    long-time members don't have to wait on manual verification.
     """
     tx_id = str(uuid.uuid4())
+    confirmation = (body.confirmation or "").strip()
+    pattern_ok = _is_valid_zeffy_receipt(confirmation)
+    auto_approve = bool(user.get("trust_zeffy")) and pattern_ok
+
     doc = {
         "id": tx_id,
         "user_id": user["id"],
@@ -2587,15 +2614,33 @@ async def zeffy_confirm(body: ZeffyConfirmIn, user: dict = Depends(get_current_u
         "type": "renewal",
         "amount": float(body.amount or 60.0),
         "currency": "USD",
-        "description": f"Annual dues via Zeffy (ref: {body.confirmation})",
-        "status": "pending",
+        "description": f"Annual dues via Zeffy (ref: {confirmation})",
+        "status": "completed" if auto_approve else "pending",
         "purpose": "dues",
         "provider": "zeffy",
-        "zeffy_confirmation": body.confirmation,
+        "zeffy_confirmation": confirmation,
+        "zeffy_auto_approved": auto_approve,
         "created_at": iso(now_utc()),
     }
+    if auto_approve:
+        doc["approved_at"] = iso(now_utc())
+        doc["approved_by"] = "system:zeffy-trust"
+        doc["approved_by_name"] = "Auto-approval (trusted member)"
     await db.transactions.insert_one(doc)
-    return {"transaction_id": tx_id, "status": "pending", "message": "Submitted for admin verification — your dues will be marked paid once approved."}
+
+    if auto_approve:
+        # Extend membership 365 days immediately
+        cur = user.get("membership_expires_at")
+        try:
+            base = datetime.fromisoformat(cur) if cur else now_utc()
+        except Exception:
+            base = now_utc()
+        if base < now_utc():
+            base = now_utc()
+        await db.users.update_one({"id": user["id"]}, {"$set": {"membership_expires_at": iso(base + timedelta(days=365))}})
+        return {"transaction_id": tx_id, "status": "completed", "auto_approved": True, "message": "🎉 Auto-approved — your annual dues are paid and your membership is extended 365 days."}
+
+    return {"transaction_id": tx_id, "status": "pending", "auto_approved": False, "message": "Submitted for admin verification — your dues will be marked paid once approved."}
 
 
 @api.put("/transactions/{tx_id}/approve-zeffy")

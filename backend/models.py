@@ -191,6 +191,7 @@ class AdminUpdateMemberIn(BaseModel):
     join_date: Optional[datetime] = None
     member_status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
     deceased_at: Optional[str] = None
+    trust_zeffy: Optional[bool] = None
     new_password: Optional[str] = None
 
 

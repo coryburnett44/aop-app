@@ -1,0 +1,45 @@
+{
+  "summary": "Phase Z — Chat TTL/emoji picker viewport-cutoff fix + trust_zeffy auto-approve. Backend: 13/13 pytest pass (test_phase_z.py) covering trust_zeffy flag exposure, no-trust pending, happy-path auto-approve + membership extension, 3 receipt-pattern variations (ZF- / 10-char alphanum / email), bad-pattern still-pending, and admin manual-approve regression. tx_out helper was missing 'zeffy_auto_approved' field → ADDED by testing agent so frontend can distinguish auto- vs admin-approved txs (1 test failed, then passed after fix). Frontend: chat TTL & emoji pickers verified fully inside viewport on mobile (390), tablet (768), desktop (1440); ttl-conv-grid renders 2 cols on mobile + 4 cols on tablet/desktop with no text truncation; em-trust-zeffy checkbox renders in the amber-50 callout in admin Edit Member dialog. Phase Y regression also passes 15/15.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tx_out helper in server.py", "issue": "Initially missing 'zeffy_auto_approved' field — review_request explicitly required this in transaction record. FIXED by testing agent (added 'zeffy_auto_approved': bool(t.get('zeffy_auto_approved')) to tx_out)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_z.py",
+    "/app/test_reports/pytest/phase_z_results.xml"
+  ],
+  "action_items": [
+    "[INFO] Phase Z trust_zeffy flow is fully functional. No outstanding bugs from this iteration.",
+    "[INFO] Reset trust_zeffy=false on member@clubhaven.app applied via fixture teardown — confirmed via final GET /members/{id} returning trust_zeffy:false.",
+    "[CARRYOVER from iteration_24] Outstanding bugs still present: (1) ZeffyCheckout.jsx window.open(url,'_blank','noopener,noreferrer') returns null in Chrome/Firefox/Safari → fallback navigates current tab; (2) ZeffyDuesApprovals row removal after approve; (3) React duplicate-key warning in HoursReport.",
+    "[INFO] tx_out helper now exposes zeffy_auto_approved — frontend can use this to badge auto-approved Zeffy txs differently in admin reports if desired."
+  ],
+  "critical_code_review_comments": [
+    "_is_valid_zeffy_receipt() correctly enforces 6-char min floor BEFORE pattern matching — guards against 'bad', '12345', etc. even if a pattern would otherwise match a short string.",
+    "ZEFFY_RECEIPT_PATTERNS: raw 10+ alphanumeric is UPPERCASE-only ([A-Z0-9]{10,}). 'abcdefghij' (lowercase) would NOT match raw pattern — only the email or ZF- patterns would. This is intentional but worth documenting (admins should know receipt copy-paste from emails often comes uppercase).",
+    "zeffy_confirm() auto-approve path mirrors the admin approve-zeffy logic for membership extension (base=max(current_expiry, now) + 365d). Consistent and correct.",
+    "auto-approve sets approved_by='system:zeffy-trust' (string, NOT a uuid) — distinct from manual admin approval which uses admin['id']. This is a clean audit signal but be aware any UI that joins approved_by → users will see no match for these.",
+    "tx_out was missing 'zeffy_auto_approved'. FIXED. Without this fix, frontend cannot distinguish auto-approved from admin-approved Zeffy txs in transaction lists — they look identical except for approved_by string.",
+    "Chat.jsx ttl-picker & emoji-picker use 'fixed bottom-[5.5rem] left-1/2 -translate-x-1/2 w-[min(WIDTH,calc(100vw-1.5rem))] z-[60]' — pickers center above composer on ALL viewports. Verified fully inside viewport on 390/768/1440. Width-clamp gracefully handles small viewports.",
+    "ttl-conv-grid 'grid-cols-2 sm:grid-cols-4' verified: 2 cols on 390px viewport, 4 cols on 768px+. Labels ('Off', '1 hour', '24 hours', '7 days') not truncated at any viewport.",
+    "em-trust-zeffy checkbox in Admin.jsx is inside an amber-50 callout that makes the elevated-privilege nature visually distinct — good UX. data-testid is present and discoverable."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (tx_out helper — added zeffy_auto_approved field)",
+    "/app/backend/tests/test_phase_z.py (new — 13 tests covering trust_zeffy flag, auto-approve happy path, pattern variations, bad-pattern still-pending, regression manual approve)"
+  ],
+  "success_rate": {"backend": "100% (13/13 phase_z + 15/15 phase_y regression)", "frontend": "100% on Phase Z scope (3 viewports × 2 pickers + grid + em-trust-zeffy all verified)"},
+  "test_credentials": "admin@clubhaven.app / Admin123!  ·  member@clubhaven.app / Member123!",
+  "seed_data_creation": "Created ~10 TEST-prefixed Zeffy transactions (TESTZNOTRUST, TESTZAUTO1ABCDEF, TESTZABCDEF, TESTZABCDEFGH, testz.member@example.com, TESTZREGRESS-REF, bad, 12345, 'hi there friend'). All cleaned up via cleanup fixture deleting txs whose description contains 'TESTZ'. trust_zeffy flag on member@clubhaven.app reset to false at end of suite.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase Z trust_zeffy auto-approve is fully validated and working. test_phase_z.py has 13 tests covering: flag exposure on /auth/me + admin /members/{id}, admin can toggle via PUT /members/{id}, no-trust valid pattern stays pending, trust+ZF-prefix→auto-approved+membership extended, parametrized pattern variations (ZF-prefix, 10+ alphanum, email), bad/short patterns still pending despite trust=true, regression manual admin approve-zeffy. Backend tx_out helper now includes zeffy_auto_approved field (testing agent fix). Frontend: all 3 chat picker viewports + ttl-conv-grid + em-trust-zeffy checkbox verified visually correct. Known carryover bug from iteration_24: ZeffyCheckout.jsx noopener-popup issue is unresolved and breaks the production member checkout flow.",
+  "rca of the issue": "Initial pytest failure 'assert None is True' for tx['zeffy_auto_approved'] root-caused to tx_out() helper in server.py omitting that field. The auto-approve code at /payments/zeffy/confirm correctly writes zeffy_auto_approved:true to the raw doc but tx_out's projection drops it. FIX: added 'zeffy_auto_approved': bool(t.get('zeffy_auto_approved')) to tx_out (mirrors how trust_zeffy is exposed via bool() coercion in user_out). After fix, all 13 phase_z + 15 phase_y tests pass. Reproduction: PUT /api/members/{id} {trust_zeffy:true} as admin → POST /api/payments/zeffy/confirm {confirmation:'ZF-VALIDCODE',amount:60} as member → GET /api/transactions?user_id={id} as admin — pre-fix the returned tx is missing zeffy_auto_approved; post-fix it returns true."
+}

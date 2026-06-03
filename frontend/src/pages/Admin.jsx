@@ -996,6 +996,21 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                         </div>
                     )}
                     <div><Label>Bio</Label><Textarea rows={3} value={form.bio || ""} onChange={(e) => setForm({ ...form, bio: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="mt-1 h-4 w-4 rounded"
+                                checked={!!form.trust_zeffy}
+                                onChange={(e) => setForm({ ...form, trust_zeffy: e.target.checked })}
+                                data-testid="em-trust-zeffy"
+                            />
+                            <div className="flex-1">
+                                <div className="text-sm font-semibold">Auto-approve Zeffy dues payments</div>
+                                <div className="text-xs text-muted-foreground">When ON, dues submissions with a valid-looking Zeffy receipt # are immediately approved and membership is extended 365 days — no admin review needed.</div>
+                            </div>
+                        </label>
+                    </div>
                     <div><Label>Reset password (optional)</Label><Input type="password" value={form.new_password || ""} onChange={(e) => setForm({ ...form, new_password: e.target.value })} className="rounded-xl mt-1.5" placeholder="Leave blank to keep current" data-testid="em-new-password" /></div>
                 </div>
                 <DialogFooter><Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90" data-testid="em-save-btn">{busy ? "Saving…" : "Save changes"}</Button></DialogFooter>
