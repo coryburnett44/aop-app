@@ -192,7 +192,7 @@ export default function Profile() {
                             <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Pay dues with PayPal</div>
                             <PayPalCheckout
                                 purpose="dues"
-                                amount={60}
+                                amount={105}
                                 note="Annual dues"
                                 onComplete={async () => {
                                     const { data } = await api.get("/auth/me").catch(() => ({ data: null }));

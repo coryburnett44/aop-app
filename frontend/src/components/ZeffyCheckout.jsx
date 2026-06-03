@@ -56,7 +56,7 @@ export default function ZeffyCheckout({ onComplete }) {
         try {
             const { data } = await api.post("/payments/zeffy/confirm", {
                 confirmation: reference.trim(),
-                amount: cfg.default_amount || 60,
+                amount: cfg.default_amount || 105,
             });
             toast.success("Submitted for admin verification 🎉");
             setConfirmOpen(false);
@@ -99,7 +99,11 @@ export default function ZeffyCheckout({ onComplete }) {
             </p>
 
             <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-                <DialogContent className="max-w-md" data-testid="zeffy-confirm-dialog">
+                <DialogContent
+                    className="max-w-md z-[9999]"
+                    overlayClassName="z-[9998]"
+                    data-testid="zeffy-confirm-dialog"
+                >
                     <DialogHeader>
                         <DialogTitle className="font-heading text-xl">Confirm Zeffy dues payment</DialogTitle>
                         <DialogDescription>

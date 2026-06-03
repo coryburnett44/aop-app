@@ -723,10 +723,20 @@ function ZeffyDuesApprovals() {
     async function load() {
         setLoading(true);
         try {
-            const { data } = await api.get("/transactions", { params: { status_filter: "pending" } });
-            // Only Zeffy-pending dues transactions need our manual approval
-            const pending = (data || []).filter((t) => t.provider === "zeffy" && t.status === "pending");
-            setRows(pending);
+            const { data } = await api.get("/transactions", { params: { provider: "zeffy" } });
+            // Show pending awaiting approval + recent auto-approved (last 30 days) for audit
+            const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+            const filtered = (data || []).filter((t) => t.provider === "zeffy" && (
+                t.status === "pending" ||
+                (t.zeffy_auto_approved && t.created_at && new Date(t.created_at).getTime() >= cutoff)
+            ));
+            // pending first, then auto-approved by created desc
+            filtered.sort((a, b) => {
+                if (a.status === "pending" && b.status !== "pending") return -1;
+                if (b.status === "pending" && a.status !== "pending") return 1;
+                return new Date(b.created_at) - new Date(a.created_at);
+            });
+            setRows(filtered);
         } catch (e) {
             toast.error(e.response?.data?.detail || "Could not load pending transactions");
         }
@@ -774,19 +784,43 @@ function ZeffyDuesApprovals() {
                 </div>
             ) : (
                 <div className="space-y-3">
-                    {rows.map((t) => (
-                        <div key={t.id} className="bg-card border-2 border-amber-300 bg-amber-50/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3" data-testid={`zeffy-approval-row-${t.id}`}>
-                            <div className="flex-1 min-w-0">
-                                <div className="font-heading font-bold text-lg">{t.user_name}</div>
-                                <div className="text-sm text-muted-foreground">${t.amount} · {t.description}</div>
-                                <div className="text-xs text-muted-foreground mt-0.5">Submitted {t.created_at && format(parseISO(t.created_at), "MMM d, yyyy")}</div>
+                    {rows.map((t) => {
+                        const isPending = t.status === "pending";
+                        return (
+                            <div
+                                key={t.id}
+                                className={`bg-card border-2 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3 ${isPending ? "border-amber-300 bg-amber-50/40" : "border-emerald-200 bg-emerald-50/30"}`}
+                                data-testid={`zeffy-approval-row-${t.id}`}
+                            >
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-heading font-bold text-lg">{t.user_name}</span>
+                                        {!isPending && t.zeffy_auto_approved && (
+                                            <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300" data-testid={`zeffy-auto-badge-${t.id}`}>
+                                                ⚡ Auto-approved
+                                            </span>
+                                        )}
+                                        {isPending && (
+                                            <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300">
+                                                Pending review
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">${t.amount} · {t.description}</div>
+                                    <div className="text-xs text-muted-foreground mt-0.5">
+                                        Submitted {t.created_at && format(parseISO(t.created_at), "MMM d, yyyy 'at' h:mm a")}
+                                        {!isPending && t.approved_at && <> · Approved {format(parseISO(t.approved_at), "MMM d 'at' h:mm a")}</>}
+                                    </div>
+                                </div>
+                                {isPending && (
+                                    <div className="flex items-center gap-2">
+                                        <Button variant="outline" size="sm" onClick={() => reject(t)} className="rounded-full" data-testid={`zeffy-reject-${t.id}`}>Reject</Button>
+                                        <Button onClick={() => approve(t)} className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white" data-testid={`zeffy-approve-${t.id}`}>Approve & extend membership</Button>
+                                    </div>
+                                )}
                             </div>
-                            <div className="flex items-center gap-2">
-                                <Button variant="outline" size="sm" onClick={() => reject(t)} className="rounded-full" data-testid={`zeffy-reject-${t.id}`}>Reject</Button>
-                                <Button onClick={() => approve(t)} className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white" data-testid={`zeffy-approve-${t.id}`}>Approve & extend membership</Button>
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </div>

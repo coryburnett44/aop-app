@@ -2572,7 +2572,7 @@ def _is_valid_zeffy_receipt(s: str) -> bool:
 
 class ZeffyConfirmIn(BaseModel):
     confirmation: str = Field(min_length=2, max_length=200)  # reference number / email / receipt id user pastes
-    amount: Optional[float] = Field(60.0, ge=1, le=10000)
+    amount: Optional[float] = Field(105.0, ge=1, le=10000)
 
 
 @api.get("/payments/zeffy/config")
@@ -2583,7 +2583,7 @@ async def zeffy_config(user: dict = Depends(get_current_user)):
     return {
         "url": ZEFFY_DUES_URL,
         "currency": "USD",
-        "default_amount": 60.0,
+        "default_amount": 105.0,
         "enabled": True,
     }
 
@@ -2612,7 +2612,7 @@ async def zeffy_confirm(body: ZeffyConfirmIn, user: dict = Depends(get_current_u
         "user_id": user["id"],
         "user_name": user.get("name", ""),
         "type": "renewal",
-        "amount": float(body.amount or 60.0),
+        "amount": float(body.amount or 105.0),
         "currency": "USD",
         "description": f"Annual dues via Zeffy (ref: {confirmation})",
         "status": "completed" if auto_approve else "pending",
@@ -2746,7 +2746,7 @@ async def my_activity(user: dict = Depends(get_current_user)):
     return activity
 
 # ---------- Admin Dashboard Stats ----------
-ANNUAL_DUES_USD = 60.0
+ANNUAL_DUES_USD = 105.0
 
 @api.get("/admin/stats")
 async def admin_stats(admin: dict = Depends(require_admin)):
