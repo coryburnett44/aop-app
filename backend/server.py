@@ -6940,6 +6940,15 @@ _ensure_site_settings = routes_site_settings.register.ensure
 # ---------- Mount ----------
 app.include_router(api)
 
+
+# ---------- Health probe (Kubernetes liveness/readiness) ----------
+@app.get("/health")
+async def health():
+    """Lightweight health check for the Kubernetes liveness/readiness probes.
+    Returns 200 OK as long as the app process is up. Avoids hitting the DB so
+    a transient Mongo blip doesn't kill the pod."""
+    return {"status": "ok"}
+
 _cors_origins_raw = os.environ.get("CORS_ORIGINS", "*").strip()
 _cors_kwargs = {"allow_credentials": True, "allow_methods": ["*"], "allow_headers": ["*"]}
 if _cors_origins_raw == "*":
