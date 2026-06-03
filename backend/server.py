@@ -253,9 +253,9 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 # Admin sub-role permissions — UI tabs an admin can access.
 # "full" admin has access to everything.
 ADMIN_ROLE_TABS: dict[str, set[str]] = {
-    "full": {"dashboard", "members", "chapters", "tiers", "events", "hours", "awards", "gear", "causes", "reports", "email", "news", "pages"},
+    "full": {"dashboard", "members", "chapters", "tiers", "events", "hours", "awards", "gear", "causes", "reports", "email", "news", "pages", "documents"},
     "membership_manager": {"dashboard", "members", "chapters", "tiers", "events", "awards", "reports", "email"},
-    "operations_manager": {"dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news"},
+    "operations_manager": {"dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news", "documents"},
     "governor_manager": {"dashboard", "hours", "causes", "reports"},
 }
 

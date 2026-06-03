@@ -139,7 +139,7 @@ export default function Directory() {
                 <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
                     <span>Sort:</span>
                     <Select value={sortBy} onValueChange={setSortBy}>
-                        <SelectTrigger className="w-auto min-w-[120px] rounded-full text-xs" data-testid="sort-by"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="w-auto min-w-[120px] rounded-full text-xs" data-testid="filter-sort"><SelectValue /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="name">Name (A→Z)</SelectItem>
                             <SelectItem value="chapter">Chapter</SelectItem>
