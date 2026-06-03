@@ -738,6 +738,8 @@ function ZeffyDuesApprovals() {
         if (!window.confirm(`Approve ${tx.user_name}'s Zeffy dues payment of $${tx.amount}? Their membership will be extended 365 days.`)) return;
         try {
             await api.put(`/transactions/${tx.id}/approve-zeffy`);
+            // Optimistically remove from local list; load() reconfirms with server
+            setRows((cur) => cur.filter((r) => r.id !== tx.id));
             toast.success("Approved — membership extended");
             load();
         } catch (e) {
@@ -749,6 +751,7 @@ function ZeffyDuesApprovals() {
         if (!window.confirm(`Reject ${tx.user_name}'s payment? This will delete the pending transaction.`)) return;
         try {
             await api.delete(`/transactions/${tx.id}`);
+            setRows((cur) => cur.filter((r) => r.id !== tx.id));
             toast.success("Pending transaction deleted");
             load();
         } catch (e) {

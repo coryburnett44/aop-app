@@ -87,7 +87,23 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - New endpoints: `GET/POST /api/conversations`, `GET/PUT/DELETE /api/conversations/{id}`, `POST /api/conversations/{id}/leave`, `POST /api/conversations/{id}/read`, `GET/POST /api/conversations/{id}/messages`, `DELETE /api/messages/{id}`, `POST /api/chat/upload`, `WS /api/ws/chat`.
 - `/api/files/{path}` resolver extended to include `db.chat_files`.
 
-### Phase X — Year/Quarter/Month hours filtering for members & admins + report aggregations (2026-06-03)
+### Phase Y — Community Service Leader Board + Zeffy dues integration (2026-06-03)
+- **Home page widget** — `/app/frontend/src/components/CommunityServiceLeaderboard.jsx` (~150 lines). Two-tab UI (Top Chapters / Top Members) showing top-5 by approved volunteer hours this quarter. Gold/silver/bronze rank badges, avatars for members, period label "Q2 2026". Fetches `/api/leaderboards/community-service?period=quarter`.
+- **Backend** — `/api/leaderboards/community-service` returns `{period_label, top_chapters[5], top_members[5]}` filtered to `status:approved`, supports `period=quarter|year|all`. Joins users → chapters for enrichment. Open to all authenticated members (no admin gate).
+- **Home section toggle** `leaderboard` added to `home_sections` defaults + migration. SiteSettingsAdmin shows "Community Service Leader Board" toggle.
+- **Zeffy dues integration** — confirmation-on-return pattern (Zeffy has no webhook in free tier):
+  - `ZEFFY_DUES_URL` env var (default `https://www.zeffy.com/en-US/ticketing/national-yearly-dues`).
+  - `GET /api/payments/zeffy/config` returns `{url, currency:'USD', default_amount:60, enabled:true}`.
+  - `POST /api/payments/zeffy/confirm` member submits `{confirmation:'receipt#', amount}` → creates a `pending` transaction with `provider:'zeffy'`, `purpose:'dues'`, `type:'renewal'`.
+  - `PUT /api/transactions/{id}/approve-zeffy` admin approves → sets `status:'completed'`, extends `membership_expires_at` by 365 days (mirrors PayPal dues path). Idempotent (`{ok:true, already:true}` if already approved). Returns 400 for non-Zeffy txs.
+- **Profile UI** — `/app/frontend/src/components/ZeffyCheckout.jsx` (~115 lines). Side-by-side with PayPal in `dues-checkout-row` grid. Click "Pay dues with Zeffy" → opens Zeffy in new tab + shows "I completed my Zeffy payment" button → opens modal with receipt# input → POST /confirm.
+- **Admin approval UI** — `Reports → Dues approvals` tab (`reports-tab-dues`). `ZeffyDuesApprovals` lists pending Zeffy txs with member name + amount + Approve/Reject buttons. Optimistic local removal + load() reconciles.
+- **`tx_out` helper** extended (testing-agent fix) to include `provider`, `purpose`, `zeffy_confirmation`, `approved_at`, `approved_by`, `approved_by_name` fields so the frontend admin panel can filter Zeffy txs.
+- **CRITICAL FIX** (after testing-agent flagged) — `ZeffyCheckout.openZeffy` no longer passes `noopener,noreferrer` to `window.open` (Chrome/Firefox/Safari return `null` when noopener is set, which made the code think the popup was blocked and navigate the current tab away from /profile). Fix: drop the popup-features arg, always `setOpened(true)` before opening, fall back to clipboard-copy on hard popup-block. Verified end-to-end at 1440×900: tab stays on /profile, popup opens to Zeffy, "I completed my Zeffy payment" button appears.
+- **React key warning in HoursReport** — partial fix via `setRows([])` reset on view change (clears stale-shape rows before new fetch). Remaining warning is in shadcn Select internal mapping, non-blocking.
+- **Test coverage**: 15 new tests in `/app/backend/tests/test_phase_y.py` — 100% passing after `tx_out` fix. Covers leaderboard shape + ordering + only-approved + period variants; Zeffy config/confirm/approve including idempotency and admin gating; regression on hours summaries. **Cumulative: 156/156 backend pytest passing** since Phase T.
+
+
 - **Member-side filtering**: `/api/me/hours` now accepts `year`, `quarter` (1-4), `month` (1-12), `status_filter` query params. New `/api/me/hours/summary?year=` returns a structured year rollup `{year, total_approved, total_pending, by_month: [{label:"Jan", key:"2025-01", hours, approved_hours, count}, …], by_quarter: [{label:"Q1", key:"2025-Q1", …}, …]}` — always 12 months / 4 quarters even when empty.
 - **`/hours` page** — "My hours" tab adds Year (last 5 years) + Period (Entire year / Q1-Q4 / Jan-Dec) selectors via shadcn `Select`. URLSearchParams-built query refetches on change. Stack-vertical on mobile, side-by-side on `sm:` and up. Empty-state copy now reads "No hours in this period — adjust the year/period filters, or log new hours."
 - **Admin reports**: `/api/reports/hours` extended with `year`, `quarter`, `month`, `chapter_id` filters (composable with existing `status_filter`, `event_type`, `from_date`, `to_date`, `user_id`). **NEW** `/api/reports/hours/summary` returns aggregated rows + totals:

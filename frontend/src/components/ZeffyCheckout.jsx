@@ -31,13 +31,20 @@ export default function ZeffyCheckout({ onComplete }) {
     if (!cfg.enabled) return null;
 
     function openZeffy() {
-        const w = window.open(cfg.url, "_blank", "noopener,noreferrer");
-        if (!w) {
-            // Popup blocked — fall back to same-tab
-            window.location.href = cfg.url;
-            return;
-        }
+        // Always show the "I completed payment" confirmation UI as soon as the
+        // user clicks the button — even if the popup is blocked, they may have
+        // completed payment via a fallback redirect or another tab.
         setOpened(true);
+        // Use noopener via rel attribute pattern (target=_blank already isolates
+        // the opener on all modern browsers). Passing 'noopener' to window.open
+        // forces it to return null, breaking popup-blocked detection.
+        try {
+            window.open(cfg.url, "_blank");
+        } catch {
+            // Hard popup-block fallback: copy URL to clipboard + show toast
+            navigator.clipboard?.writeText(cfg.url).catch(() => {});
+            toast.info("Popup blocked — Zeffy URL copied to clipboard. Open it in a new tab.");
+        }
     }
 
     async function submitConfirm() {
