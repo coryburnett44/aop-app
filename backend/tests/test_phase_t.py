@@ -73,11 +73,13 @@ class TestSiteSettings:
         assert "home_blocks_bottom" in d
 
     def test_home_sections_has_8_keys(self):
+        # Updated for iteration 20: secondary_banner replaced with leadership_team via migration
         r = requests.get(f"{API}/site-settings", timeout=10)
         sec = r.json().get("home_sections") or {}
-        expected = {"founders", "hero_text", "countdown", "pillars", "family_pulse", "secondary_banner", "upcoming_events", "news"}
+        expected = {"founders", "hero_text", "countdown", "pillars", "family_pulse", "leadership_team", "upcoming_events", "news"}
         missing = expected - set(sec.keys())
         assert not missing, f"home_sections missing keys: {missing}. Got: {list(sec.keys())}"
+        assert "secondary_banner" not in sec, f"Migration failed: secondary_banner still present in home_sections: {list(sec.keys())}"
 
     def test_member_cannot_put_site_settings(self, member_session):
         r = member_session.put(f"{API}/site-settings", json={"home_sections": {"pillars": False}}, timeout=10)

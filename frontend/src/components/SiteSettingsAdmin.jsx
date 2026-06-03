@@ -14,8 +14,8 @@ const HOME_SECTION_KEYS = [
     { key: "hero_text", label: "Hero headline + CTAs" },
     { key: "countdown", label: "10-year countdown" },
     { key: "pillars", label: "Three pillars" },
+    { key: "leadership_team", label: "Leadership Team banners" },
     { key: "family_pulse", label: "New members + birthdays" },
-    { key: "secondary_banner", label: "Secondary banner photo" },
     { key: "upcoming_events", label: "Upcoming events" },
     { key: "news", label: "News & stories" },
 ];

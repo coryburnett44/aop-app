@@ -1488,187 +1488,26 @@ async def delete_news(news_id: str, _: dict = Depends(admin_tab_dep("news"))):
     await db.news.delete_one({"id": news_id})
     return {"ok": True}
 
-# ---------- CMS Pages ----------
-def page_out(p: dict) -> dict:
-    return {
-        "id": p["id"],
-        "slug": p["slug"],
-        "title": p["title"],
-        "body": p.get("body", ""),
-        "blocks": p.get("blocks") or [],
-        "updated_at": p.get("updated_at"),
-    }
-
-@api.get("/pages")
-async def list_pages():
-    items = await db.pages.find({}, {"_id": 0}).to_list(100)
-    return [page_out(p) for p in items]
-
-@api.get("/pages/{slug}")
-async def get_page(slug: str):
-    p = await db.pages.find_one({"slug": slug}, {"_id": 0})
-    if not p:
-        raise HTTPException(status_code=404, detail="Page not found")
-    return page_out(p)
-
-@api.post("/pages")
-async def create_page(body: PageIn, _: dict = Depends(admin_tab_dep("pages"))):
-    existing = await db.pages.find_one({"slug": body.slug})
-    if existing:
-        raise HTTPException(status_code=400, detail="Slug already exists")
-    doc = body.model_dump()
-    # validate block types
-    for b in (doc.get("blocks") or []):
-        if b.get("type") not in PAGE_BLOCK_TYPES:
-            raise HTTPException(status_code=400, detail=f"Invalid block type: {b.get('type')}")
-    doc.update({"id": str(uuid.uuid4()), "updated_at": iso(now_utc())})
-    await db.pages.insert_one(doc)
-    return page_out(doc)
-
-@api.put("/pages/{slug}")
-async def update_page(slug: str, body: PageUpdateIn, _: dict = Depends(admin_tab_dep("pages"))):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if "blocks" in updates:
-        for b in updates["blocks"]:
-            if b.get("type") not in PAGE_BLOCK_TYPES:
-                raise HTTPException(status_code=400, detail=f"Invalid block type: {b.get('type')}")
-    updates["updated_at"] = iso(now_utc())
-    await db.pages.update_one({"slug": slug}, {"$set": updates})
-    p = await db.pages.find_one({"slug": slug}, {"_id": 0})
-    if not p:
-        raise HTTPException(status_code=404, detail="Page not found")
-    return page_out(p)
-
-@api.delete("/pages/{slug}")
-async def delete_page(slug: str, _: dict = Depends(admin_tab_dep("pages"))):
-    await db.pages.delete_one({"slug": slug})
-    return {"ok": True}
+# ---------- CMS Pages — extracted to routes/pages.py ----------
+# (registered at end of file)
 
 
-# ---------- Site Settings (home hero, footer, page-title overrides, nav labels) ----------
+# ---------- Site Settings — extracted to routes/site_settings.py ----------
+# SETTINGS_DOC_ID kept here for backward-compat use elsewhere in this file.
 SETTINGS_DOC_ID = "site_settings_v1"
 
-DEFAULT_SETTINGS = {
-    "id": SETTINGS_DOC_ID,
-    "hero_eyebrow": "Alpha Omega Phi Military Fraternity & Sorority, Inc.",
-    "hero_headline": "Service. Honor. Brotherhood. Sisterhood.",
-    "hero_subtext": "Veterans and service members from every branch — bonded for life.",
-    "hero_cta_label": "Become a member",
-    "hero_cta_href": "/apply",
-    "footer_text": "© Alpha Omega Phi Military Fraternity & Sorority, Inc. — All rights reserved.",
-    "footer_links": [
-        {"label": "About", "href": "/about"},
-        {"label": "Contact", "href": "mailto:info@aop-app.org"},
-    ],
-    # H1 / nav label overrides keyed by page slug
-    "page_titles": {},        # {"directory": "Roster", "documents": "Forms hub"}
-    "nav_labels": {},         # {"directory": "Roster"}
-    # Home page section toggles (true = show)
-    "home_sections": {
-        "founders": True,
-        "hero_text": True,
-        "countdown": True,
-        "pillars": True,
-        "family_pulse": True,
-        "secondary_banner": True,
-        "upcoming_events": True,
-        "news": True,
-    },
-    # Block-based custom content inserted on home page
-    "home_blocks_top": [],     # rendered between hero and countdown
-    "home_blocks_bottom": [],  # rendered after news
-    "updated_at": iso(now_utc()),
-}
 
-
-class SiteSettingsIn(BaseModel):
-    hero_eyebrow: Optional[str] = Field(None, max_length=300)
-    hero_headline: Optional[str] = Field(None, max_length=300)
-    hero_subtext: Optional[str] = Field(None, max_length=600)
-    hero_cta_label: Optional[str] = Field(None, max_length=120)
-    hero_cta_href: Optional[str] = Field(None, max_length=300)
-    footer_text: Optional[str] = Field(None, max_length=1000)
-    footer_links: Optional[List[Dict[str, str]]] = Field(None, max_length=20)
-    page_titles: Optional[Dict[str, str]] = None
-    nav_labels: Optional[Dict[str, str]] = None
-    home_sections: Optional[Dict[str, bool]] = None
-    home_blocks_top: Optional[List[PageBlockIn]] = Field(None, max_length=50)
-    home_blocks_bottom: Optional[List[PageBlockIn]] = Field(None, max_length=50)
-
-
+# Back-compat shim — some other code paths may call _ensure_site_settings(); will be wired
+# after the route module is registered below.
 async def _ensure_site_settings():
-    existing = await db.site_settings.find_one({"id": SETTINGS_DOC_ID})
-    if not existing:
-        await db.site_settings.insert_one(dict(DEFAULT_SETTINGS))
-        return
-    # Backfill any missing defaults (idempotent migration for new fields)
-    to_set = {}
-    for k, v in DEFAULT_SETTINGS.items():
-        if k not in existing:
-            to_set[k] = v
-    if to_set:
-        await db.site_settings.update_one({"id": SETTINGS_DOC_ID}, {"$set": to_set})
+    # Patched at module load (see register() at bottom of file).
+    raise RuntimeError("_ensure_site_settings not yet wired")
 
 
-@api.get("/site-settings")
-async def get_site_settings():
-    await _ensure_site_settings()
-    s = await db.site_settings.find_one({"id": SETTINGS_DOC_ID}, {"_id": 0})
-    return s
+# ---------- AI (Claude Sonnet 4.5) — extracted to routes/ai.py ----------
+# (run_claude helper is in routes/ai.py if needed elsewhere)
 
 
-@api.put("/site-settings")
-async def update_site_settings(body: SiteSettingsIn, _: dict = Depends(admin_tab_dep("pages"))):
-    await _ensure_site_settings()
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    # Validate any home_blocks payloads against the block-type allowlist
-    for blk_key in ("home_blocks_top", "home_blocks_bottom"):
-        if blk_key in updates:
-            for b in updates[blk_key]:
-                if b.get("type") not in PAGE_BLOCK_TYPES:
-                    raise HTTPException(status_code=400, detail=f"Invalid block type in {blk_key}: {b.get('type')}")
-    updates["updated_at"] = iso(now_utc())
-    await db.site_settings.update_one({"id": SETTINGS_DOC_ID}, {"$set": updates})
-    s = await db.site_settings.find_one({"id": SETTINGS_DOC_ID}, {"_id": 0})
-    return s
-
-# ---------- AI (Claude Sonnet 4.5) ----------
-async def run_claude(system_message: str, user_prompt: str, session_id: str) -> str:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-    chat = LlmChat(
-        api_key=os.environ["EMERGENT_LLM_KEY"],
-        session_id=session_id,
-        system_message=system_message,
-    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-    msg = UserMessage(text=user_prompt)
-    return await chat.send_message(msg)
-
-@api.post("/ai/event-description")
-async def ai_event_description(body: AIEventReq, admin: dict = Depends(require_admin)):
-    system = ("You are a friendly community manager who writes warm, vivid event descriptions "
-              "(120-180 words) for a members club. Avoid hype. Keep it inclusive, concrete, and inviting.")
-    prompt = (f"Write a compelling event description.\nEvent title: {body.title}\n"
-              f"Topic/details: {body.topic}\nAudience: {body.audience}\nTone: {body.tone}\n"
-              "Include a short opening hook, what attendees will do, and a closing CTA line.")
-    try:
-        text = await run_claude(system, prompt, f"event-desc-{admin['id']}")
-        return {"text": text}
-    except Exception as e:
-        logger.exception("AI event description failed")
-        raise HTTPException(status_code=502, detail=f"AI error: {e}")
-
-@api.post("/ai/draft-email")
-async def ai_draft_email(body: AIEmailReq, admin: dict = Depends(require_admin)):
-    system = ("You draft warm, concise emails to club members. 150-220 words. Plain-text friendly. "
-              "Use a short greeting, two body paragraphs, and a clear CTA.")
-    prompt = (f"Subject: {body.subject}\nGoal of the email: {body.goal}\nTone: {body.tone}\n"
-              "Start with 'Hi friends,' and sign off as 'The Club Team'.")
-    try:
-        text = await run_claude(system, prompt, f"email-{admin['id']}")
-        return {"text": text}
-    except Exception as e:
-        logger.exception("AI email draft failed")
-        raise HTTPException(status_code=502, detail=f"AI error: {e}")
 
 # ---------- Chapters ----------
 def chapter_out(c: dict) -> dict:
@@ -6755,6 +6594,19 @@ async def seed_builtin_automated_emails():
     }
     await db.automated_emails.insert_one(doc)
     logger.info("Seeded built-in Weekly Digest campaign")
+
+
+# ---------- Register extracted route modules (must come before include_router) ----------
+from routes import pages as routes_pages  # noqa: E402
+from routes import site_settings as routes_site_settings  # noqa: E402
+from routes import ai as routes_ai  # noqa: E402
+
+routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
+routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
+routes_ai.register(api, require_admin=require_admin)
+
+# Patch the back-compat _ensure_site_settings shim to delegate to the route module
+_ensure_site_settings = routes_site_settings.register.ensure
 
 
 # ---------- Mount ----------

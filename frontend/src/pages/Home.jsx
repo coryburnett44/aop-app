@@ -14,7 +14,10 @@ const FOUNDERS = [
     { name: "Ken", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/ao1sl6gp_Ken.jpg" },
     { name: "Lekita", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/p1mxh7ni_Lekita.jpg" },
 ];
-const SECONDARY_BANNER = "https://images.clubexpress.com/211315/photos/original/Kendra_Brandy_Banner_2074356465.jpg";
+const LEADERSHIP = [
+    { term: "2024-2026", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/4092ts0o_Kendra_Brandy_Banner_2074356465.jpg", alt: "2024-2026 Leadership Team — Kendra Garrett & Brandy Brodie" },
+    { term: "2026-2028", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/oqcv3tss_Sheron_Tana_Banner_743849018.jpg", alt: "2026-2028 Leadership Team — Sheron Andrews & Tana Blue" },
+];
 const AOP_LOGO = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png";
 
 const NAVY = "#0A2463";
@@ -177,6 +180,40 @@ export default function Home() {
             </section>
             )}
 
+            {/* Secondary banner photo removed per user request */}
+
+            {/* Leadership Team — two banner images side-by-side, responsive */}
+            {showSection("leadership_team") && (
+                <section className="bg-white py-14" data-testid="home-leadership">
+                    <div className="max-w-7xl mx-auto px-6 lg:px-10">
+                        <div className="text-center mb-8">
+                            <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>National board</div>
+                            <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight" style={{ color: NAVY }}>
+                                Leadership Team
+                            </h2>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8">
+                            {LEADERSHIP.map((l) => (
+                                <div
+                                    key={l.term}
+                                    className="bg-white rounded-3xl overflow-hidden border-4 shadow-warm-lg"
+                                    style={{ borderColor: NAVY }}
+                                    data-testid={`leadership-${l.term}`}
+                                >
+                                    <img
+                                        src={l.url}
+                                        alt={l.alt}
+                                        loading="lazy"
+                                        className="block w-full h-auto object-contain"
+                                        onError={(e) => { e.currentTarget.style.display = "none"; }}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </section>
+            )}
+
             {/* Family pulse: New Members + Birthdays */}
             {showSection("family_pulse") && user && (newMembers.length > 0 || birthdays.length > 0) && (
                 <section className="bg-slate-50 border-b" style={{ borderColor: `${NAVY}20` }}>
@@ -273,26 +310,6 @@ export default function Home() {
                         </div>
                     </div>
                 </section>
-            )}
-
-            {/* Secondary banner photo — full image */}
-            {showSection("secondary_banner") && (
-            <section className="max-w-7xl mx-auto px-6 lg:px-10 py-14">
-                <div className="rounded-3xl overflow-hidden shadow-warm-lg border-4" style={{ borderColor: NAVY, backgroundColor: NAVY }}>
-                    <img
-                        src={SECONDARY_BANNER}
-                        alt="AOP members"
-                        className="block w-full max-h-[520px] object-contain mx-auto"
-                        onError={(e) => { e.currentTarget.style.display = "none"; }}
-                    />
-                </div>
-                <div className="mt-6 text-center">
-                    <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>Trendsetters</div>
-                    <h3 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-black leading-tight" style={{ color: NAVY }}>
-                        Setting the standard, every chapter, every day.
-                    </h3>
-                </div>
-            </section>
             )}
 
             {/* Upcoming events */}

@@ -1,0 +1,43 @@
+{
+  "summary": "Phase U — Verified iteration 20: (a) Leadership Team replaces secondary banner on home, (b) routes/pages.py + routes/site_settings.py + routes/ai.py extraction did not break anything, (c) home_sections migration runs (leadership_team in, secondary_banner out). Backend: 54/54 pytest passing (24 Phase T regression + 30 new Phase U) against the live preview URL. Frontend: home-leadership section renders title 'Leadership Team' with both banner data-testids (leadership-2024-2026 + leadership-2026-2028), side-by-side on desktop 1440x900 (b1.x=120, b2.x=736), stacked on mobile 390x800 (b1.y=-896, b2.y=-44). Old 'Setting the standard, every chapter, every day' banner text is GONE from /. Leadership section precedes family-pulse in DOM (indices 3 < 4). Admin → Pages → Site copy shows the new 'Leadership Team banners' toggle (data-testid=home-section-leadership_team) — the secondary_banner toggle is GONE. End-to-end toggle: turning leadership_team OFF + Save → home-leadership not rendered; turning ON + Save → home-leadership restored. All confirmed in live browser.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase_u.py",
+    "/app/backend/tests/test_phase_t.py",
+    "/app/test_reports/pytest/phase_u_results.xml",
+    "/app/test_reports/pytest/phase_t_results.xml"
+  ],
+  "action_items": [
+    "Re-verify iteration 19's KNOWN UI bug (Admin → Pages → New page → Save flow not producing retrievable /page/<slug>) — this was NOT re-tested in iteration 20 since it's tracked separately and Phase T still passes the backend-only equivalent. If still broken, fix PageDialog Save handler + add data-testid='page-save-btn'.",
+    "Continue server.py refactor — 6626 lines is still huge. Next candidates: /api/events, /api/members, /api/auth route modules.",
+    "Add Literal[...PAGE_BLOCK_TYPES] to PageBlockIn so Pydantic enforces block-type at the schema layer (currently enforced only by route handler raises in pages.py and site_settings.py)."
+  ],
+  "critical_code_review_comments": [
+    "routes/site_settings.py make_default_settings() correctly drops secondary_banner from the default home_sections dict AND the migration block in _ensure_site_settings() pops it from any pre-existing doc. Migration is idempotent.",
+    "routes/pages.py is small (66 lines), clean, and uses a register(api, **deps) factory — good pattern for the rest of the refactor.",
+    "routes/ai.py register() only depends on require_admin which is sufficient. EMERGENT_LLM_KEY usage is correct (os.environ[...] raises if missing). No real LLM call was made by tests — only admin-gating verified (401/403 for unauth+member). The 200/502 path needs E1 to verify manually with a valid key.",
+    "routes/site_settings.py update_site_settings DOES enforce PAGE_BLOCK_TYPES on home_blocks_top/bottom now (line 100-101). This fixes the minor issue reported in iteration 19. test_admin_invalid_block_in_home_blocks_top_400 confirms 400 is returned.",
+    "Home.jsx LEADERSHIP array uses term as React key (good) AND maps `data-testid={`leadership-${l.term}`}` which gives stable selectors 'leadership-2024-2026' and 'leadership-2026-2028' as spec'd.",
+    "Old secondary_banner block has been fully removed from Home.jsx — only a comment placeholder remains ('Secondary banner photo removed per user request'). Clean cut.",
+    "SiteSettingsAdmin.jsx HOME_SECTION_KEYS now correctly has 'leadership_team' instead of 'secondary_banner'. Verified in browser the toggle renders with the expected data-testid."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_u.py (new — 30 tests, all passing)",
+    "/app/backend/tests/test_phase_t.py (updated test_home_sections_has_8_keys for the migration — leadership_team in, secondary_banner out)"
+  ],
+  "success_rate": {"backend": "100% (54/54)", "frontend": "100% — leadership section, toggle, hide/restore, mobile stacking, desktop side-by-side, DOM ordering all verified"},
+  "test_credentials": "admin@clubhaven.app / Admin123! and member@clubhaven.app / Member123! from /app/memory/test_credentials.md — no credential changes needed.",
+  "seed_data_creation": "Test artifacts: created/deleted TEST CMS pages via Phase U (test-phase-u-*, test-bad-*) and Phase T (test-cms-*, test-bad-*, test-all-types-*) — all cleaned up. Site_settings home_sections + home_blocks_top mutated for one test then restored. Leadership_team toggle was flipped off + on in UI E2E — final state is ON (as default). No stray test data should remain.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: /app/backend/tests/test_phase_u.py (30 tests) + /app/backend/tests/test_phase_t.py (24 tests) — 54 total, all passing. Phase U covers: (a) auth login/me/refresh + invalid login 401, (b) leadership_team migration (in home_sections, secondary_banner removed, defaults True, admin toggle persists, migration does not re-introduce secondary_banner on subsequent GETs), (c) /pages CRUD via the extracted route module (list, 404 on unknown, member/unauth 403, admin create-with-blocks + GET + update + invalid block 400 + delete + verify 404), (d) /site-settings extracted route (GET public, member 403 on PUT, invalid block in home_blocks_top → 400), (e) /ai admin-gating (event-description + draft-email return 401/403 for unauth and member — actual LLM call skipped), (f) /events, /members, /chapters, /tiers, /automated-emails still work. Frontend leadership section + toggle verified in live preview. data-testids of interest: home-leadership, leadership-2024-2026, leadership-2026-2028, home-section-leadership_team, save-site-settings-btn, admin-tab-pages.",
+  "rca of the issue": "N/A — no new issues found. Iteration 19's known UI bug (PageDialog Save → /page/<slug> 404) was not re-tested here per scope; main agent should self-verify if claimed fixed."
+}
