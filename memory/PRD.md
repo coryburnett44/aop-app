@@ -87,7 +87,20 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - New endpoints: `GET/POST /api/conversations`, `GET/PUT/DELETE /api/conversations/{id}`, `POST /api/conversations/{id}/leave`, `POST /api/conversations/{id}/read`, `GET/POST /api/conversations/{id}/messages`, `DELETE /api/messages/{id}`, `POST /api/chat/upload`, `WS /api/ws/chat`.
 - `/api/files/{path}` resolver extended to include `db.chat_files`.
 
-### Phase T — Drag-Drop CMS Page Builder + Home page composition + first refactor phase (2026-06-03)
+### Phase U — Leadership Team section + server.py refactor phase 2 (pages/site_settings/ai route extraction) (2026-06-03)
+- **Removed secondary banner photo** above the old "Setting the standard, every chapter, every day." headline on Home (per user request).
+- **New Leadership Team section** on Home (data-testid `home-leadership`) rendered directly above the family-pulse "Who joined, who's celebrating" block. Two banner images side-by-side on tablet+ (`md:grid-cols-2`), stacked on mobile. Hard-coded for now: `2024-2026` (Kendra Garrett + Brandy Brodie) and `2026-2028` (Sheron Andrews + Tana Blue). Section gated by `showSection("leadership_team")` so admins can toggle it via Admin → Pages → Home page sections.
+- **home_sections migration** — `routes/site_settings.py::_ensure_site_settings` now (a) adds `leadership_team: True` to any existing site-settings doc that lacks it, (b) drops the stale `secondary_banner` key. Idempotent — running migration multiple times produces the same end state.
+- **`HOME_SECTION_KEYS` update** in `SiteSettingsAdmin.jsx` — replaced `secondary_banner` row with `leadership_team` row (data-testid `home-section-leadership_team`). Admin can ON/OFF the leadership banner section live.
+- **Server.py refactor phase 2** — three route modules extracted using a `register(api, **deps)` factory pattern that avoids circular imports:
+  - `/app/backend/routes/pages.py` (66 lines) — `/api/pages` CRUD, includes `_validate_blocks` against `PAGE_BLOCK_TYPES`.
+  - `/app/backend/routes/site_settings.py` (105 lines) — `/api/site-settings` GET/PUT, owns `SiteSettingsIn`, `make_default_settings()`, and `_ensure_site_settings()`.
+  - `/app/backend/routes/ai.py` (51 lines) — `/api/ai/event-description` + `/api/ai/draft-email` + `run_claude` helper.
+  - server.py mounts via `routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)` immediately before `app.include_router(api)`. Back-compat shim `_ensure_site_settings = routes_site_settings.register.ensure` keeps any in-file callers working.
+  - **server.py: 6786 → 6626 lines** (-160). Cumulative: 7079 → 6626 (-453 since phase T started).
+- **Test coverage**: 30 new tests in `/app/backend/tests/test_phase_u.py` + 24 regression in `test_phase_t.py` = **54/54 passing**. Phase U covers: leadership_team migration, /pages CRUD via extracted route, /site-settings extracted route, /ai admin-gating, plus regression on /auth/login, /auth/me, /auth/refresh, /events, /members, /chapters, /tiers, /automated-emails. Frontend verified in live preview (1440×900 + 390×800 viewports) — DOM ordering, toggle on/off, mobile stacking all confirmed.
+
+
 - **Models extraction (refactor phase 1)** — Moved all 35 Pydantic models (RegisterIn, ProfileUpdateIn, EventIn, PageIn, …) from `server.py` into `/app/backend/models.py` (367 lines). `server.py` reduced from 7079 → 6768 lines. Imported back via single `from models import (…)` statement. No functional change; backend pytest still passing (24/24 in test_phase_t.py).
 - **CMS Page Builder (drag-and-drop)** — new `/app/frontend/src/components/cms/PageBuilder.jsx` powered by `@dnd-kit/sortable`. 10 block types: heading, subheading, paragraph, image, button, divider, html, spacer, columns (2-4 cards each with title/body/image), video (YouTube embed). Each block has an inline editor with live preview. Drag-grip reorders the list; trash icon removes. Block-type names are scoped by `testIdPrefix` to avoid collisions when multiple builders coexist on a page.
 - **CMS Block Renderer** — `/app/frontend/src/components/cms/BlockRenderer.jsx` is the public-facing renderer. Used by `CmsPage.jsx` (replaces the old whitespace-pre-wrap body when `blocks.length > 0`) and by Home (for custom top + bottom blocks).
