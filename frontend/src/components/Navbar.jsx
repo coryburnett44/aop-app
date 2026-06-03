@@ -13,27 +13,31 @@ import {
 } from "./ui/dropdown-menu";
 import { Sparkles, Menu } from "lucide-react";
 import { useState } from "react";
+import { useSiteSettings } from "../context/SiteSettingsContext";
 
 const LINKS = [
-    { to: "/calendar", label: "Calendar" },
-    { to: "/events", label: "Events" },
-    { to: "/directory", label: "Members" },
-    { to: "/chat", label: "Chat" },
-    { to: "/chapters", label: "Chapters" },
-    { to: "/photos", label: "Photos" },
-    { to: "/documents", label: "AOP Forms" },
-    { to: "/awards", label: "Awards" },
-    { to: "/gear", label: "Gear" },
-    { to: "/donations", label: "Donate" },
-    { to: "/omega", label: "Omega" },
-    { to: "/news", label: "News" },
-    { to: "/schedule-meeting", label: "Meet" },
+    { to: "/calendar", slug: "calendar", label: "Calendar" },
+    { to: "/events", slug: "events", label: "Events" },
+    { to: "/directory", slug: "directory", label: "Members" },
+    { to: "/chat", slug: "chat", label: "Chat" },
+    { to: "/chapters", slug: "chapters", label: "Chapters" },
+    { to: "/photos", slug: "photos", label: "Photos" },
+    { to: "/documents", slug: "documents", label: "AOP Forms" },
+    { to: "/awards", slug: "awards", label: "Awards" },
+    { to: "/gear", slug: "gear", label: "Gear" },
+    { to: "/donations", slug: "donations", label: "Donate" },
+    { to: "/omega", slug: "omega", label: "Omega" },
+    { to: "/news", slug: "news", label: "News" },
+    { to: "/schedule-meeting", slug: "schedule-meeting", label: "Meet" },
 ];
 
 export default function Navbar() {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const [open, setOpen] = useState(false);
+    const { settings } = useSiteSettings();
+    const navOverrides = settings?.nav_labels || {};
+    const links = LINKS.map((l) => ({ ...l, label: navOverrides[l.slug] || l.label }));
 
     const initials = (user?.name || user?.email || "U")
         .split(" ")
@@ -71,7 +75,7 @@ export default function Navbar() {
                 </Link>
 
                 <nav className="hidden md:flex items-center gap-1">
-                    {user && LINKS.map((l) => (
+                    {user && links.map((l) => (
                         <NavLink
                             key={l.to}
                             to={l.to}
@@ -168,7 +172,7 @@ export default function Navbar() {
             {open && user && (
                 <div className="md:hidden border-t border-border bg-background/95 backdrop-blur-xl" data-testid="mobile-menu">
                     <div className="px-6 py-3 flex flex-col gap-1">
-                        {LINKS.map((l) => (
+                        {links.map((l) => (
                             <NavLink
                                 key={l.to}
                                 to={l.to}

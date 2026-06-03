@@ -34,11 +34,13 @@ import ScheduleMeeting from "./pages/ScheduleMeeting";
 import CheckinScan from "./pages/CheckinScan";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
+import { SiteSettingsProvider } from "./context/SiteSettingsContext";
 
 function App() {
     return (
         <AuthProvider>
-            <BrowserRouter>
+            <SiteSettingsProvider>
+                <BrowserRouter>
                 <div className="min-h-screen flex flex-col">
                     <Navbar />
                     <main className="flex-1">
@@ -79,6 +81,7 @@ function App() {
                 </div>
                 <Toaster position="top-right" richColors />
             </BrowserRouter>
+            </SiteSettingsProvider>
         </AuthProvider>
     );
 }

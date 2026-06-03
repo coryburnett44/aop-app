@@ -6,12 +6,20 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Upload, Image as ImageIcon, Trash2, FolderPlus, ArrowLeft, X, Loader2, Star, Settings } from "lucide-react";
+import { Upload, Image as ImageIcon, Trash2, FolderPlus, ArrowLeft, X, Loader2, Star, Settings, Download, CheckSquare, Square } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 
 const NAVY = "#0A2463";
 const RED = "#C8102E";
+
+function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
 
 const CATEGORY_LABELS = {
     anniversary: "Anniversaries",
@@ -33,6 +41,9 @@ export default function Photos() {
     const [uploading, setUploading] = useState(false);
     const [loadingPhotos, setLoadingPhotos] = useState(false);
     const [categoryFilter, setCategoryFilter] = useState("all");
+    const [selectMode, setSelectMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState([]);
+    const [downloading, setDownloading] = useState(false);
 
     async function loadAlbums() {
         try {
@@ -53,7 +64,36 @@ export default function Photos() {
     useEffect(() => {
         if (activeAlbum) loadPhotos(activeAlbum.name);
         else setPhotos([]);
+        setSelectMode(false);
+        setSelectedIds([]);
     }, [activeAlbum]);
+
+    function toggleSelect(id) {
+        setSelectedIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+    }
+
+    async function downloadAlbum() {
+        if (!activeAlbum) return;
+        setDownloading(true);
+        try {
+            const res = await api.post("/photos/download-zip", { album: activeAlbum.name }, { responseType: "blob" });
+            triggerDownload(res.data, `aop-${activeAlbum.name.replace(/[^a-z0-9 -]/gi, "_")}.zip`);
+            toast.success(`Downloaded "${activeAlbum.name}"`);
+        } catch (e) { toast.error(e.response?.data?.detail || "Download failed"); }
+        setDownloading(false);
+    }
+
+    async function downloadSelected() {
+        if (selectedIds.length === 0) return;
+        setDownloading(true);
+        try {
+            const res = await api.post("/photos/download-zip", { photo_ids: selectedIds }, { responseType: "blob" });
+            triggerDownload(res.data, `aop-photos-${selectedIds.length}.zip`);
+            toast.success(`Downloaded ${selectedIds.length} photo${selectedIds.length === 1 ? "" : "s"}`);
+            setSelectMode(false); setSelectedIds([]);
+        } catch (e) { toast.error(e.response?.data?.detail || "Download failed"); }
+        setDownloading(false);
+    }
 
     async function removePhoto(id) {
         if (!window.confirm("Delete this photo?")) return;
@@ -115,7 +155,30 @@ export default function Photos() {
                                     </Button>
                                 )}
                                 {activeAlbum && (
-                                    <UploadButton album={activeAlbum.name} onDone={async () => { await loadPhotos(activeAlbum.name); await loadAlbums(); }} disabled={uploading} setUploading={setUploading} />
+                                    <>
+                                        {!selectMode ? (
+                                            <>
+                                                <Button onClick={() => setSelectMode(true)} variant="outline" className="rounded-full" data-testid="select-photos-btn">
+                                                    <CheckSquare className="h-4 w-4 mr-1.5" /> Select
+                                                </Button>
+                                                <Button onClick={downloadAlbum} disabled={downloading || photos.length === 0} variant="outline" className="rounded-full" data-testid="download-album-btn">
+                                                    {downloading ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Download className="h-4 w-4 mr-1.5" />}
+                                                    Download album
+                                                </Button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Button onClick={() => { setSelectMode(false); setSelectedIds([]); }} variant="outline" className="rounded-full" data-testid="select-cancel-btn">
+                                                    <X className="h-4 w-4 mr-1.5" /> Cancel
+                                                </Button>
+                                                <Button onClick={downloadSelected} disabled={downloading || selectedIds.length === 0} className="rounded-full bg-primary hover:bg-primary/90 text-white" data-testid="download-selected-btn">
+                                                    {downloading ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Download className="h-4 w-4 mr-1.5" />}
+                                                    Download {selectedIds.length || ""}
+                                                </Button>
+                                            </>
+                                        )}
+                                        <UploadButton album={activeAlbum.name} onDone={async () => { await loadPhotos(activeAlbum.name); await loadAlbums(); }} disabled={uploading} setUploading={setUploading} />
+                                    </>
                                 )}
                             </div>
                         )}
@@ -140,7 +203,17 @@ export default function Photos() {
                 ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4" data-testid="photo-grid">
                         {photos.map((p) => (
-                            <PhotoTile key={p.id} photo={p} currentUser={user} onDelete={removePhoto} onSetCover={(albumCanEdit) => albumCanEdit ? setAsCover(p.id) : null} albumCanEdit={user && (user.role === "admin" || activeAlbum?.created_by === user.id)} />
+                            <PhotoTile
+                                key={p.id}
+                                photo={p}
+                                currentUser={user}
+                                onDelete={removePhoto}
+                                onSetCover={(albumCanEdit) => albumCanEdit ? setAsCover(p.id) : null}
+                                albumCanEdit={user && (user.role === "admin" || activeAlbum?.created_by === user.id)}
+                                selectMode={selectMode}
+                                selected={selectedIds.includes(p.id)}
+                                onToggleSelect={() => toggleSelect(p.id)}
+                            />
                         ))}
                     </div>
                 )}
@@ -221,6 +294,21 @@ function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
                 </div>
             </div>
             <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                    onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                            const res = await api.post("/photos/download-zip", { album: album.name }, { responseType: "blob" });
+                            triggerDownload(res.data, `aop-${album.name.replace(/[^a-z0-9 -]/gi, "_")}.zip`);
+                            toast.success(`Downloaded "${album.name}"`);
+                        } catch (err) { toast.error(err.response?.data?.detail || "Download failed"); }
+                    }}
+                    className="rounded-full bg-white/95 hover:bg-white p-1.5 shadow text-primary"
+                    title="Download album"
+                    data-testid={`download-album-card-${album.name}`}
+                >
+                    <Download className="h-3.5 w-3.5" />
+                </button>
                 {canEdit && (
                     <button
                         onClick={(e) => { e.stopPropagation(); onEdit(); }}
@@ -245,7 +333,7 @@ function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
     );
 }
 
-function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit }) {
+function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, selectMode, selected, onToggleSelect }) {
     const [src, setSrc] = useState("");
 
     useEffect(() => {
@@ -266,6 +354,34 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit }) {
 
     const canDelete = currentUser && (currentUser.role === "admin" || currentUser.id === photo.uploaded_by);
 
+    async function downloadOne(e) {
+        e.stopPropagation();
+        try {
+            const path = photo.url.startsWith("/api") ? photo.url.slice(4) : photo.url;
+            const res = await api.get(path, { responseType: "blob" });
+            const ext = (photo.original_filename || photo.url).split(".").pop().toLowerCase();
+            const base = (photo.title || photo.original_filename || "photo").replace(/[^a-z0-9._ -]/gi, "_");
+            const name = base.toLowerCase().endsWith(`.${ext}`) ? base : `${base}.${ext}`;
+            triggerDownload(res.data, name);
+        } catch (e) { toast.error("Download failed"); }
+    }
+
+    if (selectMode) {
+        return (
+            <button
+                type="button"
+                onClick={onToggleSelect}
+                className={`group relative aspect-square rounded-2xl overflow-hidden bg-muted border-4 shadow-warm transition-all ${selected ? "border-primary" : "border-transparent hover:border-primary/40"}`}
+                data-testid={`photo-select-${photo.id}`}
+            >
+                {src ? <img src={src} alt={photo.title} className="w-full h-full object-cover" /> : <div className="w-full h-full animate-pulse bg-muted" />}
+                <div className={`absolute top-2 left-2 rounded-full p-1.5 shadow ${selected ? "bg-primary text-white" : "bg-white/90 text-slate-400"}`}>
+                    {selected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                </div>
+            </button>
+        );
+    }
+
     return (
         <div className="group relative aspect-square rounded-2xl overflow-hidden bg-muted border border-slate-200 shadow-warm" data-testid={`photo-${photo.id}`}>
             {src ? (
@@ -280,6 +396,14 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit }) {
                 </div>
             </div>
             <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                    onClick={downloadOne}
+                    className="rounded-full bg-white/95 hover:bg-white p-1.5 shadow text-primary"
+                    title="Download photo"
+                    data-testid={`download-photo-${photo.id}`}
+                >
+                    <Download className="h-3.5 w-3.5" />
+                </button>
                 {albumCanEdit && (
                     <button
                         onClick={() => onSetCover(true)}

@@ -2,11 +2,17 @@ import { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { useSiteSettings } from "../context/SiteSettingsContext";
 import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogIn, Cake, UserPlus } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import Countdown from "../components/Countdown";
 
-const HERO_BANNER = "https://images.clubexpress.com/211315/photos/original/Sheron_Tana_Banner_743849018.jpg";
+const FOUNDERS = [
+    { name: "Christian", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/q9y9o5h5_Christian.jpg" },
+    { name: "Cory", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/7mxdup41_Cory.jpg" },
+    { name: "Ken", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/r6or7z7l_Ken.jpg" },
+    { name: "Lekita", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/u8b6ulb2_Lekita.jpg" },
+];
 const SECONDARY_BANNER = "https://images.clubexpress.com/211315/photos/original/Kendra_Brandy_Banner_2074356465.jpg";
 const AOP_LOGO = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png";
 
@@ -15,6 +21,7 @@ const RED = "#C8102E";
 
 export default function Home() {
     const { user, loading } = useAuth();
+    const { settings } = useSiteSettings();
     const [events, setEvents] = useState([]);
     const [news, setNews] = useState([]);
     const [newMembers, setNewMembers] = useState([]);
@@ -43,15 +50,25 @@ export default function Home() {
                 </div>
 
                 <div className="relative w-full bg-slate-50">
-                    {/* Hero photo — full image visible (no crop) */}
-                    <div className="w-full" style={{ backgroundColor: NAVY }}>
-                        <img
-                            src={HERO_BANNER}
-                            alt="Alpha Omega Phi members"
-                            className="block w-full max-h-[640px] object-contain mx-auto"
-                            onError={(e) => { e.currentTarget.style.display = "none"; }}
-                            data-testid="hero-image"
-                        />
+                    {/* Founders row — 4 side-by-side on tablet+, 2x2 grid on mobile */}
+                    <div className="w-full" style={{ backgroundColor: NAVY }} data-testid="hero-founders">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 max-w-7xl mx-auto">
+                            {FOUNDERS.map((f) => (
+                                <div key={f.name} className="relative aspect-[3/4] bg-slate-900 overflow-hidden border border-white/10 group" data-testid={`founder-${f.name}`}>
+                                    <img
+                                        src={f.url}
+                                        alt={`Founder ${f.name}`}
+                                        loading="lazy"
+                                        className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                        onError={(e) => { e.currentTarget.style.display = "none"; }}
+                                    />
+                                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 sm:p-4">
+                                        <div className="text-[10px] sm:text-xs uppercase tracking-[0.2em] font-bold opacity-80" style={{ color: "#fff" }}>Founder</div>
+                                        <div className="font-heading text-base sm:text-xl font-black text-white">{f.name}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </div>
 
                     {/* Headline below image so neither crops the other */}
@@ -62,17 +79,22 @@ export default function Home() {
                                 style={{ backgroundColor: RED }}
                                 data-testid="hero-tag"
                             >
-                                <Star className="h-3.5 w-3.5 fill-current" /> Members Portal
+                                <Star className="h-3.5 w-3.5 fill-current" /> {settings?.hero_eyebrow || "Members Portal"}
                             </div>
-                            <h1 className="font-heading font-black text-4xl sm:text-5xl lg:text-6xl leading-[0.95] tracking-tighter" style={{ color: NAVY }}>
-                                Alpha Omega Phi
-                                <span className="block mt-2 text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-700">
-                                    Military Fraternity &amp; Sorority, Inc.
-                                </span>
+                            <h1 className="font-heading font-black text-4xl sm:text-5xl lg:text-6xl leading-[0.95] tracking-tighter" style={{ color: NAVY }} data-testid="hero-headline">
+                                {settings?.hero_headline ? (
+                                    <span>{settings.hero_headline}</span>
+                                ) : (
+                                    <>
+                                        Alpha Omega Phi
+                                        <span className="block mt-2 text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-700">
+                                            Military Fraternity &amp; Sorority, Inc.
+                                        </span>
+                                    </>
+                                )}
                             </h1>
-                            <p className="mt-5 text-base sm:text-lg leading-relaxed text-slate-600 max-w-2xl">
-                                Welcome, Trendsetters. Your home for chapter events, members, awards, hours, and the work
-                                we do together for our veterans and communities.
+                            <p className="mt-5 text-base sm:text-lg leading-relaxed text-slate-600 max-w-2xl" data-testid="hero-subtext">
+                                {settings?.hero_subtext || "Welcome, Trendsetters. Your home for chapter events, members, awards, hours, and the work we do together for our veterans and communities."}
                             </p>
                             <div className="mt-7 flex flex-wrap gap-3">
                                 {user ? (

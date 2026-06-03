@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, mediaUrl } from "../lib/api";
+import { useSiteSettings } from "../context/SiteSettingsContext";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -51,6 +52,8 @@ function SocialIcons({ member, size = "h-7 w-7", stop = true }) {
 }
 
 export default function Directory() {
+    const { settings } = useSiteSettings();
+    const pageTitle = settings?.page_titles?.directory || "Members";
     const [members, setMembers] = useState([]);
     const [chapters, setChapters] = useState([]);
     const [tiers, setTiers] = useState([]);
@@ -98,7 +101,7 @@ export default function Directory() {
         <div className="max-w-7xl mx-auto px-6 lg:px-10 py-12">
             <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-4">
                 <div>
-                    <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">Members</h1>
+                    <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">{pageTitle}</h1>
                     <p className="text-muted-foreground mt-2">{filtered.length} of {members.length} · click a card for the full member profile.</p>
                 </div>
                 <div className="relative w-full sm:w-80">

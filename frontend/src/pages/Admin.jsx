@@ -15,6 +15,7 @@ import AdminDashboard from "./AdminDashboard";
 import Reports from "./Reports";
 import RichEditor from "../components/RichEditor";
 import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
+import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
@@ -333,23 +334,30 @@ function PagesAdmin() {
         load();
     }
     return (
-        <div>
-            <div className="flex justify-end mb-4">
-                <PageDialog onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-page-btn"><Plus className="h-4 w-4 mr-1" />New page</Button>} />
-            </div>
-            <div className="space-y-3">
-                {items.map((p) => (
-                    <div key={p.id} className="bg-card border border-border rounded-2xl p-5 flex items-center justify-between" data-testid={`admin-page-${p.slug}`}>
-                        <div>
-                            <div className="font-heading font-semibold text-lg">{p.title}</div>
-                            <div className="text-sm text-muted-foreground mt-1">/page/{p.slug}</div>
-                        </div>
-                        <div className="flex gap-2">
-                            <PageDialog page={p} onSaved={load} trigger={<Button variant="outline" className="rounded-full">Edit</Button>} />
-                            <Button variant="ghost" size="icon" onClick={() => del(p.slug)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                        </div>
+        <div className="space-y-8">
+            <SiteSettingsAdmin />
+            <div>
+                <div className="flex items-end justify-between mb-4">
+                    <div>
+                        <h3 className="font-heading text-xl font-bold">Custom pages</h3>
+                        <p className="text-xs text-muted-foreground">Author standalone pages at <code>/page/&lt;slug&gt;</code>.</p>
                     </div>
-                ))}
+                    <PageDialog onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-page-btn"><Plus className="h-4 w-4 mr-1" />New page</Button>} />
+                </div>
+                <div className="space-y-3">
+                    {items.map((p) => (
+                        <div key={p.id} className="bg-card border border-border rounded-2xl p-5 flex items-center justify-between" data-testid={`admin-page-${p.slug}`}>
+                            <div>
+                                <div className="font-heading font-semibold text-lg">{p.title}</div>
+                                <div className="text-sm text-muted-foreground mt-1">/page/{p.slug}</div>
+                            </div>
+                            <div className="flex gap-2">
+                                <PageDialog page={p} onSaved={load} trigger={<Button variant="outline" className="rounded-full">Edit</Button>} />
+                                <Button variant="ghost" size="icon" onClick={() => del(p.slug)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
         </div>
     );

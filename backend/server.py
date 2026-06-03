@@ -15,10 +15,10 @@ import io
 import base64
 import qrcode
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, status, UploadFile, File, Form, Header, Query
-from fastapi.responses import Response as FastResponse
+from fastapi.responses import Response as FastResponse, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
@@ -1836,6 +1836,63 @@ async def delete_page(slug: str, _: dict = Depends(admin_tab_dep("pages"))):
     await db.pages.delete_one({"slug": slug})
     return {"ok": True}
 
+
+# ---------- Site Settings (home hero, footer, page-title overrides, nav labels) ----------
+SETTINGS_DOC_ID = "site_settings_v1"
+
+DEFAULT_SETTINGS = {
+    "id": SETTINGS_DOC_ID,
+    "hero_eyebrow": "Alpha Omega Phi Military Fraternity & Sorority, Inc.",
+    "hero_headline": "Service. Honor. Brotherhood. Sisterhood.",
+    "hero_subtext": "Veterans and service members from every branch — bonded for life.",
+    "hero_cta_label": "Become a member",
+    "hero_cta_href": "/apply",
+    "footer_text": "© Alpha Omega Phi Military Fraternity & Sorority, Inc. — All rights reserved.",
+    "footer_links": [
+        {"label": "About", "href": "/about"},
+        {"label": "Contact", "href": "mailto:info@aop-app.org"},
+    ],
+    # H1 / nav label overrides keyed by page slug
+    "page_titles": {},        # {"directory": "Roster", "documents": "Forms hub"}
+    "nav_labels": {},         # {"directory": "Roster"}
+    "updated_at": iso(now_utc()),
+}
+
+
+class SiteSettingsIn(BaseModel):
+    hero_eyebrow: Optional[str] = Field(None, max_length=300)
+    hero_headline: Optional[str] = Field(None, max_length=300)
+    hero_subtext: Optional[str] = Field(None, max_length=600)
+    hero_cta_label: Optional[str] = Field(None, max_length=120)
+    hero_cta_href: Optional[str] = Field(None, max_length=300)
+    footer_text: Optional[str] = Field(None, max_length=1000)
+    footer_links: Optional[List[Dict[str, str]]] = Field(None, max_length=20)
+    page_titles: Optional[Dict[str, str]] = None
+    nav_labels: Optional[Dict[str, str]] = None
+
+
+async def _ensure_site_settings():
+    existing = await db.site_settings.find_one({"id": SETTINGS_DOC_ID})
+    if not existing:
+        await db.site_settings.insert_one(dict(DEFAULT_SETTINGS))
+
+
+@api.get("/site-settings")
+async def get_site_settings():
+    await _ensure_site_settings()
+    s = await db.site_settings.find_one({"id": SETTINGS_DOC_ID}, {"_id": 0})
+    return s
+
+
+@api.put("/site-settings")
+async def update_site_settings(body: SiteSettingsIn, _: dict = Depends(admin_tab_dep("pages"))):
+    await _ensure_site_settings()
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    updates["updated_at"] = iso(now_utc())
+    await db.site_settings.update_one({"id": SETTINGS_DOC_ID}, {"$set": updates})
+    s = await db.site_settings.find_one({"id": SETTINGS_DOC_ID}, {"_id": 0})
+    return s
+
 # ---------- AI (Claude Sonnet 4.5) ----------
 async def run_claude(system_message: str, user_prompt: str, session_id: str) -> str:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -2723,6 +2780,68 @@ async def delete_photo(photo_id: str, user: dict = Depends(get_current_user)):
     await db.photos.update_one({"id": photo_id}, {"$set": {"is_deleted": True}})
     return {"ok": True}
 
+@api.delete("/photos/{photo_id}")
+async def delete_photo(photo_id: str, user: dict = Depends(get_current_user)):
+    p = await db.photos.find_one({"id": photo_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Not found")
+    if p.get("uploaded_by") != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.photos.update_one({"id": photo_id}, {"$set": {"is_deleted": True}})
+    return {"ok": True}
+
+# ---------- Photo bulk download (zip) ----------
+import zipfile
+from io import BytesIO
+
+
+class PhotoDownloadIn(BaseModel):
+    photo_ids: List[str] = Field(default_factory=list, max_length=500)
+    album: Optional[str] = None  # if set, downloads the entire album
+
+
+def _safe_filename(s: str) -> str:
+    s = re.sub(r"[^a-zA-Z0-9._ -]", "_", s or "")[:120]
+    return s or "photo"
+
+
+@api.post("/photos/download-zip")
+async def download_photos_zip(body: PhotoDownloadIn, user: dict = Depends(get_current_user)):
+    """Build a ZIP of one or more photos (or an entire album) and stream it back."""
+    q: dict = {"is_deleted": {"$ne": True}}
+    if body.album:
+        q["album"] = body.album
+    elif body.photo_ids:
+        q["id"] = {"$in": body.photo_ids}
+    else:
+        raise HTTPException(status_code=400, detail="Pick photos or pass an album name.")
+    photos = await db.photos.find(q, {"_id": 0}).to_list(500)
+    if not photos:
+        raise HTTPException(status_code=404, detail="No photos to download.")
+    buf = BytesIO()
+    used_names: set = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in photos:
+            try:
+                data, _ct = await asyncio.to_thread(get_object, p["storage_path"])
+            except Exception as e:
+                logger.warning(f"Skipping photo {p.get('id')} in zip: {e}")
+                continue
+            ext = (p.get("original_filename") or p["storage_path"]).rsplit(".", 1)[-1].lower()
+            base = _safe_filename(p.get("title") or p.get("original_filename") or p["id"])
+            name = f"{base}.{ext}" if not base.lower().endswith(f".{ext}") else base
+            n = name; i = 2
+            while n in used_names:
+                stem = name.rsplit(".", 1)[0]
+                n = f"{stem} ({i}).{ext}"
+                i += 1
+            used_names.add(n)
+            zf.writestr(n, data)
+    buf.seek(0)
+    album_label = _safe_filename(body.album or "photos")
+    headers = {"Content-Disposition": f'attachment; filename="aop-{album_label}.zip"'}
+    return StreamingResponse(buf, media_type="application/zip", headers=headers)
+
 # ---------- Documents ----------
 def document_out(d: dict) -> dict:
     return {
@@ -3308,6 +3427,7 @@ async def startup():
     await seed_anniversary_subevents()
     await seed_default_photo_albums()
     await seed_builtin_automated_emails()
+    await _ensure_site_settings()
     # Start background tasks
     asyncio.create_task(_chat_digest_loop())
     asyncio.create_task(_automated_email_loop())
@@ -6567,17 +6687,20 @@ MERGE_TAGS = [
 
 class AutomatedEmailAudienceIn(BaseModel):
     type: Literal["all", "chapter", "tier", "status"] = "all"
-    ids: List[str] = []  # chapter ids, tier ids, or status strings depending on `type`
+    ids: List[str] = Field(default_factory=list, max_length=500)  # chapter ids, tier ids, or status strings depending on `type`
+
+
+AutomatedSection = Literal["events", "photos", "documents", "new_members", "my_rsvps", "pending_hours", "birthday_greeting"]
 
 
 class AutomatedEmailIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     subject: str = Field(min_length=1, max_length=200)
-    body_html: str = ""
+    body_html: str = Field("", max_length=200_000)
     cron_expression: str = "0 9 * * 1"  # default: Mondays 9am UTC
     is_active: bool = True
     audience: AutomatedEmailAudienceIn = Field(default_factory=AutomatedEmailAudienceIn)
-    sections: dict = Field(default_factory=dict)  # {events:True, photos:True, ...}
+    sections: Dict[AutomatedSection, bool] = Field(default_factory=dict)
 
 
 def _next_cron_run(cron_expr: str, base: Optional[datetime] = None) -> Optional[datetime]:

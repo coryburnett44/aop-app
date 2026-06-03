@@ -1,6 +1,10 @@
 import { Link } from "react-router-dom";
+import { useSiteSettings } from "../context/SiteSettingsContext";
 
 export default function Footer() {
+    const { settings } = useSiteSettings();
+    const customText = settings?.footer_text;
+    const customLinks = settings?.footer_links;
     return (
         <footer className="mt-24 text-white" style={{ backgroundColor: "#0A2463" }} data-testid="footer">
             {/* Patriotic top stripe */}
@@ -48,8 +52,15 @@ export default function Footer() {
                 </div>
             </div>
             <div className="border-t border-white/20">
-                <div className="max-w-7xl mx-auto px-6 lg:px-10 py-4 flex flex-wrap items-center justify-between gap-2 text-xs opacity-80">
-                    <span>© {new Date().getFullYear()} Alpha Omega Phi Military Fraternity &amp; Sorority, Inc. All rights reserved.</span>
+                <div className="max-w-7xl mx-auto px-6 lg:px-10 py-4 flex flex-wrap items-center justify-between gap-3 text-xs opacity-80">
+                    <span data-testid="footer-text">{customText || `© ${new Date().getFullYear()} Alpha Omega Phi Military Fraternity & Sorority, Inc. All rights reserved.`}</span>
+                    {customLinks && customLinks.length > 0 && (
+                        <span className="flex flex-wrap gap-x-3 gap-y-1" data-testid="footer-links">
+                            {customLinks.map((l, i) => (
+                                <a key={i} href={l.href} className="hover:text-white hover:opacity-100">{l.label}</a>
+                            ))}
+                        </span>
+                    )}
                     <span className="uppercase tracking-widest font-bold">Trendsetters</span>
                 </div>
             </div>

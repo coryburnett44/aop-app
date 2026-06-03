@@ -522,7 +522,10 @@ function MessageComposer({ conversation, onSent, replyTo, clearReply }) {
                         <Smile className="h-5 w-5" />
                     </Button>
                     {showEmoji && (
-                        <div className="absolute bottom-12 left-0 sm:left-auto sm:right-0 w-[280px] max-h-[280px] bg-white border border-slate-200 rounded-2xl shadow-warm-lg p-3 overflow-y-auto z-40" data-testid="emoji-picker">
+                        <div
+                            className="absolute bottom-12 w-[min(320px,calc(100vw-2rem))] max-h-[min(280px,40vh)] left-0 right-auto sm:left-0 bg-white border border-slate-200 rounded-2xl shadow-warm-lg p-3 overflow-y-auto z-50"
+                            data-testid="emoji-picker"
+                        >
                             {Object.entries(EMOJI_CATEGORIES).map(([cat, list]) => (
                                 <div key={cat} className="mb-2">
                                     <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400 mb-1">{cat}</div>
