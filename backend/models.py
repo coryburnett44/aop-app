@@ -46,7 +46,9 @@ class SetPasswordIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    email: EmailStr
+    # Accepts an email address OR a username. The field is named `email` for
+    # backwards compatibility with existing clients (mobile, older frontend).
+    email: str = Field(min_length=1)
     password: str
 
 

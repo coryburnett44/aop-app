@@ -138,6 +138,7 @@ function EventDialog({ event, onSaved, trigger }) {
         price: event?.price || 0,
     });
     const [aiBusy, setAiBusy] = useState(false);
+    const [coverUploading, setCoverUploading] = useState(false);
 
     async function save() {
         const payload = {
@@ -193,7 +194,32 @@ function EventDialog({ event, onSaved, trigger }) {
                         <div><Label>Location</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className="rounded-xl mt-1.5" /></div>
                         <div><Label>Category</Label><Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="rounded-xl mt-1.5" /></div>
                         <div><Label>Capacity (0 = unlimited)</Label><Input type="number" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} className="rounded-xl mt-1.5" /></div>
-                        <div><Label>Cover image URL</Label><Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div className="sm:col-span-2">
+                            <Label>Cover photo</Label>
+                            <div className="mt-1.5 grid sm:grid-cols-[1fr_180px] gap-3 items-start">
+                                <label className="rounded-xl border-2 border-dashed border-slate-300 px-4 py-3 text-sm font-semibold cursor-pointer hover:bg-white hover:border-primary transition-colors flex items-center gap-2 justify-center" data-testid="event-cover-upload">
+                                    {coverUploading ? "Uploading…" : (<>📷 {form.cover_image ? "Replace cover photo" : "Upload cover photo"}</>)}
+                                    <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                                        const f = e.target.files?.[0]; if (!f) return;
+                                        setCoverUploading(true);
+                                        try {
+                                            const fd = new FormData(); fd.append("file", f);
+                                            const { data } = await api.post("/events/upload-cover", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                                            setForm((p) => ({ ...p, cover_image: data.url }));
+                                            toast.success("Cover uploaded");
+                                        } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
+                                        setCoverUploading(false);
+                                    }} />
+                                </label>
+                                {form.cover_image ? (
+                                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50">
+                                        <img src={form.cover_image} alt="Cover preview" className="block w-full h-32 object-contain" onError={(e) => { e.currentTarget.style.opacity = "0.3"; }} />
+                                    </div>
+                                ) : (
+                                    <div className="border border-dashed border-slate-300 rounded-xl bg-white h-32 grid place-items-center text-[10px] text-slate-400 uppercase tracking-wider">Preview</div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <DialogFooter>
@@ -293,26 +319,21 @@ function NewsDialog({ article, onSaved, trigger }) {
                     </div>
                     <div className="grid sm:grid-cols-2 gap-4">
                         <div>
-                            <Label>Cover image</Label>
-                            <div className="flex items-center gap-2 mt-1.5">
-                                <Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl flex-1" placeholder="https://… or upload" />
-                                <label className="cursor-pointer">
-                                    <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
-                                        <span data-testid="news-image-upload-btn"><Upload className="h-3.5 w-3.5 mr-1" />Upload</span>
-                                    </Button>
-                                    <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
-                                        const f = e.target.files?.[0]; if (!f) return;
-                                        const fd = new FormData(); fd.append("file", f);
-                                        try {
-                                            const { data } = await api.post("/news/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
-                                            setForm((p) => ({ ...p, cover_image: data.url }));
-                                            toast.success("Cover photo uploaded");
-                                        } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
-                                    }} />
-                                </label>
-                            </div>
+                            <Label>Cover photo</Label>
+                            <label className="mt-1.5 rounded-xl border-2 border-dashed border-slate-300 px-4 py-3 text-sm font-semibold cursor-pointer hover:bg-white hover:border-primary transition-colors flex items-center gap-2 justify-center" data-testid="news-image-upload-btn">
+                                <Upload className="h-4 w-4" />{form.cover_image ? "Replace cover photo" : "Upload cover photo"}
+                                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                                    const f = e.target.files?.[0]; if (!f) return;
+                                    const fd = new FormData(); fd.append("file", f);
+                                    try {
+                                        const { data } = await api.post("/news/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                                        setForm((p) => ({ ...p, cover_image: data.url }));
+                                        toast.success("Cover photo uploaded");
+                                    } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
+                                }} />
+                            </label>
                             {form.cover_image && (
-                                <img src={mediaUrl(form.cover_image)} alt="Preview" className="mt-2 w-full max-h-32 object-cover rounded-xl border border-border" />
+                                <img src={mediaUrl(form.cover_image)} alt="Preview" className="mt-2 w-full max-h-32 object-contain rounded-xl border border-border bg-slate-50" />
                             )}
                         </div>
                         <div><Label>Tags (comma separated)</Label><Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="rounded-xl mt-1.5" /></div>
@@ -1695,27 +1716,22 @@ function CauseDialog({ cause, onSaved, trigger }) {
                         </div>
                     </div>
                     <div>
-                        <Label>Cover image</Label>
-                        <div className="flex items-center gap-2 mt-1.5">
-                            <Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl flex-1" placeholder="https://… or upload" data-testid="cause-image-url" />
-                            <label className="cursor-pointer">
-                                <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
-                                    <span data-testid="cause-image-upload-btn"><Upload className="h-3.5 w-3.5 mr-1" />Upload</span>
-                                </Button>
-                                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
-                                    const f = e.target.files?.[0]; if (!f) return;
-                                    if (f.size > 10 * 1024 * 1024) { toast.error("Image must be under 10 MB"); return; }
-                                    const fd = new FormData(); fd.append("file", f);
-                                    try {
-                                        const { data } = await api.post("/causes/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
-                                        setForm((p) => ({ ...p, cover_image: data.url }));
-                                        toast.success("Cover photo uploaded");
-                                    } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
-                                }} />
-                            </label>
-                        </div>
+                        <Label>Cover photo</Label>
+                        <label className="mt-1.5 rounded-xl border-2 border-dashed border-slate-300 px-4 py-3 text-sm font-semibold cursor-pointer hover:bg-white hover:border-primary transition-colors flex items-center gap-2 justify-center" data-testid="cause-image-upload-btn">
+                            <Upload className="h-4 w-4" />{form.cover_image ? "Replace cover photo" : "Upload cover photo"}
+                            <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                                const f = e.target.files?.[0]; if (!f) return;
+                                if (f.size > 10 * 1024 * 1024) { toast.error("Image must be under 10 MB"); return; }
+                                const fd = new FormData(); fd.append("file", f);
+                                try {
+                                    const { data } = await api.post("/causes/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                                    setForm((p) => ({ ...p, cover_image: data.url }));
+                                    toast.success("Cover photo uploaded");
+                                } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
+                            }} />
+                        </label>
                         {form.cover_image && (
-                            <img src={mediaUrl(form.cover_image)} alt="Cause preview" className="mt-2 w-full max-h-32 object-cover rounded-xl border border-border" />
+                            <img src={mediaUrl(form.cover_image)} alt="Cause preview" className="mt-2 w-full max-h-32 object-contain rounded-xl border border-border bg-slate-50" />
                         )}
                     </div>
                     <label className="flex items-center gap-2 text-sm">

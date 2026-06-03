@@ -8,12 +8,6 @@ import { format, parseISO } from "date-fns";
 import Countdown from "../components/Countdown";
 import { BlocksRenderer } from "../components/cms/BlockRenderer";
 
-const FOUNDERS = [
-    { name: "Christian", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/2i9inws2_Christian.jpg" },
-    { name: "Cory", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/ug9oq343_Cory.jpg" },
-    { name: "Ken", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/ao1sl6gp_Ken.jpg" },
-    { name: "Lekita", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/p1mxh7ni_Lekita.jpg" },
-];
 const AOP_LOGO = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png";
 
 const NAVY = "#0A2463";
@@ -42,6 +36,7 @@ export default function Home() {
     const showSection = (key) => sec[key] !== false; // default-true
     const topBlocks = settings?.home_blocks_top || [];
     const bottomBlocks = settings?.home_blocks_bottom || [];
+    const founders = settings?.founders_items || [];
 
     return (
         <div className="bg-white text-[#0A2463]" data-testid="home-aop">
@@ -55,15 +50,15 @@ export default function Home() {
                 </div>
 
                 <div className="relative w-full bg-slate-50">
-                    {/* Founders row — 4 side-by-side on tablet+, 2x2 grid on mobile */}
-                    {showSection("founders") && (
+                    {/* Founders row — responsive grid: 2 cols on mobile, scales up with item count */}
+                    {showSection("founders") && founders.length > 0 && (
                     <div className="w-full" style={{ backgroundColor: NAVY }} data-testid="hero-founders">
-                        <div className="grid grid-cols-2 sm:grid-cols-4 max-w-7xl mx-auto">
-                            {FOUNDERS.map((f) => (
+                        <div className={`grid grid-cols-2 ${founders.length === 1 ? "" : founders.length === 2 ? "sm:grid-cols-2" : founders.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-4"} max-w-7xl mx-auto`}>
+                            {founders.map((f) => (
                                 <div key={f.name} className="relative aspect-square bg-slate-900 overflow-hidden border border-white/10 group" data-testid={`founder-${f.name}`}>
                                     <img
-                                        src={f.url}
-                                        alt={`Founder ${f.name}`}
+                                        src={f.image_url}
+                                        alt={f.name ? `${f.role || "Founder"} ${f.name}` : "Founder"}
                                         loading="lazy"
                                         className="absolute inset-0 w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
                                         onError={(e) => { e.currentTarget.style.display = "none"; }}

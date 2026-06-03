@@ -373,23 +373,34 @@ async def register(body: RegisterIn, response: Response):
 
 @api.post("/auth/login")
 async def login(body: LoginIn, request: Request, response: Response):
-    email = body.email.lower()
+    # Accept either an email address OR a username. We normalize the identifier
+    # to lowercase and look up by either field.
+    identifier_raw = (body.email or "").strip()
+    is_email_form = "@" in identifier_raw
+    email = identifier_raw.lower() if is_email_form else ""
+    username_lc = identifier_raw.lower() if not is_email_form else ""
+
     xff = request.headers.get("x-forwarded-for", "")
     ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")
-    identifier = f"{ip}:{email}"
+    identifier = f"{ip}:{identifier_raw.lower()}"
     attempt = await db.login_attempts.find_one({"identifier": identifier})
     if attempt and attempt.get("count", 0) >= 5:
         locked_until = attempt.get("locked_until")
         if locked_until and datetime.fromisoformat(locked_until) > now_utc():
             raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
-    user = await db.users.find_one({"email": email})
+    user = None
+    if is_email_form:
+        user = await db.users.find_one({"email": email})
+    else:
+        # Username lookup is case-insensitive
+        user = await db.users.find_one({"username": {"$regex": f"^{re.escape(username_lc)}$", "$options": "i"}})
     if not user or not verify_password(body.password, user["password_hash"]):
         await db.login_attempts.update_one(
             {"identifier": identifier},
             {"$inc": {"count": 1}, "$set": {"locked_until": iso(now_utc() + timedelta(minutes=15))}},
             upsert=True,
         )
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid email/username or password")
     await db.login_attempts.delete_one({"identifier": identifier})
     tv = int(user.get("token_version", 0) or 0)
     at = create_access_token(user["id"], user["email"], user.get("role", "member"), tv)
@@ -3563,6 +3574,16 @@ async def news_image_upload(file: UploadFile = File(...), user: dict = Depends(a
 @api.post("/leadership/upload-image")
 async def leadership_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("pages"))):
     return await _upload_image(file, "leadership", user)
+
+
+@api.post("/founders/upload-image")
+async def founders_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("pages"))):
+    return await _upload_image(file, "founders", user)
+
+
+@api.post("/events/upload-cover")
+async def events_cover_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("events"))):
+    return await _upload_image(file, "events", user)
 
 
 @api.post("/chat/group-photo-upload")

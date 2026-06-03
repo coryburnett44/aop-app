@@ -81,14 +81,17 @@ export default function EventDetail() {
             <Link to="/events" className="text-sm text-muted-foreground hover:text-primary inline-flex items-center gap-1" data-testid="back-to-events">
                 <ArrowLeft className="h-4 w-4" /> Back to events
             </Link>
-            <div className="mt-4 relative rounded-3xl overflow-hidden aspect-[21/9] bg-muted">
-                {event.cover_image && <img src={event.cover_image} alt={event.title} className="w-full h-full object-cover" />}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
-                <div className="absolute bottom-0 p-8 text-white">
+            <div className="mt-4 relative rounded-3xl overflow-hidden bg-slate-900">
+                {event.cover_image ? (
+                    <img src={event.cover_image} alt={event.title} className="block w-full h-auto max-h-[600px] object-contain mx-auto" />
+                ) : (
+                    <div className="aspect-[21/9] bg-muted" />
+                )}
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-6 sm:p-8 text-white">
                     <div className="text-xs uppercase tracking-wider bg-secondary/90 text-[hsl(34_8%_16%)] font-semibold inline-block rounded-full px-3 py-1 mb-3">
                         {event.category}
                     </div>
-                    <h1 className="font-heading text-3xl sm:text-5xl font-bold tracking-tight drop-shadow">{event.title}</h1>
+                    <h1 className="font-heading text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight drop-shadow">{event.title}</h1>
                 </div>
             </div>
 

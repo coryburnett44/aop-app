@@ -552,7 +552,7 @@ function MessageComposer({ conversation, onSent, replyTo, clearReply }) {
                         <AlarmClock className="h-5 w-5" />
                     </Button>
                     {showTtl && (
-                        <div className="absolute bottom-12 right-0 w-56 bg-white border border-slate-200 rounded-2xl shadow-warm-lg p-2 z-40" data-testid="ttl-picker">
+                        <div className="fixed sm:absolute bottom-20 sm:bottom-12 left-1/2 -translate-x-1/2 sm:left-auto sm:right-0 sm:translate-x-0 w-[min(240px,calc(100vw-1.5rem))] bg-white border border-slate-200 rounded-2xl shadow-warm-lg p-2 z-[60]" data-testid="ttl-picker">
                             <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-2 pt-1 pb-1.5">Disappear after seen</div>
                             <div className="text-xs text-slate-400 px-2 pb-2 leading-snug">Conversation default: <span className="font-bold text-slate-600">{ttlLabel(conversation.ttl || "off")}</span></div>
                             {TTL_OPTIONS.map((o) => (

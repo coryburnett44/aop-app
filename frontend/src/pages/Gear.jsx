@@ -429,18 +429,13 @@ function GearEditor({ item, onSaved, onClose }) {
                 {/* Cover image */}
                 <div>
                     <Label>Cover photo <span className="text-xs text-muted-foreground font-normal">(shown on the grid)</span></Label>
-                    <div className="flex items-center gap-2 mt-1.5">
-                        <Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl flex-1" placeholder="https://… or upload" data-testid="gear-editor-cover-url" />
-                        <label className="cursor-pointer">
-                            <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
-                                <span><UploadIcon className="h-3.5 w-3.5 mr-1" />Upload</span>
-                            </Button>
-                            <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadGearImage(e.target.files?.[0], (url) => setForm({ ...form, cover_image: url }))} />
-                        </label>
-                    </div>
+                    <label className="mt-1.5 rounded-xl border-2 border-dashed border-slate-300 px-4 py-3 text-sm font-semibold cursor-pointer hover:bg-white hover:border-primary transition-colors flex items-center gap-2 justify-center" data-testid="gear-cover-upload">
+                        <UploadIcon className="h-4 w-4" />{form.cover_image ? "Replace cover photo" : "Upload cover photo"}
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadGearImage(e.target.files?.[0], (url) => setForm({ ...form, cover_image: url }))} />
+                    </label>
                     {form.cover_image && (
-                        <div className="mt-2 rounded-xl overflow-hidden border border-border max-w-xs">
-                            <img src={mediaUrl(form.cover_image)} alt="Cover preview" className="w-full h-40 object-cover" />
+                        <div className="mt-2 rounded-xl overflow-hidden border border-border max-w-xs bg-slate-50">
+                            <img src={mediaUrl(form.cover_image)} alt="Cover preview" className="w-full max-h-40 object-contain" />
                         </div>
                     )}
                 </div>

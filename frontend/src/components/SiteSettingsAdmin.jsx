@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { useSiteSettings } from "../context/SiteSettingsContext";
 import PageBuilder from "./cms/PageBuilder";
 import LeadershipTeamAdmin from "./LeadershipTeamAdmin";
+import FoundersAdmin from "./FoundersAdmin";
 
 const HOME_SECTION_KEYS = [
     { key: "founders", label: "Founders photo strip" },
@@ -68,6 +69,9 @@ export default function SiteSettingsAdmin() {
                 leadership_team_eyebrow: form.leadership_team_eyebrow,
                 leadership_team_title: form.leadership_team_title,
                 leadership_team_items: form.leadership_team_items || [],
+                founders_section_eyebrow: form.founders_section_eyebrow,
+                founders_section_title: form.founders_section_title,
+                founders_items: form.founders_items || [],
             };
             await api.put("/site-settings", payload);
             toast.success("Site copy saved");
@@ -144,6 +148,9 @@ export default function SiteSettingsAdmin() {
                     })}
                 </div>
             </div>
+
+            {/* Founders editor */}
+            <FoundersAdmin form={form} set={set} />
 
             {/* Leadership Team editor */}
             <LeadershipTeamAdmin form={form} set={set} />

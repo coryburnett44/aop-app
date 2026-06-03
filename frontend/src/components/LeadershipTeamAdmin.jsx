@@ -118,17 +118,10 @@ export default function LeadershipTeamAdmin({ form, set }) {
 
                         <div className="grid sm:grid-cols-[1fr_180px] gap-3">
                             <div>
-                                <Label className="text-xs">Banner image URL</Label>
+                                <Label className="text-xs">Banner image</Label>
                                 <div className="flex gap-2 mt-1">
-                                    <Input
-                                        value={it.image_url || ""}
-                                        onChange={(e) => setItem(idx, "image_url", e.target.value)}
-                                        placeholder="https://… or /api/files/…"
-                                        className="rounded-xl flex-1"
-                                        data-testid={`leadership-image-url-${idx}`}
-                                    />
-                                    <label className="rounded-xl border px-3 py-2 text-xs font-semibold cursor-pointer hover:bg-white transition-colors flex items-center gap-1.5" data-testid={`leadership-upload-${idx}`}>
-                                        {uploadingIdx === idx ? "Uploading…" : (<><Upload className="h-3 w-3" />Upload</>)}
+                                    <label className="rounded-xl border-2 border-dashed border-slate-300 px-3 py-2 text-xs font-semibold cursor-pointer hover:bg-white hover:border-primary transition-colors flex items-center gap-1.5 flex-1 justify-center" data-testid={`leadership-upload-${idx}`}>
+                                        {uploadingIdx === idx ? "Uploading…" : (<><Upload className="h-3 w-3" />{it.image_url ? "Replace photo" : "Upload photo"}</>)}
                                         <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadImage(idx, e.target.files?.[0])} />
                                     </label>
                                 </div>

@@ -1,12 +1,26 @@
 """Site settings (hero copy, footer, home-page composition) routes."""
+import re
 from typing import Optional, List, Dict
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from models import PageBlockIn, PAGE_BLOCK_TYPES
 
 
 SETTINGS_DOC_ID = "site_settings_v1"
+
+# Accept https URLs OR relative /path paths from our own uploads OR data URIs.
+# Empty string is allowed for in-progress saves before an upload completes.
+_URL_RE = re.compile(r"^(https?://[^\s]+|/[^\s]*|data:[^\s]+)?$")
+
+
+def _validate_url_field(v):
+    if v is None:
+        return v
+    v = (v or "").strip()
+    if v and not _URL_RE.match(v):
+        raise ValueError("Must be a full URL (https://…) or a /path/to/file")
+    return v
 
 
 def make_default_settings(iso, now_utc):
@@ -50,6 +64,14 @@ def make_default_settings(iso, now_utc):
                 "alt": "2026-2028 Leadership Team — Sheron Andrews & Tana Blue",
             },
         ],
+        "founders_section_eyebrow": "Founders",
+        "founders_section_title": "Meet our Founders",
+        "founders_items": [
+            {"name": "Christian", "image_url": "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/2i9inws2_Christian.jpg", "role": "Founder"},
+            {"name": "Cory", "image_url": "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/ug9oq343_Cory.jpg", "role": "Founder"},
+            {"name": "Ken", "image_url": "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/ao1sl6gp_Ken.jpg", "role": "Founder"},
+            {"name": "Lekita", "image_url": "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/p1mxh7ni_Lekita.jpg", "role": "Founder"},
+        ],
         "updated_at": iso(now_utc()),
     }
 
@@ -58,6 +80,22 @@ class LeadershipItemIn(BaseModel):
     term: str = Field(min_length=1, max_length=80)
     image_url: str = Field("", max_length=600)
     alt: str = Field("", max_length=300)
+
+    @field_validator("image_url")
+    @classmethod
+    def _check_image_url(cls, v: str) -> str:
+        return _validate_url_field(v)
+
+
+class FounderItemIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    image_url: str = Field("", max_length=600)
+    role: str = Field("", max_length=120)  # e.g. "Founder", "Past President"
+
+    @field_validator("image_url")
+    @classmethod
+    def _check_image_url(cls, v: str) -> str:
+        return _validate_url_field(v)
 
 
 class SiteSettingsIn(BaseModel):
@@ -76,6 +114,9 @@ class SiteSettingsIn(BaseModel):
     leadership_team_title: Optional[str] = Field(None, max_length=200)
     leadership_team_eyebrow: Optional[str] = Field(None, max_length=120)
     leadership_team_items: Optional[List[LeadershipItemIn]] = Field(None, max_length=10)
+    founders_section_title: Optional[str] = Field(None, max_length=200)
+    founders_section_eyebrow: Optional[str] = Field(None, max_length=120)
+    founders_items: Optional[List[FounderItemIn]] = Field(None, max_length=12)
 
 
 def register(api, *, db, admin_tab_dep, iso, now_utc):

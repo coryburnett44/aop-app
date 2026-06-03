@@ -41,18 +41,19 @@ export default function Login() {
                 <p className="text-muted-foreground mt-2">Log in to manage your membership.</p>
                 <form onSubmit={onSubmit} className="mt-8 space-y-4" data-testid="login-form">
                     <div>
-                        <Label htmlFor="email">Email</Label>
+                        <Label htmlFor="email">Email or username</Label>
                         <Input
                             id="email"
-                            type="email"
-                            autoComplete="email"
+                            type="text"
+                            autoComplete="username"
                             autoCapitalize="none"
                             autoCorrect="off"
                             spellCheck="false"
-                            inputMode="email"
+                            inputMode="text"
                             required
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
+                            placeholder="you@example.com or your username"
                             className="rounded-xl mt-1.5"
                             data-testid="login-email-input"
                         />
