@@ -1621,6 +1621,12 @@ async def get_site_settings():
 async def update_site_settings(body: SiteSettingsIn, _: dict = Depends(admin_tab_dep("pages"))):
     await _ensure_site_settings()
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    # Validate any home_blocks payloads against the block-type allowlist
+    for blk_key in ("home_blocks_top", "home_blocks_bottom"):
+        if blk_key in updates:
+            for b in updates[blk_key]:
+                if b.get("type") not in PAGE_BLOCK_TYPES:
+                    raise HTTPException(status_code=400, detail=f"Invalid block type in {blk_key}: {b.get('type')}")
     updates["updated_at"] = iso(now_utc())
     await db.site_settings.update_one({"id": SETTINGS_DOC_ID}, {"$set": updates})
     s = await db.site_settings.find_one({"id": SETTINGS_DOC_ID}, {"_id": 0})

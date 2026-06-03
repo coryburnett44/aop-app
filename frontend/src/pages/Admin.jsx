@@ -6,7 +6,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -387,7 +387,10 @@ function PageDialog({ page, onSaved, trigger }) {
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>{trigger}</DialogTrigger>
             <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
-                <DialogHeader><DialogTitle className="font-heading text-2xl">{page ? "Edit page" : "New page"}</DialogTitle></DialogHeader>
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl">{page ? "Edit page" : "New page"}</DialogTitle>
+                    <DialogDescription className="sr-only">Create or edit a custom page. Use the visual editor to add drag-and-drop blocks, or switch to the legacy text mode.</DialogDescription>
+                </DialogHeader>
                 <div className="space-y-4 mt-2">
                     <div className="grid sm:grid-cols-2 gap-3">
                         <div><Label>Slug</Label><Input disabled={!!page} value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/\s+/g, "-") })} className="rounded-xl mt-1.5" data-testid="page-slug-input" /></div>
@@ -398,7 +401,7 @@ function PageDialog({ page, onSaved, trigger }) {
                         <Button size="sm" variant={mode === "body" ? "default" : "outline"} onClick={() => setMode("body")} className="rounded-full" data-testid="page-mode-body">Legacy text</Button>
                     </div>
                     {mode === "blocks" ? (
-                        <PageBuilder blocks={form.blocks} onChange={(blocks) => setForm({ ...form, blocks })} testIdPrefix="page-builder" />
+                        <PageBuilder blocks={form.blocks} onChange={(blocks) => setForm({ ...form, blocks })} testIdPrefix="page-dialog-builder" />
                     ) : (
                         <div><Label>Body</Label><Textarea rows={10} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     )}

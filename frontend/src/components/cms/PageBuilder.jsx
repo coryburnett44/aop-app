@@ -265,7 +265,7 @@ export default function PageBuilder({ blocks, onChange, testIdPrefix = "page-bui
                         type="button"
                         onClick={() => addBlock(type)}
                         className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:border-[#0A2463] hover:shadow-sm transition-all text-left text-sm"
-                        data-testid={`add-block-${type}`}
+                        data-testid={`${testIdPrefix}-add-block-${type}`}
                     >
                         <Icon className="h-4 w-4 text-[#0A2463]" />
                         <span className="font-medium">{label}</span>
