@@ -1439,54 +1439,9 @@ async def checkin_scan(token: str, user: dict = Depends(get_current_user)):
     return {"already_checked_in": False, "checkin": doc, "event": event_out(event)}
 
 
-# ---------- News ----------
-def news_out(n: dict) -> dict:
-    return {
-        "id": n["id"],
-        "title": n["title"],
-        "summary": n.get("summary", ""),
-        "body": n.get("body", ""),
-        "cover_image": n.get("cover_image", ""),
-        "tags": n.get("tags", []),
-        "author_name": n.get("author_name", ""),
-        "created_at": n.get("created_at"),
-    }
+# ---------- News — extracted to routes/news.py ----------
+# (registered at end of file)
 
-@api.get("/news")
-async def list_news():
-    cursor = db.news.find({}, {"_id": 0}).sort("created_at", -1).limit(100)
-    items = await cursor.to_list(100)
-    return [news_out(n) for n in items]
-
-@api.get("/news/{news_id}")
-async def get_news(news_id: str):
-    n = await db.news.find_one({"id": news_id}, {"_id": 0})
-    if not n:
-        raise HTTPException(status_code=404, detail="News not found")
-    return news_out(n)
-
-@api.post("/news")
-async def create_news(body: NewsIn, admin: dict = Depends(admin_tab_dep("news"))):
-    nid = str(uuid.uuid4())
-    doc = body.model_dump()
-    doc.update({"id": nid, "author_name": admin.get("name", "Admin"), "created_at": iso(now_utc())})
-    await db.news.insert_one(doc)
-    return news_out(doc)
-
-@api.put("/news/{news_id}")
-async def update_news(news_id: str, body: NewsUpdateIn, _: dict = Depends(admin_tab_dep("news"))):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if updates:
-        await db.news.update_one({"id": news_id}, {"$set": updates})
-    n = await db.news.find_one({"id": news_id}, {"_id": 0})
-    if not n:
-        raise HTTPException(status_code=404, detail="News not found")
-    return news_out(n)
-
-@api.delete("/news/{news_id}")
-async def delete_news(news_id: str, _: dict = Depends(admin_tab_dep("news"))):
-    await db.news.delete_one({"id": news_id})
-    return {"ok": True}
 
 # ---------- CMS Pages — extracted to routes/pages.py ----------
 # (registered at end of file)
@@ -1510,109 +1465,13 @@ async def _ensure_site_settings():
 
 
 # ---------- Chapters ----------
-def chapter_out(c: dict) -> dict:
-    return {
-        "id": c["id"],
-        "name": c["name"],
-        "school": c.get("school", ""),
-        "city": c.get("city", ""),
-        "state": c.get("state", ""),
-        "region": c.get("region", ""),
-        "founded_year": c.get("founded_year"),
-        "description": c.get("description", ""),
-        "logo_url": c.get("logo_url", ""),
-        "member_count": c.get("member_count", 0),
-    }
+# ---------- Chapters — extracted to routes/chapters.py ----------
+# (registered at end of file). `chapter_out` is re-exported from server for any
+# remaining in-file callers that still build chapter payloads inline.
+from routes.chapters import chapter_out  # noqa: E402
 
-async def with_chapter_counts(chapters):
-    out = []
-    for c in chapters:
-        c["member_count"] = await db.users.count_documents({"chapter_id": c["id"]})
-        out.append(chapter_out(c))
-    return out
-
-@api.get("/chapters")
-async def list_chapters():
-    items = await db.chapters.find({}, {"_id": 0}).sort("name", 1).to_list(200)
-    return await with_chapter_counts(items)
-
-@api.post("/chapters")
-async def create_chapter(body: ChapterIn, _: dict = Depends(admin_tab_dep("chapters"))):
-    name = (body.name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Chapter name is required.")
-    existing = await db.chapters.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
-    if existing:
-        raise HTTPException(status_code=400, detail=f"A chapter named '{existing['name']}' already exists.")
-    doc = body.model_dump()
-    doc["name"] = name
-    doc["id"] = str(uuid.uuid4())
-    doc["created_at"] = iso(now_utc())
-    await db.chapters.insert_one(doc)
-    doc["member_count"] = 0
-    return chapter_out(doc)
-
-@api.put("/chapters/{chapter_id}")
-async def update_chapter(chapter_id: str, body: ChapterUpdateIn, _: dict = Depends(admin_tab_dep("chapters"))):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if updates:
-        await db.chapters.update_one({"id": chapter_id}, {"$set": updates})
-    c = await db.chapters.find_one({"id": chapter_id}, {"_id": 0})
-    if not c:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    c["member_count"] = await db.users.count_documents({"chapter_id": chapter_id})
-    return chapter_out(c)
-
-@api.delete("/chapters/{chapter_id}")
-async def delete_chapter(chapter_id: str, _: dict = Depends(admin_tab_dep("chapters"))):
-    await db.chapters.delete_one({"id": chapter_id})
-    await db.users.update_many({"chapter_id": chapter_id}, {"$unset": {"chapter_id": ""}})
-    return {"ok": True}
-
-# ---------- Membership Tiers ----------
-def tier_out(t: dict) -> dict:
-    return {
-        "id": t["id"],
-        "name": t["name"],
-        "order": t.get("order", 0),
-        "color": t.get("color", "#E86A58"),
-        "annual_dues": t.get("annual_dues", 60.0),
-        "is_lifetime": bool(t.get("is_lifetime")),
-        "description": t.get("description", ""),
-        "member_count": t.get("member_count", 0),
-    }
-
-@api.get("/tiers")
-async def list_tiers():
-    items = await db.tiers.find({}, {"_id": 0}).sort("order", 1).to_list(50)
-    for t in items:
-        t["member_count"] = await db.users.count_documents({"tier_id": t["id"]})
-    return [tier_out(t) for t in items]
-
-@api.post("/tiers")
-async def create_tier(body: TierIn, _: dict = Depends(admin_tab_dep("tiers"))):
-    doc = body.model_dump()
-    doc["id"] = str(uuid.uuid4())
-    await db.tiers.insert_one(doc)
-    doc["member_count"] = 0
-    return tier_out(doc)
-
-@api.put("/tiers/{tier_id}")
-async def update_tier(tier_id: str, body: TierUpdateIn, _: dict = Depends(admin_tab_dep("tiers"))):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if updates:
-        await db.tiers.update_one({"id": tier_id}, {"$set": updates})
-    t = await db.tiers.find_one({"id": tier_id}, {"_id": 0})
-    if not t:
-        raise HTTPException(status_code=404, detail="Tier not found")
-    t["member_count"] = await db.users.count_documents({"tier_id": tier_id})
-    return tier_out(t)
-
-@api.delete("/tiers/{tier_id}")
-async def delete_tier(tier_id: str, _: dict = Depends(admin_tab_dep("tiers"))):
-    await db.tiers.delete_one({"id": tier_id})
-    await db.users.update_many({"tier_id": tier_id}, {"$unset": {"tier_id": ""}})
-    return {"ok": True}
+# ---------- Membership Tiers — extracted to routes/tiers.py ----------
+from routes.tiers import tier_out  # noqa: E402
 
 # ---------- Member admin operations ----------
 @api.post("/admin/members")
@@ -3699,6 +3558,11 @@ async def cause_image_upload(file: UploadFile = File(...), user: dict = Depends(
 @api.post("/news/upload-image")
 async def news_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("news"))):
     return await _upload_image(file, "news", user)
+
+
+@api.post("/leadership/upload-image")
+async def leadership_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("pages"))):
+    return await _upload_image(file, "leadership", user)
 
 
 @api.post("/chat/group-photo-upload")
@@ -6600,10 +6464,16 @@ async def seed_builtin_automated_emails():
 from routes import pages as routes_pages  # noqa: E402
 from routes import site_settings as routes_site_settings  # noqa: E402
 from routes import ai as routes_ai  # noqa: E402
+from routes import news as routes_news  # noqa: E402
+from routes import chapters as routes_chapters  # noqa: E402
+from routes import tiers as routes_tiers  # noqa: E402
 
 routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_ai.register(api, require_admin=require_admin)
+routes_news.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
+routes_chapters.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
+routes_tiers.register(api, db=db, admin_tab_dep=admin_tab_dep)
 
 # Patch the back-compat _ensure_site_settings shim to delegate to the route module
 _ensure_site_settings = routes_site_settings.register.ensure

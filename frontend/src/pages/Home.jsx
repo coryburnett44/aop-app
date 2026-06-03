@@ -14,10 +14,6 @@ const FOUNDERS = [
     { name: "Ken", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/ao1sl6gp_Ken.jpg" },
     { name: "Lekita", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/p1mxh7ni_Lekita.jpg" },
 ];
-const LEADERSHIP = [
-    { term: "2024-2026", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/4092ts0o_Kendra_Brandy_Banner_2074356465.jpg", alt: "2024-2026 Leadership Team — Kendra Garrett & Brandy Brodie" },
-    { term: "2026-2028", url: "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/oqcv3tss_Sheron_Tana_Banner_743849018.jpg", alt: "2026-2028 Leadership Team — Sheron Andrews & Tana Blue" },
-];
 const AOP_LOGO = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png";
 
 const NAVY = "#0A2463";
@@ -183,26 +179,26 @@ export default function Home() {
             {/* Secondary banner photo removed per user request */}
 
             {/* Leadership Team — two banner images side-by-side, responsive */}
-            {showSection("leadership_team") && (
+            {showSection("leadership_team") && (settings?.leadership_team_items?.length > 0) && (
                 <section className="bg-white py-14" data-testid="home-leadership">
                     <div className="max-w-7xl mx-auto px-6 lg:px-10">
                         <div className="text-center mb-8">
-                            <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>National board</div>
+                            <div className="text-xs uppercase tracking-[0.25em] font-bold mb-2" style={{ color: RED }}>{settings.leadership_team_eyebrow || "National board"}</div>
                             <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight" style={{ color: NAVY }}>
-                                Leadership Team
+                                {settings.leadership_team_title || "Leadership Team"}
                             </h2>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8">
-                            {LEADERSHIP.map((l) => (
+                        <div className={`grid grid-cols-1 ${settings.leadership_team_items.length >= 2 ? "md:grid-cols-2" : ""} ${settings.leadership_team_items.length >= 3 ? "lg:grid-cols-3" : ""} gap-6 lg:gap-8`}>
+                            {settings.leadership_team_items.map((l, idx) => (
                                 <div
-                                    key={l.term}
+                                    key={`${l.term}-${idx}`}
                                     className="bg-white rounded-3xl overflow-hidden border-4 shadow-warm-lg"
                                     style={{ borderColor: NAVY }}
                                     data-testid={`leadership-${l.term}`}
                                 >
                                     <img
-                                        src={l.url}
-                                        alt={l.alt}
+                                        src={l.image_url}
+                                        alt={l.alt || l.term}
                                         loading="lazy"
                                         className="block w-full h-auto object-contain"
                                         onError={(e) => { e.currentTarget.style.display = "none"; }}

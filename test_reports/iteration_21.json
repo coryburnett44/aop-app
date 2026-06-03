@@ -1,0 +1,35 @@
+{
+  "summary": "Phase V — Verified iteration 21: (a) Leadership Team CMS in Admin → Pages (add/edit/reorder/remove + save persistence + image upload admin-gating), (b) news/chapters/tiers route extractions intact (CRUD + admin-gating + duplicate-name handling), (c) critical regression smoke (/auth/login, /auth/me, /events, /members, /pages, /site-settings, /automated-emails). Backend pytest: 34/34 Phase V passing, plus 24/24 Phase T + 30/30 Phase U regression (88/88 total). Frontend Playwright E2E: 7/7 steps passed including end-to-end CMS flow (container + 2 seeded items + 'National board' eyebrow + 'Leadership Team' title; add 3rd term '2028-2030' → GET returns 3 items; edit term[0] persists; move-down-0 swaps order; remove + confirm dialog reduces to 2; /home renders home-leadership with both data-testids leadership-2024-2026 and leadership-2026-2028). Seed data restored to original 2 items via PUT /api/site-settings at end of UI test.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_phase_v.py",
+    "/app/test_reports/pytest/phase_v_results.xml"
+  ],
+  "action_items": [
+    "Continue server.py refactor — still 6497 lines after extracting news/chapters/tiers. Next candidates: /api/events (large), /api/members (large), /api/auth, /api/uploads (group all upload-image handlers under a single router).",
+    "Consider validating image_url in LeadershipItemIn (currently accepts any str; an invalid URL is silently saved and renders broken on Home). A simple HttpUrl or regex would catch typos.",
+    "/api/leadership/upload-image is gated by admin_tab_dep('pages') — confirm this matches admin_tab_dep used by LeadershipTeamAdmin save flow (it does: both 'pages'). Note: governor_manager and membership_manager sub-roles do NOT have 'pages' in their allowed tabs and therefore correctly get 403 on upload (not separately tested but matches the route-gating pattern)."
+  ],
+  "critical_code_review_comments": [
+    "routes/news.py, routes/chapters.py, routes/tiers.py all follow the same register(api, **deps) factory pattern — clean and consistent with the rest of the refactor (pages/site_settings/ai).",
+    "routes/site_settings.py LeadershipItemIn enforces term min_length=1 — good. image_url has only max_length=600, no URL validation. Empty image_url renders an <img src=''> on Home; consider adding a fallback or HttpUrl validation.",
+    "routes/site_settings.py make_default_settings() correctly seeds leadership_team_eyebrow/title/items; _ensure_site_settings() backfills missing fields onto existing docs without overwriting user changes (idempotent — verified across multiple GETs in the same test run).",
+    "frontend/LeadershipTeamAdmin.jsx uses window.confirm() inside removeItem — Playwright `page.on('dialog', accept)` handles it correctly. Code is small (~160 lines), no DRY issues.",
+    "frontend/Home.jsx now reads settings.leadership_team_items length and only renders the section if length>0 — clean conditional. Dynamic grid (md:grid-cols-2 / lg:grid-cols-3) is the correct UX for 2 vs 3+ items.",
+    "Image upload endpoint /api/leadership/upload-image is correctly gated (admin = 200, member = 403, anon = 401/403 — all verified). 1x1 PNG upload returns {url: ...} as expected.",
+    "Chapter duplicate-name detection uses case-insensitive regex match — works (verified by TestChaptersRoute.test_duplicate_name_returns_400).",
+    "MINOR: routes/news.py news_out() does not include 'updated_at' — only 'created_at'. NewsUpdateIn may set fields but caller can't see when the last update happened. Not blocking.",
+    "MINOR: routes/tiers.py register() signature omits iso/now_utc (correct — tier docs don't track timestamps), so the call site in server.py must pass only the right kwargs for each module. This is currently consistent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase_v.py (new — 34 tests covering smoke, leadership CMS, leadership upload, news/chapters/tiers CRUD + admin-gating)"
+  ],
+  "success_rate": {"backend": "100% (34/34 Phase V; 88/88 cumulative T+U+V)", "frontend": "100% (7/7 E2E steps)"},
+  "test_credentials": "admin@clubhaven.app / Admin123! and member@clubhaven.app / Member123! — used as-is from /app/memory/test_credentials.md.",
+  "seed_data_creation": "Created and cleaned up TEST_chap_<uuid>, TEST_tier_<uuid>, TEST_news_<uuid> via Phase V pytest. UI E2E added '2028-2030 / Future Leaders / example.com/test.jpg' to leadership_team_items then removed it; '(Updated)' suffix added to term[0] then restored. Final state of leadership_team_items restored to seed: [{2024-2026, Kendra/Brandy banner}, {2026-2028, Sheron/Tana banner}] via explicit PUT /api/site-settings at end of test. Home shows original 2 banners.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase V regression: /app/backend/tests/test_phase_v.py (34 tests, all passing). Covers smoke (auth/me/events/members/pages/site-settings/automated-emails), Leadership Team CMS persistence (add/edit/reorder/remove via PUT /api/site-settings leadership_team_items), /api/leadership/upload-image admin-gating (200/403/401), and the three extracted routes /api/news (list/get/create/update/delete + member-403), /api/chapters (list with member_count, duplicate-name 400, CRUD admin-gated), /api/tiers (list with name/order/member_count, CRUD admin-gated). Frontend E2E verified all leadership-team-admin data-testids: leadership-team-admin (container), leadership-eyebrow-input, leadership-title-input, leadership-add-btn, leadership-item-{idx}, leadership-term-input-{idx}, leadership-alt-input-{idx}, leadership-image-url-{idx}, leadership-move-down-{idx}, leadership-remove-{idx}, save-site-settings-btn. Confirm dialog handled with page.on('dialog', accept). Note: login redirects to '/' not '/admin'; navigate to /admin explicitly after login. NO new bugs found. Seed data is intact.",
+  "rca of the issue": "N/A — no failures. One initial pytest failure (TestSmoke.test_auth_login_admin asserting nested data.user.role) was a test-script bug since /api/auth/login returns role at top level — fixed and all 34 tests now pass."
+}

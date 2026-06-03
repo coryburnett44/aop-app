@@ -8,6 +8,7 @@ import { Plus, Trash2, Save, Home as HomeIcon, FileText, Layers, ToggleLeft } fr
 import { toast } from "sonner";
 import { useSiteSettings } from "../context/SiteSettingsContext";
 import PageBuilder from "./cms/PageBuilder";
+import LeadershipTeamAdmin from "./LeadershipTeamAdmin";
 
 const HOME_SECTION_KEYS = [
     { key: "founders", label: "Founders photo strip" },
@@ -64,6 +65,9 @@ export default function SiteSettingsAdmin() {
                 home_sections: form.home_sections,
                 home_blocks_top: form.home_blocks_top || [],
                 home_blocks_bottom: form.home_blocks_bottom || [],
+                leadership_team_eyebrow: form.leadership_team_eyebrow,
+                leadership_team_title: form.leadership_team_title,
+                leadership_team_items: form.leadership_team_items || [],
             };
             await api.put("/site-settings", payload);
             toast.success("Site copy saved");
@@ -140,6 +144,9 @@ export default function SiteSettingsAdmin() {
                     })}
                 </div>
             </div>
+
+            {/* Leadership Team editor */}
+            <LeadershipTeamAdmin form={form} set={set} />
 
             {/* Home blocks — top */}
             <div>

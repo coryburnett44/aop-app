@@ -36,8 +36,28 @@ def make_default_settings(iso, now_utc):
         },
         "home_blocks_top": [],
         "home_blocks_bottom": [],
+        "leadership_team_eyebrow": "National board",
+        "leadership_team_title": "Leadership Team",
+        "leadership_team_items": [
+            {
+                "term": "2024-2026",
+                "image_url": "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/4092ts0o_Kendra_Brandy_Banner_2074356465.jpg",
+                "alt": "2024-2026 Leadership Team — Kendra Garrett & Brandy Brodie",
+            },
+            {
+                "term": "2026-2028",
+                "image_url": "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/oqcv3tss_Sheron_Tana_Banner_743849018.jpg",
+                "alt": "2026-2028 Leadership Team — Sheron Andrews & Tana Blue",
+            },
+        ],
         "updated_at": iso(now_utc()),
     }
+
+
+class LeadershipItemIn(BaseModel):
+    term: str = Field(min_length=1, max_length=80)
+    image_url: str = Field("", max_length=600)
+    alt: str = Field("", max_length=300)
 
 
 class SiteSettingsIn(BaseModel):
@@ -53,6 +73,9 @@ class SiteSettingsIn(BaseModel):
     home_sections: Optional[Dict[str, bool]] = None
     home_blocks_top: Optional[List[PageBlockIn]] = Field(None, max_length=50)
     home_blocks_bottom: Optional[List[PageBlockIn]] = Field(None, max_length=50)
+    leadership_team_title: Optional[str] = Field(None, max_length=200)
+    leadership_team_eyebrow: Optional[str] = Field(None, max_length=120)
+    leadership_team_items: Optional[List[LeadershipItemIn]] = Field(None, max_length=10)
 
 
 def register(api, *, db, admin_tab_dep, iso, now_utc):
