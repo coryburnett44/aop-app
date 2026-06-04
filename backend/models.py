@@ -222,8 +222,12 @@ class EventIn(BaseModel):
     price: float = 0.0
     parent_event_id: Optional[str] = None
     allows_ticket_types: bool = False
+    enabled_ticket_types: List[str] = []
     cancelled: bool = False
     cancellation_note: str = ""
+    is_paid: bool = False
+    payment_url: str = ""
+    payment_amount: float = 0.0
 
 
 class EventUpdateIn(BaseModel):
@@ -238,11 +242,20 @@ class EventUpdateIn(BaseModel):
     price: Optional[float] = None
     parent_event_id: Optional[str] = None
     allows_ticket_types: Optional[bool] = None
+    enabled_ticket_types: Optional[List[str]] = None
     cancelled: Optional[bool] = None
     cancellation_note: Optional[str] = None
+    is_paid: Optional[bool] = None
+    payment_url: Optional[str] = None
+    payment_amount: Optional[float] = None
 
 
 TicketType = Literal["vip", "all_access", "general", "guest", "speaker", "volunteer"]
+
+# All defined ticket types, in display order. Admin selects which subset applies
+# per event; an empty enabled_ticket_types list means "this event has no ticket
+# types" (members RSVP without choosing one).
+ALL_TICKET_TYPES: List[str] = ["vip", "all_access", "general", "guest", "speaker", "volunteer"]
 
 
 class GuestIn(BaseModel):
@@ -253,6 +266,15 @@ class GuestIn(BaseModel):
 
 
 class EventRsvpIn(BaseModel):
+    guests: List[GuestIn] = []
+    ticket_type: Optional[TicketType] = "general"
+
+
+class EventPaymentConfirmIn(BaseModel):
+    """Member submits the Zeffy receipt # after paying for a paid event.
+    Mirrors ZeffyConfirmIn — auto-approves only when admin trusts the member
+    (trust_zeffy) AND the receipt matches a known Zeffy format."""
+    confirmation: str = Field(min_length=2, max_length=200)
     guests: List[GuestIn] = []
     ticket_type: Optional[TicketType] = "general"
 

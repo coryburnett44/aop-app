@@ -139,6 +139,11 @@ function EventDialog({ event, onSaved, trigger }) {
         price: event?.price || 0,
         cancelled: event?.cancelled || false,
         cancellation_note: event?.cancellation_note || "",
+        is_paid: event?.is_paid || false,
+        payment_url: event?.payment_url || "",
+        payment_amount: event?.payment_amount || 0,
+        allows_ticket_types: event?.allows_ticket_types || false,
+        enabled_ticket_types: event?.enabled_ticket_types || [],
     });
     const [aiBusy, setAiBusy] = useState(false);
     const [coverUploading, setCoverUploading] = useState(false);
@@ -223,6 +228,92 @@ function EventDialog({ event, onSaved, trigger }) {
                                 )}
                             </div>
                         </div>
+                    </div>
+                    {/* Ticket types selector — admin picks which subset applies for this event */}
+                    <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-4">
+                        <label className="flex items-center gap-3 cursor-pointer mb-2">
+                            <input
+                                type="checkbox"
+                                checked={!!form.allows_ticket_types}
+                                onChange={(e) => setForm({ ...form, allows_ticket_types: e.target.checked, enabled_ticket_types: e.target.checked && (form.enabled_ticket_types?.length === 0) ? ["general"] : form.enabled_ticket_types })}
+                                className="h-4 w-4 rounded border-2 border-slate-300 accent-primary"
+                                data-testid="event-allows-tickets-toggle"
+                            />
+                            <span className="font-semibold text-sm">Use ticket types for this event</span>
+                        </label>
+                        {form.allows_ticket_types && (
+                            <div className="mt-2">
+                                <p className="text-xs text-muted-foreground mb-2">Select which ticket types members can pick from:</p>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                    {["vip", "all_access", "general", "guest", "speaker", "volunteer"].map((t) => (
+                                        <label key={t} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 cursor-pointer hover:border-primary text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={(form.enabled_ticket_types || []).includes(t)}
+                                                onChange={(e) => {
+                                                    const cur = new Set(form.enabled_ticket_types || []);
+                                                    if (e.target.checked) cur.add(t); else cur.delete(t);
+                                                    setForm({ ...form, enabled_ticket_types: Array.from(cur) });
+                                                }}
+                                                className="h-3.5 w-3.5 accent-primary"
+                                                data-testid={`event-ticket-type-${t}`}
+                                            />
+                                            <span className="capitalize">{t.replace("_", " ")}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                                {(form.enabled_ticket_types || []).length === 0 && (
+                                    <p className="text-[11px] text-amber-700 mt-2">Pick at least one type — otherwise members can't RSVP.</p>
+                                )}
+                            </div>
+                        )}
+                        {!form.allows_ticket_types && (
+                            <p className="text-[11px] text-muted-foreground">Members will RSVP without choosing a ticket type. Best for casual gatherings.</p>
+                        )}
+                    </div>
+                    {/* Paid event toggle */}
+                    <div className={`rounded-2xl border-2 p-4 ${form.is_paid ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
+                        <label className="flex items-center gap-3 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={!!form.is_paid}
+                                onChange={(e) => setForm({ ...form, is_paid: e.target.checked })}
+                                className="h-4 w-4 rounded border-2 border-slate-300 accent-emerald-600"
+                                data-testid="event-paid-toggle"
+                            />
+                            <span className="font-semibold text-sm">
+                                {form.is_paid ? "💲 Paid event — members must pay via Zeffy before RSVP" : "Free event"}
+                            </span>
+                        </label>
+                        {form.is_paid && (
+                            <div className="mt-3 grid sm:grid-cols-[1fr_140px] gap-3">
+                                <div>
+                                    <Label className="text-xs">Zeffy payment URL</Label>
+                                    <Input
+                                        value={form.payment_url}
+                                        onChange={(e) => setForm({ ...form, payment_url: e.target.value })}
+                                        placeholder="https://www.zeffy.com/en-US/ticketing/your-event"
+                                        className="rounded-xl mt-1.5"
+                                        data-testid="event-payment-url"
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-xs">Amount (USD)</Label>
+                                    <Input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={form.payment_amount}
+                                        onChange={(e) => setForm({ ...form, payment_amount: Number(e.target.value) })}
+                                        className="rounded-xl mt-1.5"
+                                        data-testid="event-payment-amount"
+                                    />
+                                </div>
+                                <p className="sm:col-span-2 text-[11px] text-emerald-800 leading-snug">
+                                    Members pay through Zeffy and submit their receipt #. RSVP is confirmed once an admin approves the receipt (or auto-approved for trusted members). Same flow as annual dues.
+                                </p>
+                            </div>
+                        )}
                     </div>
                     {event && (
                         <div className={`rounded-2xl border-2 p-4 ${form.cancelled ? "border-red-300 bg-red-50" : "border-slate-200 bg-slate-50"}`}>

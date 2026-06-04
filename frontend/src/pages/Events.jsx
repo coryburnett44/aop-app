@@ -79,6 +79,14 @@ export default function Events() {
                                             ● Cancelled
                                         </span>
                                     )}
+                                    {e.is_paid && !e.cancelled && (
+                                        <span
+                                            className="text-[10px] uppercase tracking-wider font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5"
+                                            data-testid={`event-card-paid-${e.id}`}
+                                        >
+                                            💲 ${e.payment_amount}
+                                        </span>
+                                    )}
                                 </div>
                                 <h3 className={`font-heading font-semibold text-xl mt-2 leading-snug ${e.cancelled ? "line-through opacity-60" : ""}`}>{e.title}</h3>
                                 <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{e.description}</p>

@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { format, parseISO } from "date-fns";
 import { MapPin, Users, Calendar, ArrowLeft, UserCheck, Trash2, Plus, X, UserPlus } from "lucide-react";
 import { toast } from "sonner";
+import PaidEventCheckout from "../components/PaidEventCheckout";
 
 export default function EventDetail() {
     const { id } = useParams();
@@ -145,10 +146,14 @@ export default function EventDetail() {
                             )}
                         </div>
                     </div>
-                    {!hasRsvped && allowsTickets && !event.cancelled && (
-                        <MemberTicketPicker onRsvp={(tt) => rsvpWithGuests([], tt)} disabled={loading} />
+                    {/* Paid event — Zeffy checkout takes precedence over the free flow */}
+                    {event.is_paid && !hasRsvped && !event.cancelled && (
+                        <PaidEventCheckout event={event} onPaid={() => load()} />
                     )}
-                    {!hasRsvped && !allowsTickets && !event.cancelled && (
+                    {!event.is_paid && !hasRsvped && allowsTickets && !event.cancelled && (
+                        <MemberTicketPicker event={event} onRsvp={(tt) => rsvpWithGuests([], tt)} disabled={loading} />
+                    )}
+                    {!event.is_paid && !hasRsvped && !allowsTickets && !event.cancelled && (
                         <Button
                             onClick={toggleRsvp}
                             disabled={loading}
@@ -230,17 +235,23 @@ function SubEventsPanel({ subs }) {
     );
 }
 
-function MemberTicketPicker({ onRsvp, disabled }) {
-    const [tt, setTt] = useState("general");
+function MemberTicketPicker({ event, onRsvp, disabled }) {
+    // Use the admin-selected subset of ticket types if present; otherwise fall back
+    // to the legacy default trio (vip/all_access/general).
+    const enabled = (event?.enabled_ticket_types && event.enabled_ticket_types.length > 0)
+        ? event.enabled_ticket_types
+        : ["vip", "all_access", "general"];
+    const [tt, setTt] = useState(enabled[0]);
+    useEffect(() => { if (!enabled.includes(tt)) setTt(enabled[0]); /* eslint-disable-next-line */ }, [event?.id]);
     return (
         <div className="border-2 border-primary/20 rounded-2xl p-3 bg-primary/5 space-y-2" data-testid="member-ticket-picker">
             <Label className="text-xs">Your ticket type</Label>
             <Select value={tt} onValueChange={setTt}>
                 <SelectTrigger className="rounded-xl text-sm" data-testid="member-ticket-type-select"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                    <SelectItem value="vip">VIP</SelectItem>
-                    <SelectItem value="all_access">All Access</SelectItem>
-                    <SelectItem value="general">General Admission</SelectItem>
+                    {enabled.map((t) => (
+                        <SelectItem key={t} value={t} className="capitalize">{t.replace("_", " ")}</SelectItem>
+                    ))}
                 </SelectContent>
             </Select>
             <Button

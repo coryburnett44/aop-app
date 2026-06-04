@@ -324,6 +324,7 @@ from models import (  # noqa: E402
     ProfileUpdateIn, StatusOverrideIn, ChapterIn, ChapterUpdateIn, HoursLogIn,
     AwardGrantIn, ChangePasswordIn, AdminCreateMemberIn, AdminUpdateMemberIn,
     TransactionIn, EventIn, EventUpdateIn, TicketType, GuestIn, EventRsvpIn,
+    EventPaymentConfirmIn,
     NewsIn, NewsUpdateIn, PAGE_BLOCK_TYPES, PageBlockIn, PageIn, PageUpdateIn,
     AIEventReq, AIEmailReq, ForgotPasswordIn, ResetPasswordIn, VerifyEmailIn,
     RoleUpdateIn, TierIn, TierUpdateIn, AwardIn, AwardUpdateIn, HoursReviewIn,
@@ -935,9 +936,13 @@ def event_out(e: dict) -> dict:
         "guest_count": e.get("guest_count", 0),
         "parent_event_id": e.get("parent_event_id"),
         "allows_ticket_types": e.get("allows_ticket_types", False),
+        "enabled_ticket_types": e.get("enabled_ticket_types") or [],
         "cancelled": bool(e.get("cancelled")),
         "cancellation_note": e.get("cancellation_note", ""),
         "cancelled_at": e.get("cancelled_at"),
+        "is_paid": bool(e.get("is_paid")),
+        "payment_url": e.get("payment_url", ""),
+        "payment_amount": float(e.get("payment_amount") or 0.0),
         "created_at": e.get("created_at"),
     }
 
@@ -1005,6 +1010,51 @@ async def delete_event(event_id: str, _: dict = Depends(admin_tab_dep("events"))
     await db.rsvps.delete_many({"event_id": event_id})
     return {"ok": True}
 
+async def _create_rsvp_and_email_ticket(
+    user: dict,
+    event: dict,
+    ticket_type: str,
+    guests_raw: list,
+    payment_tx_id: Optional[str] = None,
+) -> dict:
+    """Shared logic: create RSVP doc, increment counters, send ticket email.
+    Used by the free-RSVP and the paid-event-after-approval paths.
+    Returns the inserted rsvp_doc."""
+    event_id = event["id"]
+    guests = []
+    for g in (guests_raw or []):
+        gd = g.model_dump() if hasattr(g, "model_dump") else dict(g)
+        gd["ticket_id"] = str(uuid.uuid4())
+        gd["ticket_type"] = (gd.get("ticket_type") or "general")
+        gd["checked_in_at"] = None
+        guests.append(gd)
+    seats_needed = 1 + len(guests)
+    if event.get("capacity", 0) > 0 and (event.get("rsvp_count", 0) + event.get("guest_count", 0) + seats_needed) > event["capacity"]:
+        raise HTTPException(status_code=400, detail="Event does not have enough seats")
+    member_ticket_id = str(uuid.uuid4())
+    rsvp_doc = {
+        "id": str(uuid.uuid4()),
+        "event_id": event_id,
+        "user_id": user["id"],
+        "user_name": user.get("name", ""),
+        "ticket_id": member_ticket_id,
+        "ticket_type": ticket_type or "general",
+        "guests": guests,
+        "payment_tx_id": payment_tx_id,  # link RSVP to its paying transaction
+        "created_at": iso(now_utc()),
+    }
+    await db.rsvps.insert_one(rsvp_doc)
+    await db.events.update_one(
+        {"id": event_id},
+        {"$inc": {"rsvp_count": 1, "guest_count": len(guests)}},
+    )
+    try:
+        asyncio.create_task(send_rsvp_ticket_email(user, event, rsvp_doc))
+    except Exception as ex:
+        logger.warning(f"Failed to schedule ticket email: {ex}")
+    return rsvp_doc
+
+
 @api.post("/events/{event_id}/rsvp")
 async def rsvp_event(event_id: str, body: Optional[EventRsvpIn] = None, user: dict = Depends(get_current_user)):
     e = await db.events.find_one({"id": event_id}, {"_id": 0})
@@ -1014,6 +1064,11 @@ async def rsvp_event(event_id: str, body: Optional[EventRsvpIn] = None, user: di
         raise HTTPException(
             status_code=400,
             detail="This event has been cancelled — RSVPs are closed.",
+        )
+    if e.get("is_paid"):
+        raise HTTPException(
+            status_code=402,
+            detail="This event requires payment. Pay via Zeffy and submit your receipt to /events/{id}/payment/confirm.",
         )
     # Parent events (which group sub-events) cannot be RSVP'd directly — members
     # RSVP individually to each sub-event listed underneath. This prevents the
@@ -1035,38 +1090,153 @@ async def rsvp_event(event_id: str, body: Optional[EventRsvpIn] = None, user: di
         return {"rsvped": False}
     member_ticket_type = (body.ticket_type if body else None) or "general"
     guests_raw = body.guests if body else []
-    guests = []
-    for g in guests_raw:
-        gd = g.model_dump()
-        gd["ticket_id"] = str(uuid.uuid4())
-        gd["ticket_type"] = (gd.get("ticket_type") or "general")
-        gd["checked_in_at"] = None
-        guests.append(gd)
-    seats_needed = 1 + len(guests)
-    if e.get("capacity", 0) > 0 and (e.get("rsvp_count", 0) + e.get("guest_count", 0) + seats_needed) > e["capacity"]:
-        raise HTTPException(status_code=400, detail="Event does not have enough seats")
-    member_ticket_id = str(uuid.uuid4())
-    rsvp_doc = {
-        "id": str(uuid.uuid4()),
+    rsvp_doc = await _create_rsvp_and_email_ticket(
+        user=user,
+        event=e,
+        ticket_type=member_ticket_type,
+        guests_raw=guests_raw,
+    )
+    return {"rsvped": True, "guests": len(rsvp_doc["guests"]), "ticket_id": rsvp_doc["ticket_id"]}
+
+
+# ---------- Paid-event flow (Zeffy receipt → admin-approval → RSVP) ----------
+@api.post("/events/{event_id}/payment/confirm")
+async def event_payment_confirm(
+    event_id: str,
+    body: EventPaymentConfirmIn,
+    user: dict = Depends(get_current_user),
+):
+    """Member submits the Zeffy receipt # after paying for a paid event.
+
+    Behaviour:
+    - Default: creates a PENDING transaction (purpose='event_ticket', event_id) for admin review.
+      The RSVP is NOT created and no ticket is emailed until admin approves.
+    - If the user has `trust_zeffy=true` AND the receipt matches a known Zeffy format,
+      auto-approve immediately: create the RSVP, fire the ticket email, mark tx completed.
+
+    Mirrors the Zeffy dues flow exactly so admins use one mental model for both.
+    """
+    e = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if e.get("cancelled"):
+        raise HTTPException(status_code=400, detail="This event has been cancelled — payments are closed.")
+    if not e.get("is_paid"):
+        raise HTTPException(status_code=400, detail="This event is free — RSVP directly without payment.")
+    # Block double-payments: if there's already a pending or completed event_ticket
+    # tx for this user+event, surface it instead of creating a duplicate.
+    existing_tx = await db.transactions.find_one({
+        "user_id": user["id"],
         "event_id": event_id,
+        "purpose": "event_ticket",
+        "status": {"$in": ["pending", "completed"]},
+    })
+    if existing_tx:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You already submitted a {existing_tx.get('status')} payment for this event. Check Reports → Event-ticket approvals.",
+        )
+
+    from routes.payments import classify_zeffy_receipt
+    confirmation = (body.confirmation or "").strip()
+    receipt_format = classify_zeffy_receipt(confirmation)
+    pattern_ok = receipt_format is not None
+    auto_approve = bool(user.get("trust_zeffy")) and pattern_ok
+
+    tx_id = str(uuid.uuid4())
+    tx_doc = {
+        "id": tx_id,
         "user_id": user["id"],
         "user_name": user.get("name", ""),
-        "ticket_id": member_ticket_id,
-        "ticket_type": member_ticket_type,
-        "guests": guests,
+        "type": "fee",
+        "amount": float(e.get("payment_amount") or 0.0),
+        "currency": "USD",
+        "description": f"Event ticket: {e.get('title', '')} (ref: {confirmation})",
+        "status": "completed" if auto_approve else "pending",
+        "purpose": "event_ticket",
+        "provider": "zeffy",
+        "event_id": event_id,
+        "event_title": e.get("title", ""),
+        # Stash the RSVP details on the tx so the admin-approve endpoint
+        # can materialize the RSVP later. Guests are stored as dicts since
+        # Pydantic models aren't JSON-serializable in Mongo without conversion.
+        "rsvp_ticket_type": body.ticket_type or "general",
+        "rsvp_guests": [g.model_dump() for g in (body.guests or [])],
+        "zeffy_confirmation": confirmation,
+        "zeffy_receipt_format": receipt_format,
+        "zeffy_auto_approved": auto_approve,
         "created_at": iso(now_utc()),
     }
-    await db.rsvps.insert_one(rsvp_doc)
-    await db.events.update_one(
-        {"id": event_id},
-        {"$inc": {"rsvp_count": 1, "guest_count": len(guests)}},
+    if auto_approve:
+        tx_doc["approved_at"] = iso(now_utc())
+        tx_doc["approved_by"] = "system:zeffy-trust"
+        tx_doc["approved_by_name"] = "Auto-approval (trusted member)"
+    await db.transactions.insert_one(tx_doc)
+
+    if auto_approve:
+        rsvp_doc = await _create_rsvp_and_email_ticket(
+            user=user,
+            event=e,
+            ticket_type=tx_doc["rsvp_ticket_type"],
+            guests_raw=body.guests or [],
+            payment_tx_id=tx_id,
+        )
+        await db.transactions.update_one({"id": tx_id}, {"$set": {"rsvp_id": rsvp_doc["id"]}})
+        return {
+            "transaction_id": tx_id,
+            "status": "completed",
+            "auto_approved": True,
+            "rsvp_id": rsvp_doc["id"],
+            "ticket_id": rsvp_doc["ticket_id"],
+            "message": "🎉 Auto-approved — your ticket is on its way to your inbox.",
+        }
+    return {
+        "transaction_id": tx_id,
+        "status": "pending",
+        "auto_approved": False,
+        "message": "Submitted for admin verification — you'll get your ticket once admin approves your Zeffy receipt.",
+    }
+
+
+@api.put("/transactions/{tx_id}/approve-event-ticket")
+async def admin_approve_event_ticket(tx_id: str, admin: dict = Depends(require_admin)):
+    """Admin approves a pending event_ticket transaction → creates the RSVP and emails the ticket."""
+    tx = await db.transactions.find_one({"id": tx_id})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if tx.get("purpose") != "event_ticket":
+        raise HTTPException(status_code=400, detail="Not an event-ticket transaction")
+    if tx.get("status") == "completed":
+        return {"ok": True, "already": True, "rsvp_id": tx.get("rsvp_id")}
+    e = await db.events.find_one({"id": tx.get("event_id")}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Event no longer exists")
+    user = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    # Reconstruct guests as GuestIn objects so the helper can model_dump() them
+    from models import GuestIn as _GuestIn
+    guests_raw = [_GuestIn(**g) for g in (tx.get("rsvp_guests") or [])]
+    rsvp_doc = await _create_rsvp_and_email_ticket(
+        user=user,
+        event=e,
+        ticket_type=tx.get("rsvp_ticket_type") or "general",
+        guests_raw=guests_raw,
+        payment_tx_id=tx_id,
     )
-    # Fire-and-forget: email the member their ticket(s) with QR code(s).
-    try:
-        asyncio.create_task(send_rsvp_ticket_email(user, e, rsvp_doc))
-    except Exception as ex:
-        logger.warning(f"Failed to schedule ticket email: {ex}")
-    return {"rsvped": True, "guests": len(guests), "ticket_id": member_ticket_id}
+    await db.transactions.update_one({"id": tx_id}, {"$set": {
+        "status": "completed",
+        "approved_at": iso(now_utc()),
+        "approved_by": admin["id"],
+        "approved_by_name": admin.get("name", "Admin"),
+        "rsvp_id": rsvp_doc["id"],
+    }})
+    return {"ok": True, "rsvp_id": rsvp_doc["id"], "ticket_id": rsvp_doc["ticket_id"]}
+
+
+# (continued — the old rsvp_event body has been merged into the helper above)
+# Marker comment kept to keep the diff small.
 
 @api.put("/events/{event_id}/rsvp/guests")
 async def update_rsvp_guests(event_id: str, body: EventRsvpIn, user: dict = Depends(get_current_user)):
@@ -1239,14 +1409,21 @@ async def send_rsvp_ticket_email(member: dict, event: dict, rsvp: dict) -> bool:
     </div>
     """
     try:
+        # CC the AOP events inbox so the National office has a copy of every
+        # ticket (including the QR codes). Configurable via EVENTS_INBOX_EMAIL
+        # env var if the address ever changes.
+        events_inbox = os.environ.get("EVENTS_INBOX_EMAIL", "info@alphaomegaphi.org")
+        to_list = [email]
+        if events_inbox and events_inbox.lower() != email.lower():
+            to_list.append(events_inbox)
         await asyncio.to_thread(resend_sdk.Emails.send, {
             "from": RESEND_FROM,
-            "to": [email],
+            "to": to_list,
             "subject": f"Your tickets — {event_title}",
             "html": body,
             "tags": [{"name": "type", "value": "rsvp_ticket"}, {"name": "event_id", "value": event["id"]}],
         })
-        logger.info(f"RSVP ticket email sent to {email} for {event_title} ({len(cards_html)} tickets)")
+        logger.info(f"RSVP ticket email sent to {email} (+ {events_inbox}) for {event_title} ({len(cards_html)} tickets)")
         return True
     except Exception as e:
         logger.warning(f"RSVP ticket email failed for {email}: {e}")
@@ -1544,6 +1721,7 @@ async def admin_bulk_import_members(
     file: UploadFile = File(...),
     default_chapter_id: Optional[str] = Form(None),
     dry_run: bool = Form(False),
+    send_set_password_emails: bool = Form(True),
     admin: dict = Depends(admin_tab_dep("members")),
 ):
     """Bulk-import members from a CSV (e.g. exported from ClubExpress).
@@ -1552,11 +1730,10 @@ async def admin_bulk_import_members(
     - membership_expires_at = renewal_date + 365 days (or today + 365 if no renewal_date).
     - Duplicates (matched by lowercase email) are skipped, not overwritten.
     - dry_run=true validates the CSV without inserting anything (useful preview).
+    - send_set_password_emails=true (default): each created user gets a one-time
+      set-password link (7-day expiry) so they can sign in directly without
+      anyone having to share a temp password. Set to false to skip.
     - Returns per-row results so the admin can fix errors and re-upload.
-
-    Each new user gets a strong random temporary password and the
-    `pending_set_password=true` flag — admins should follow up with a
-    one-time set-password email if they want members to sign in directly.
     """
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a .csv file")
@@ -1662,12 +1839,34 @@ async def admin_bulk_import_members(
         }
         try:
             await db.users.insert_one(doc)
-            results["created"].append({
+            row_result = {
                 "row": idx,
                 "email": email,
                 "name": composed_name,
                 "membership_expires_at": iso(expires_dt),
-            })
+            }
+            # Optionally send a one-time set-password email so the new member
+            # can sign in without anyone sharing the temp password.
+            if send_set_password_emails and RESEND_API_KEY:
+                try:
+                    token = secrets.token_urlsafe(32)
+                    expires_at = now + timedelta(days=7)
+                    await db.password_set_tokens.insert_one({
+                        "token": token,
+                        "user_id": uid,
+                        "expires_at": iso(expires_at),
+                        "expires_at_dt": expires_at,
+                        "used": False,
+                        "created_at": iso(now),
+                    })
+                    sent = await _send_set_password_email(email, composed_name, token)
+                    row_result["set_password_email_sent"] = bool(sent)
+                except Exception as ex_email:
+                    row_result["set_password_email_sent"] = False
+                    logger.warning(f"[bulk-import] set-password email failed for {email}: {ex_email}")
+            else:
+                row_result["set_password_email_sent"] = False
+            results["created"].append(row_result)
         except Exception as ex:
             results["errors"].append({"row": idx, "email": email, "reason": f"insert failed: {ex}"})
 
@@ -1675,7 +1874,8 @@ async def admin_bulk_import_members(
     results["skipped_count"] = len(results["skipped"])
     results["error_count"] = len(results["errors"])
     results["dry_run"] = bool(dry_run)
-    logger.info(f"[bulk-import] admin={admin.get('email')} created={results['created_count']} skipped={results['skipped_count']} errors={results['error_count']} dry_run={dry_run}")
+    results["emails_sent_count"] = sum(1 for r in results["created"] if r.get("set_password_email_sent"))
+    logger.info(f"[bulk-import] admin={admin.get('email')} created={results['created_count']} skipped={results['skipped_count']} errors={results['error_count']} emails={results['emails_sent_count']} dry_run={dry_run}")
     return results
 
 

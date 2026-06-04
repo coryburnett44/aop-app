@@ -37,6 +37,7 @@ export default function Reports() {
                 <TabsTrigger value="hours" className="rounded-full" data-testid="reports-tab-hours">Hours</TabsTrigger>
                 <TabsTrigger value="donations" className="rounded-full" data-testid="reports-tab-donations">Donations</TabsTrigger>
                 <TabsTrigger value="dues" className="rounded-full" data-testid="reports-tab-dues">Dues approvals</TabsTrigger>
+                <TabsTrigger value="event-tickets" className="rounded-full" data-testid="reports-tab-event-tickets">Event tickets</TabsTrigger>
                 <TabsTrigger value="brief" className="rounded-full" data-testid="reports-tab-brief">Personnel Brief</TabsTrigger>
             </TabsList>
             <TabsContent value="members" className="mt-6"><MembersReport /></TabsContent>
@@ -44,6 +45,7 @@ export default function Reports() {
             <TabsContent value="hours" className="mt-6"><HoursReport /></TabsContent>
             <TabsContent value="donations" className="mt-6"><DonationsReport /></TabsContent>
             <TabsContent value="dues" className="mt-6"><ZeffyDuesApprovals /></TabsContent>
+            <TabsContent value="event-tickets" className="mt-6"><EventTicketApprovals /></TabsContent>
             <TabsContent value="brief" className="mt-6"><PersonnelBriefSection /></TabsContent>
         </Tabs>
     );
@@ -726,7 +728,7 @@ function ZeffyDuesApprovals() {
             const { data } = await api.get("/transactions", { params: { provider: "zeffy" } });
             // Show pending awaiting approval + recent auto-approved (last 30 days) for audit
             const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
-            const filtered = (data || []).filter((t) => t.provider === "zeffy" && (
+            const filtered = (data || []).filter((t) => t.provider === "zeffy" && t.purpose === "dues" && (
                 t.status === "pending" ||
                 (t.zeffy_auto_approved && t.created_at && new Date(t.created_at).getTime() >= cutoff)
             ));
@@ -844,3 +846,126 @@ function ZeffyDuesApprovals() {
     );
 }
 
+
+
+
+function EventTicketApprovals() {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    async function load() {
+        setLoading(true);
+        try {
+            const { data } = await api.get("/transactions");
+            const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+            const filtered = (data || []).filter((t) => t.purpose === "event_ticket" && (
+                t.status === "pending" ||
+                (t.zeffy_auto_approved && t.created_at && new Date(t.created_at).getTime() >= cutoff)
+            ));
+            filtered.sort((a, b) => {
+                if (a.status === "pending" && b.status !== "pending") return -1;
+                if (b.status === "pending" && a.status !== "pending") return 1;
+                return new Date(b.created_at) - new Date(a.created_at);
+            });
+            setRows(filtered);
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not load event-ticket transactions");
+        }
+        setLoading(false);
+    }
+    useEffect(() => { load(); }, []);
+
+    async function approve(tx) {
+        if (!window.confirm(`Approve ${tx.user_name}'s ticket for "${tx.event_title}" ($${tx.amount})? An RSVP will be created and the ticket emailed.`)) return;
+        try {
+            await api.put(`/transactions/${tx.id}/approve-event-ticket`);
+            setRows((cur) => cur.filter((r) => r.id !== tx.id));
+            toast.success("Approved — ticket emailed");
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Approval failed");
+        }
+    }
+
+    async function reject(tx) {
+        if (!window.confirm(`Reject ${tx.user_name}'s payment? The pending transaction will be deleted.`)) return;
+        try {
+            await api.delete(`/transactions/${tx.id}`);
+            setRows((cur) => cur.filter((r) => r.id !== tx.id));
+            toast.success("Pending transaction deleted");
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Delete failed");
+        }
+    }
+
+    if (loading) return <div className="text-muted-foreground text-center py-10">Loading…</div>;
+
+    return (
+        <div data-testid="event-ticket-approvals-panel">
+            <div className="bg-card rounded-2xl border p-5 mb-4">
+                <div className="text-sm font-semibold mb-1">Pending event-ticket payments</div>
+                <p className="text-xs text-muted-foreground">Members who paid via Zeffy for a paid event. Approving creates the RSVP and emails the QR ticket.</p>
+            </div>
+            {rows.length === 0 ? (
+                <div className="bg-card rounded-2xl border border-dashed border-border p-10 text-center" data-testid="event-ticket-approvals-empty">
+                    <div className="font-heading text-lg">All caught up</div>
+                    <div className="text-sm text-muted-foreground mt-1">No pending event-ticket payments to verify.</div>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    {rows.map((t) => {
+                        const isPending = t.status === "pending";
+                        return (
+                            <div
+                                key={t.id}
+                                className={`bg-card border-2 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3 ${isPending ? "border-amber-300 bg-amber-50/40" : "border-emerald-200 bg-emerald-50/30"}`}
+                                data-testid={`event-ticket-approval-row-${t.id}`}
+                            >
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-heading font-bold text-lg">{t.user_name}</span>
+                                        <span className="text-xs text-muted-foreground">→</span>
+                                        <span className="font-semibold text-sm">{t.event_title}</span>
+                                        {!isPending && t.zeffy_auto_approved && (
+                                            <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">
+                                                ⚡ Auto-approved
+                                            </span>
+                                        )}
+                                        {isPending && (
+                                            <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300">
+                                                Pending review
+                                            </span>
+                                        )}
+                                        {t.zeffy_receipt_format ? (
+                                            <span
+                                                className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200"
+                                                title={`Receipt format: ${t.zeffy_receipt_format}`}
+                                            >
+                                                ✓ {t.zeffy_receipt_format === "rct" ? "RCT-####" : t.zeffy_receipt_format === "zf" ? "ZF-#" : t.zeffy_receipt_format === "email" ? "email" : "alnum id"}
+                                            </span>
+                                        ) : t.zeffy_confirmation ? (
+                                            <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                                ⚠ unrecognised
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">${t.amount} · {t.description}</div>
+                                    <div className="text-xs text-muted-foreground mt-0.5">
+                                        Submitted {t.created_at && format(parseISO(t.created_at), "MMM d, yyyy 'at' h:mm a")}
+                                        {!isPending && t.approved_at && <> · Approved {format(parseISO(t.approved_at), "MMM d 'at' h:mm a")}</>}
+                                    </div>
+                                </div>
+                                {isPending && (
+                                    <div className="flex items-center gap-2">
+                                        <Button variant="outline" size="sm" onClick={() => reject(t)} className="rounded-full" data-testid={`event-ticket-reject-${t.id}`}>Reject</Button>
+                                        <Button onClick={() => approve(t)} className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white" data-testid={`event-ticket-approve-${t.id}`}>Approve &amp; email ticket</Button>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}

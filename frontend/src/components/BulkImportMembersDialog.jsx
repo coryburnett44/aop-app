@@ -26,6 +26,7 @@ export default function BulkImportMembersDialog({ chapters = [], onImported }) {
     const [file, setFile] = useState(null);
     const [defaultChapter, setDefaultChapter] = useState("");
     const [dryRun, setDryRun] = useState(true);
+    const [sendPasswordEmails, setSendPasswordEmails] = useState(true);
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState(null);
     const fileRef = useRef(null);
@@ -53,6 +54,7 @@ export default function BulkImportMembersDialog({ chapters = [], onImported }) {
             fd.append("file", file);
             if (defaultChapter) fd.append("default_chapter_id", defaultChapter);
             fd.append("dry_run", dryRun ? "true" : "false");
+            fd.append("send_set_password_emails", sendPasswordEmails ? "true" : "false");
             const { data } = await api.post("/admin/members/bulk-import", fd, {
                 headers: { "Content-Type": "multipart/form-data" },
             });
@@ -146,7 +148,17 @@ export default function BulkImportMembersDialog({ chapters = [], onImported }) {
                                 />
                                 <span className="text-sm font-medium">Dry run (preview only — no users created)</span>
                             </Label>
-                            <p className="text-[11px] text-muted-foreground mt-3">Recommended for your first upload. Uncheck after verifying the preview looks right.</p>
+                            <Label className="flex items-center gap-2 cursor-pointer mt-3">
+                                <input
+                                    type="checkbox"
+                                    checked={sendPasswordEmails}
+                                    onChange={(e) => setSendPasswordEmails(e.target.checked)}
+                                    className="h-4 w-4 rounded border-2 border-slate-300 accent-primary"
+                                    data-testid="bulk-import-send-password-emails"
+                                />
+                                <span className="text-sm font-medium">Send set-password email to each new member</span>
+                            </Label>
+                            <p className="text-[11px] text-muted-foreground mt-2">Each new member gets a one-time link (valid 7 days) to choose their own password and sign in directly.</p>
                         </div>
                     </div>
 
@@ -171,6 +183,14 @@ export default function BulkImportMembersDialog({ chapters = [], onImported }) {
                                     </div>
                                     <div className="font-heading text-3xl font-black text-rose-800 mt-1">{result.error_count}</div>
                                 </div>
+                                {!result.dry_run && typeof result.emails_sent_count === "number" && (
+                                    <div className="flex-1 min-w-[120px] rounded-xl border-2 border-sky-300 bg-sky-50 p-3 text-center" data-testid="bulk-import-emails-sent">
+                                        <div className="flex items-center justify-center gap-1.5 text-sky-700 text-xs font-bold uppercase tracking-wider">
+                                            ✉ Emails sent
+                                        </div>
+                                        <div className="font-heading text-3xl font-black text-sky-800 mt-1">{result.emails_sent_count}</div>
+                                    </div>
+                                )}
                             </div>
 
                             {result.errors?.length > 0 && (
