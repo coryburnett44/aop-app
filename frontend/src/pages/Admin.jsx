@@ -18,6 +18,7 @@ import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
 import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
 import PageBuilder from "../components/cms/PageBuilder";
 import BulkImportMembersDialog from "../components/BulkImportMembersDialog";
+import AssignmentHistoryEditor from "../components/AssignmentHistoryEditor";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
@@ -977,6 +978,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                 membership_expires_at: member.membership_expires_at ? member.membership_expires_at.slice(0, 10) : "",
                 member_status: member.status_override || member.status || "active",
                 new_password: "",
+                assignment_history: member.assignment_history || [],
             });
         }
     }, [open, member]);
@@ -986,6 +988,8 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
         try {
             const payload = Object.fromEntries(Object.entries(form).filter(([_, v]) => v !== "" && v !== null && v !== undefined));
             if (!payload.new_password) delete payload.new_password;
+            // Always send assignment_history even when empty so admins can clear all rows.
+            payload.assignment_history = form.assignment_history || [];
             // Convert join_date YYYY-MM-DD to ISO timestamp so backend recomputes membership_expires_at
             if (payload.join_date && payload.join_date.length === 10) {
                 payload.join_date = new Date(`${payload.join_date}T00:00:00Z`).toISOString();
@@ -1165,6 +1169,11 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                         </label>
                     </div>
                     <div><Label>Reset password (optional)</Label><Input type="password" value={form.new_password || ""} onChange={(e) => setForm({ ...form, new_password: e.target.value })} className="rounded-xl mt-1.5" placeholder="Leave blank to keep current" data-testid="em-new-password" /></div>
+                    <AssignmentHistoryEditor
+                        value={form.assignment_history}
+                        onChange={(v) => setForm({ ...form, assignment_history: v })}
+                        chapters={chapters}
+                    />
                 </div>
                 <DialogFooter><Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90" data-testid="em-save-btn">{busy ? "Saving…" : "Save changes"}</Button></DialogFooter>
             </DialogContent>

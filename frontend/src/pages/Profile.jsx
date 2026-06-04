@@ -173,6 +173,7 @@ export default function Profile() {
                     </div>
                 </div>
                 <DownloadMyBriefButton />
+                <DownloadTaxLetterButton />
             </div>
 
             <div className="rounded-2xl bg-gradient-to-br from-primary/15 via-secondary/25 to-accent/40 p-6 border border-border mb-8" data-testid="membership-card">
@@ -637,6 +638,56 @@ function DownloadMyBriefButton() {
             <Download className="h-4 w-4 mr-1.5" />
             {busy ? "Generating…" : "Download my brief"}
         </Button>
+    );
+}
+
+/**
+ * Per-year annual tax-donation letter download. Defaults to last completed
+ * year (current_year - 1) which is what taxpayers usually need. A small
+ * year-picker lets the member also grab the current year (mid-year preview)
+ * or any past year — useful if they're back-filling tax records.
+ */
+function DownloadTaxLetterButton() {
+    const [busy, setBusy] = useState(false);
+    const [year, setYear] = useState(new Date().getFullYear() - 1);
+    const years = [];
+    const cur = new Date().getFullYear();
+    for (let y = cur; y >= cur - 5; y--) years.push(y);
+    async function download() {
+        setBusy(true);
+        try {
+            const res = await api.get(`/me/tax-letter/pdf?year=${year}`, { responseType: "blob" });
+            const url = URL.createObjectURL(res.data);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `aop-tax-letter-${year}.pdf`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+            toast.success(`Tax letter for ${year} downloaded`);
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not generate tax letter");
+        }
+        setBusy(false);
+    }
+    return (
+        <div className="flex items-center gap-1.5 self-start" data-testid="tax-letter-block">
+            <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
+                <SelectTrigger className="rounded-full h-9 w-[110px] text-xs font-semibold" data-testid="tax-letter-year-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                    {years.map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                </SelectContent>
+            </Select>
+            <Button
+                type="button"
+                onClick={download}
+                disabled={busy}
+                className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                data-testid="download-tax-letter-btn"
+            >
+                <Download className="h-4 w-4 mr-1.5" />
+                {busy ? "Generating…" : "Tax letter"}
+            </Button>
+        </div>
     );
 }
 

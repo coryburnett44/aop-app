@@ -83,6 +83,25 @@ class CivilianDegreeEntry(BaseModel):
     graduation_year: Optional[int] = None
 
 
+RANK_CHOICES = Literal[
+    "", "Grand Sirius", "Master Sirius", "Senior Sirius", "Advanced Sirius",
+    "Junior Sirius", "Eagle", "Clover", "Guardian",
+]
+
+
+class AssignmentEntry(BaseModel):
+    """One row of a member's assignment history. Admin-managed only."""
+    start_date: str = ""        # ISO date 'YYYY-MM-DD' (or empty)
+    end_date: str = ""          # ISO date or '' (interpreted as 'Current')
+    is_current: bool = False
+    chapter_id: str = ""        # optional FK to chapters
+    chapter_name: str = ""      # snapshot — kept even if chapter renamed/deleted
+    state: str = ""
+    location: str = ""
+    duty_title: str = ""
+    rank: str = ""              # one of RANK_CHOICES
+
+
 class ProfileUpdateIn(BaseModel):
     name: Optional[str] = None
     title: Optional[str] = None
@@ -233,6 +252,7 @@ class AdminUpdateMemberIn(BaseModel):
     deceased_at: Optional[str] = None
     trust_zeffy: Optional[bool] = None
     new_password: Optional[str] = None
+    assignment_history: Optional[List[AssignmentEntry]] = None
 
 
 class TransactionIn(BaseModel):

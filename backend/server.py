@@ -5002,147 +5002,322 @@ async def personnel_brief_pdf(user_id: str, admin: dict = Depends(admin_tab_dep(
 
 
 async def _personnel_brief_pdf_response(user_id: str):
-    """Build and stream the personnel-brief PDF for the given user id."""
+    """Build and stream the personnel-brief PDF for the given user id.
+
+    Layout (per spec):
+      Header: photo, title + name, line name, email, phone
+      §1 Personal Information
+      §2 Organization Information
+      §3 Civilian Education (sorted chronologically by year)
+      §4 Languages (most recent year first)
+      §5 Financial Obligations — last 5 annual dues
+      §6 Donations — last 5
+      §7 Community Service (current year only)
+      §8 Awards (name, ordinal first/second/third, date granted)
+      §9 Events (current-year check-ins only)
+      §10 Assignment History (current first)
+    """
     data = await _personnel_brief_data(user_id)
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
     from io import BytesIO
+    from datetime import datetime as _dt
+    import urllib.request
 
     buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=0.6 * inch, rightMargin=0.6 * inch, topMargin=0.7 * inch, bottomMargin=0.6 * inch, title=f"Personnel Brief — {data['member']['name']}")
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=0.55 * inch, rightMargin=0.55 * inch, topMargin=0.55 * inch, bottomMargin=0.5 * inch, title=f"Personnel Brief — {data['member']['name']}")
     styles = getSampleStyleSheet()
-    AOP_RED = colors.HexColor("#C8102E")
     AOP_NAVY = colors.HexColor("#0C1B33")
-    h1 = ParagraphStyle("AopH1", parent=styles["Heading1"], textColor=AOP_RED, fontSize=22, leading=26, spaceAfter=4)
-    h2 = ParagraphStyle("AopH2", parent=styles["Heading2"], textColor=AOP_NAVY, fontSize=13, leading=16, spaceBefore=14, spaceAfter=6)
-    body_style = ParagraphStyle("AopBody", parent=styles["BodyText"], fontSize=10, leading=14)
-    small = ParagraphStyle("AopSmall", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#999999"))
+    h_name = ParagraphStyle("AopName", parent=styles["Heading1"], textColor=AOP_NAVY, fontSize=22, leading=24, spaceAfter=2)
+    section = ParagraphStyle("AopSec", parent=styles["Heading2"], textColor=colors.white, backColor=AOP_NAVY, fontSize=12, leading=18, leftIndent=8, rightIndent=8, spaceBefore=12, spaceAfter=6, borderPadding=4)
+    body_style = ParagraphStyle("AopBody", parent=styles["BodyText"], fontSize=10, leading=13)
+    small = ParagraphStyle("AopSmall", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#888888"))
 
     m = data["member"]
     chapter = data.get("chapter") or {}
     tier = data.get("tier") or {}
-    elements = []
+    elements: list = []
+    current_year = now_utc().year
 
-    # Header
-    elements.append(Paragraph(f"<b>{m.get('name', '—')}</b>", h1))
+    # ---------- Header: photo + identity ----------
+    avatar_path = None
+    avatar_src = m.get("avatar_url") or ""
+    if avatar_src:
+        try:
+            if avatar_src.startswith("/api/"):
+                # Local file system path (object storage stores in db.file_meta — we render a placeholder)
+                avatar_path = None
+            elif avatar_src.startswith("http"):
+                tmp = BytesIO()
+                with urllib.request.urlopen(avatar_src, timeout=4) as r:
+                    tmp.write(r.read())
+                tmp.seek(0)
+                avatar_path = tmp
+        except Exception:
+            avatar_path = None
+
+    photo_cell = ""
+    if avatar_path:
+        try:
+            photo_cell = Image(avatar_path, width=1.1 * inch, height=1.1 * inch)
+        except Exception:
+            photo_cell = ""
+
+    title_name = " ".join(p for p in [m.get("title"), m.get("name")] if p) or m.get("name", "—")
+    identity_bits = []
+    identity_bits.append(Paragraph(f"<b>{title_name}</b>", h_name))
     if m.get("line_name"):
-        elements.append(Paragraph(f'<font color="#C8102E"><b>"{m["line_name"]}"</b></font>', body_style))
-    sub = " · ".join([s for s in [tier.get("name"), chapter.get("name"), m.get("role", "").upper()] if s])
-    if sub:
-        elements.append(Paragraph(sub, small))
-    elements.append(Paragraph(f"Personnel Brief generated {data['generated_at'][:10]}", small))
-    elements.append(Spacer(1, 12))
+        identity_bits.append(Paragraph(f'<font color="#C8102E"><b>"{m["line_name"]}"</b></font>', body_style))
+    if m.get("email"):
+        identity_bits.append(Paragraph(m["email"], body_style))
+    if m.get("phone"):
+        identity_bits.append(Paragraph(m["phone"], body_style))
 
-    # Identity table
-    rows = [
-        ["Email", m.get("email", "—")],
-        ["Phone", m.get("phone", "—")],
-        ["Address", ", ".join(x for x in [m.get("address"), m.get("city"), m.get("state"), m.get("zip_code")] if x) or "—"],
-        ["Country", m.get("country") or "—"],
-        ["Branch of Service", m.get("branch_of_service") or "—"],
-        ["Intake Line", m.get("intake_line") or "—"],
-        ["Intake Completed", m.get("intake_completed_at") or "—"],
-        ["Date Joined", (m.get("join_date") or "")[:10] or "—"],
-        ["Membership Expires", (m.get("membership_expires_at") or "")[:10] or "—"],
-        ["Status", (m.get("status") or "").upper()],
-    ]
-    t = Table(rows, colWidths=[1.4 * inch, 4.5 * inch], hAlign="LEFT")
-    t.setStyle(TableStyle([
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#666666")),
-        ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#222222")),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#EFEFEF")),
-    ]))
-    elements.append(t)
-
-    # Stats strip
-    elements.append(Paragraph("Service Summary", h2))
-    stats = Table([
-        ["Approved hours", f"{data.get('approved_hours', 0):.1f}", "Awards", str(data.get("awards_count", 0))],
-        ["Events attended", str(data.get("events_count", 0)), "Total contributed", f"${data.get('total_paid', 0):.2f}"],
-    ], colWidths=[1.4 * inch, 1.6 * inch, 1.4 * inch, 1.6 * inch])
-    stats.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F7F5F0")),
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#666666")),
-        ("TEXTCOLOR", (2, 0), (2, -1), colors.HexColor("#666666")),
+    header_tbl = Table(
+        [[photo_cell, identity_bits]],
+        colWidths=[1.3 * inch, 5.8 * inch],
+    )
+    header_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
     ]))
-    elements.append(stats)
+    elements.append(header_tbl)
+    elements.append(Spacer(1, 4))
 
-    # Awards
-    if data.get("awards"):
-        elements.append(Paragraph("Awards & Ribbons", h2))
-        for g in data["awards"][:30]:
-            elements.append(Paragraph(f"<b>{g.get('award_name') or g.get('name', '—')}</b> &nbsp; <font color='#999999'>{(g.get('granted_at') or '')[:10]}</font>", body_style))
-            if g.get("note"):
-                elements.append(Paragraph(g["note"], small))
-            elements.append(Spacer(1, 4))
+    # ---------- helpers ----------
+    def section_table(rows):
+        t = Table(rows, colWidths=[1.7 * inch, 5.4 * inch], hAlign="LEFT")
+        t.setStyle(TableStyle([
+            ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#6c6c6c")),
+            ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#222222")),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#EFEFEF")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        return t
 
-    # Hours
-    if data.get("hours"):
-        elements.append(Paragraph("Volunteer Hours", h2))
-        hours_rows = [["Date", "Hours", "Status", "Activity"]]
-        for h in data["hours"][:40]:
-            hours_rows.append([
-                (h.get("date") or "")[:10],
-                f"{h.get('hours', 0):.2f}",
-                (h.get("status") or "").upper(),
-                (h.get("activity") or h.get("description") or "—")[:60],
-            ])
-        ht = Table(hours_rows, colWidths=[0.9 * inch, 0.7 * inch, 0.9 * inch, 3.5 * inch])
-        ht.setStyle(TableStyle([
+    def data_table(headers, rows, col_widths):
+        if not rows:
+            return Paragraph("<i>No entries.</i>", small)
+        t = Table([headers] + rows, colWidths=col_widths, hAlign="LEFT")
+        t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0EBE3")),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
+            ("TEXTCOLOR", (0, 0), (-1, 0), AOP_NAVY),
             ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#EFEFEF")),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
-        elements.append(ht)
+        return t
 
-    # Events attended
-    if data.get("events"):
-        elements.append(Paragraph("Events Attended", h2))
-        for e in data["events"][:40]:
-            when = (e.get("start_at") or "")[:10]
-            elements.append(Paragraph(f"<b>{e.get('title', '—')}</b> &nbsp; <font color='#999999'>{when}</font>", body_style))
-        elements.append(Spacer(1, 4))
+    # ---------- §1 Personal Information ----------
+    elements.append(Paragraph("§1  Personal Information", section))
+    elements.append(section_table([
+        ["Address", m.get("address") or "—"],
+        ["City", m.get("city") or "—"],
+        ["State", m.get("state") or "—"],
+        ["Country", m.get("country") or "—"],
+        ["Zip code", m.get("zip_code") or "—"],
+        ["Marital status", m.get("marital_status") or "—"],
+        ["Birthdate", (m.get("birthdate") or "")[:10] or "—"],
+        ["Branch of Service", m.get("branch_of_service") or "—"],
+    ]))
 
-    # Transactions
-    if data.get("transactions"):
-        elements.append(Paragraph("Transactions", h2))
-        tx_rows = [["Date", "Type", "Amount", "Status", "Note"]]
-        for t in data["transactions"][:40]:
-            tx_rows.append([
-                (t.get("created_at") or "")[:10],
-                (t.get("type") or "").upper(),
-                f"${t.get('amount', 0):.2f}",
-                (t.get("status") or ""),
-                (t.get("note") or t.get("description") or "")[:50],
-            ])
-        tx_tbl = Table(tx_rows, colWidths=[0.9 * inch, 0.8 * inch, 0.9 * inch, 0.9 * inch, 2.5 * inch])
-        tx_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0EBE3")),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#EFEFEF")),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ]))
-        elements.append(tx_tbl)
+    # ---------- §2 Organization Information ----------
+    elements.append(Paragraph("§2  Organization Information", section))
+    elements.append(section_table([
+        ["Chapter", chapter.get("name") or "—"],
+        ["Region", chapter.get("region") or "—"],
+        ["Status", (m.get("status") or "—").upper()],
+        ["Tier", tier.get("name") or "—"],
+        ["Role", (m.get("role") or "member").title()],
+        ["Joined", (m.get("join_date") or "")[:10] or "—"],
+        ["Renewal", (m.get("membership_expires_at") or "")[:10] or "—"],
+    ]))
 
-    elements.append(Spacer(1, 16))
-    elements.append(Paragraph("Generated by the Alpha Omega Phi member portal.", small))
+    # ---------- §3 Civilian Education (chronological by year) ----------
+    elements.append(Paragraph("§3  Civilian Education", section))
+    degrees = list(m.get("civilian_degrees") or [])
+    degrees.sort(key=lambda d: (d.get("graduation_year") or 0, d.get("graduation_month") or 0))
+    deg_rows = []
+    for d in degrees:
+        month = d.get("graduation_month")
+        month_label = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][month - 1] if month and 1 <= month <= 12 else ""
+        grad = f"{month_label} {d.get('graduation_year') or ''}".strip() or "—"
+        deg_rows.append([
+            d.get("degree_level") or "—",
+            d.get("degree_type") or "—",
+            d.get("field_of_study") or "—",
+            d.get("institution") or "—",
+            grad,
+        ])
+    elements.append(data_table(
+        ["Level", "Type", "Field of Study", "Institution", "Graduated"],
+        deg_rows,
+        [1.1 * inch, 0.7 * inch, 1.8 * inch, 2.1 * inch, 1.4 * inch],
+    ))
+
+    # ---------- §4 Languages (most recent year first) ----------
+    elements.append(Paragraph("§4  Languages", section))
+    langs = list(m.get("languages") or [])
+    langs.sort(key=lambda lg: -(lg.get("year_accomplished") or 0))
+    lang_rows = []
+    for lg in langs:
+        lang_rows.append([
+            lg.get("language") or "—",
+            lg.get("speaking") or "—",
+            lg.get("reading") or "—",
+            lg.get("writing") or "—",
+            str(lg.get("year_accomplished") or "—"),
+        ])
+    elements.append(data_table(
+        ["Language", "Speaking", "Reading", "Writing", "Year"],
+        lang_rows,
+        [1.4 * inch, 1.1 * inch, 1.1 * inch, 1.1 * inch, 0.9 * inch],
+    ))
+
+    # ---------- §5 Financial Obligations — last 5 annual dues ----------
+    elements.append(Paragraph("§5  Financial Obligations (Annual Dues)", section))
+    dues = [t for t in (data.get("transactions") or []) if t.get("purpose") == "dues" or t.get("type") == "renewal"]
+    dues = dues[:5]
+    dues_rows = []
+    for t in dues:
+        dues_rows.append([
+            (t.get("created_at") or "")[:10],
+            f"${t.get('amount', 0):.2f}",
+            (t.get("status") or "—").upper(),
+            (t.get("description") or "—")[:55],
+        ])
+    elements.append(data_table(
+        ["Date", "Amount", "Status", "Description"],
+        dues_rows,
+        [1.0 * inch, 0.9 * inch, 1.0 * inch, 3.7 * inch],
+    ))
+
+    # ---------- §6 Donations — last 5 ----------
+    elements.append(Paragraph("§6  Donations", section))
+    donations = [t for t in (data.get("transactions") or []) if t.get("type") == "donation"][:5]
+    don_rows = []
+    for t in donations:
+        don_rows.append([
+            (t.get("created_at") or "")[:10],
+            (t.get("description") or "General fund")[:55],
+            f"${t.get('amount', 0):.2f}",
+        ])
+    elements.append(data_table(
+        ["Date", "Cause", "Amount"],
+        don_rows,
+        [1.1 * inch, 4.4 * inch, 1.1 * inch],
+    ))
+
+    # ---------- §7 Community Service (current year only) ----------
+    elements.append(Paragraph(f"§7  Community Service ({current_year})", section))
+    hours = [h for h in (data.get("hours") or []) if (h.get("date") or "")[:4] == str(current_year)]
+    hr_rows = []
+    for h in hours:
+        hr_rows.append([
+            h.get("agency_name") or "—",
+            (h.get("event_type") or "other").replace("_", " ").title(),
+            f"{h.get('hours', 0):.2f}",
+            (h.get("status") or "—").upper(),
+            (h.get("date") or "")[:10],
+        ])
+    elements.append(data_table(
+        ["Agency", "Event Type", "Hours", "Status", "Date"],
+        hr_rows,
+        [2.0 * inch, 1.4 * inch, 0.7 * inch, 1.0 * inch, 1.0 * inch],
+    ))
+
+    # ---------- §8 Awards (with ordinal first/second/third by award name) ----------
+    elements.append(Paragraph("§8  Awards", section))
+    awards = sorted(data.get("awards") or [], key=lambda g: g.get("granted_at") or "")
+    counts: dict = {}
+    aw_rows = []
+    for g in awards:
+        nm = g.get("award_name") or g.get("name") or "—"
+        counts[nm] = counts.get(nm, 0) + 1
+        ordinal = {1: "1st", 2: "2nd", 3: "3rd"}.get(counts[nm], f"{counts[nm]}th")
+        aw_rows.append([
+            nm,
+            ordinal + " award",
+            (g.get("granted_at") or "")[:10],
+        ])
+    elements.append(data_table(
+        ["Award", "Order", "Date Granted"],
+        aw_rows,
+        [3.4 * inch, 1.6 * inch, 2.1 * inch],
+    ))
+
+    # ---------- §9 Events (current-year checked-in only) ----------
+    elements.append(Paragraph(f"§9  Events Attended ({current_year} check-ins)", section))
+    checkins = [c for c in (data.get("checkins") or []) if (c.get("checked_in_at") or "")[:4] == str(current_year)]
+    # Build quick event-id → event title lookup from data.events
+    event_lookup = {e["id"]: e for e in (data.get("events") or [])}
+    # Also include guest counts from rsvps
+    rsvp_lookup = {}
+    for r in (data.get("rsvps") or []):
+        rsvp_lookup[r.get("event_id")] = r
+    ev_rows = []
+    seen_events: set = set()
+    for c in checkins:
+        eid = c.get("event_id")
+        if eid in seen_events:
+            continue
+        seen_events.add(eid)
+        ev = event_lookup.get(eid, {})
+        my_rsvp = rsvp_lookup.get(eid, {})
+        ev_rows.append([
+            ev.get("title") or "—",
+            str(len(my_rsvp.get("guests") or [])),
+            (c.get("ticket_type") or my_rsvp.get("ticket_type") or "general").replace("_", " ").title(),
+            (c.get("checked_in_at") or "")[:10],
+        ])
+    elements.append(data_table(
+        ["Event", "Guests", "Ticket Type", "Check-in Date"],
+        ev_rows,
+        [3.4 * inch, 0.8 * inch, 1.5 * inch, 1.4 * inch],
+    ))
+
+    # ---------- §10 Assignment History (current first) ----------
+    elements.append(Paragraph("§10  Assignment History", section))
+    assignments = list(m.get("assignment_history") or [])
+    # Current-first: items with is_current at top, then by start_date desc
+    assignments.sort(key=lambda a: (0 if a.get("is_current") else 1, a.get("start_date") or "9999"), reverse=False)
+    # Re-sort within non-current group by start_date desc
+    assignments = sorted(
+        assignments,
+        key=lambda a: (0 if a.get("is_current") else 1, -1 * int((a.get("start_date") or "").replace("-", "") or 0)),
+    )
+    asn_rows = []
+    for a in assignments:
+        end = "Current" if a.get("is_current") else ((a.get("end_date") or "")[:10] or "—")
+        asn_rows.append([
+            (a.get("start_date") or "")[:10] or "—",
+            end,
+            a.get("chapter_name") or "—",
+            a.get("state") or "—",
+            a.get("location") or "—",
+            a.get("duty_title") or "—",
+            a.get("rank") or "—",
+        ])
+    elements.append(data_table(
+        ["Start", "End", "Chapter", "State", "Location", "Duty Title", "Rank"],
+        asn_rows,
+        [0.8 * inch, 0.8 * inch, 1.0 * inch, 0.6 * inch, 1.0 * inch, 1.4 * inch, 1.5 * inch],
+    ))
+
+    elements.append(Spacer(1, 14))
+    elements.append(Paragraph(f"Personnel Brief generated {data['generated_at'][:10]} by the Alpha Omega Phi member portal.", small))
 
     doc.build(elements)
     buf.seek(0)
@@ -5168,6 +5343,165 @@ async def my_personnel_brief(user: dict = Depends(get_current_user)):
 async def my_personnel_brief_pdf(user: dict = Depends(get_current_user)):
     """Member-side: their own personnel brief as a PDF download."""
     return await _personnel_brief_pdf_response(user["id"])
+
+
+@api.get("/me/tax-letter/pdf")
+async def my_tax_letter_pdf(
+    year: Optional[int] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Member-side: annual tax-donation letter PDF for the given year (defaults to last completed year).
+
+    Sums all approved dues + donations the member paid during the year. Uses
+    EIN 82-0794957 and Cory T. Burnett's signature image (`/app/backend/assets/cory_signature.png`).
+    """
+    if year is None:
+        year = now_utc().year - 1  # default to last year for tax purposes
+    return await _build_tax_letter_pdf(user, year)
+
+
+async def _build_tax_letter_pdf(user: dict, year: int):
+    """Render the IRS-style tax acknowledgment letter for one member + year."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+    from io import BytesIO
+    import os.path
+
+    # Pull all completed transactions for the year. Dues + donations + fees are
+    # all tax-deductible at a 501(c)(3), per the user's spec ("dues and donations
+    # given altogether"). Pending or rejected transactions are excluded.
+    year_start = f"{year}-01-01"
+    year_end = f"{year + 1}-01-01"
+    cursor = db.transactions.find({
+        "user_id": user["id"],
+        "status": "completed",
+        "created_at": {"$gte": year_start, "$lt": year_end},
+        "type": {"$in": ["renewal", "donation", "fee"]},
+    }, {"_id": 0}).sort("created_at", 1)
+    txs = await cursor.to_list(500)
+    total = sum(float(t.get("amount") or 0) for t in txs)
+    dues_total = sum(float(t.get("amount") or 0) for t in txs if t.get("purpose") == "dues" or t.get("type") == "renewal")
+    donation_total = sum(float(t.get("amount") or 0) for t in txs if t.get("type") == "donation")
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=0.85 * inch, rightMargin=0.85 * inch, topMargin=0.9 * inch, bottomMargin=0.75 * inch, title=f"Tax Letter — {user.get('name', '')} {year}")
+    styles = getSampleStyleSheet()
+    AOP_NAVY = colors.HexColor("#0C1B33")
+    header_style = ParagraphStyle("AopHeader", parent=styles["Heading1"], textColor=AOP_NAVY, fontSize=18, leading=22, alignment=1, spaceAfter=4)
+    sub_style = ParagraphStyle("AopHeaderSub", parent=styles["BodyText"], fontSize=10, leading=13, textColor=colors.HexColor("#555555"), alignment=1, spaceAfter=18)
+    body_style = ParagraphStyle("AopBody", parent=styles["BodyText"], fontSize=11, leading=16)
+    small = ParagraphStyle("AopSmall", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#888888"))
+
+    elements: list = []
+    elements.append(Paragraph("<b>Alpha Omega Phi Military Fraternity &amp; Sorority, Inc.</b>", header_style))
+    elements.append(Paragraph("A 501(c)(3) non-profit organization · EIN <b>82-0794957</b>", sub_style))
+
+    today = now_utc().strftime("%B %d, %Y")
+    elements.append(Paragraph(today, body_style))
+    elements.append(Spacer(1, 14))
+
+    # Donor address block
+    elements.append(Paragraph(f"<b>{user.get('name', '')}</b>", body_style))
+    if user.get("address"):
+        elements.append(Paragraph(user["address"], body_style))
+    city_line = ", ".join(p for p in [user.get("city"), user.get("state"), user.get("zip_code")] if p)
+    if city_line:
+        elements.append(Paragraph(city_line, body_style))
+    elements.append(Spacer(1, 18))
+
+    # Salutation + body
+    salutation_name = user.get("first_name") or (user.get("name") or "Member").split(" ")[0]
+    elements.append(Paragraph(f"Dear {salutation_name},", body_style))
+    elements.append(Spacer(1, 6))
+    elements.append(Paragraph(
+        f"On behalf of Alpha Omega Phi Military Fraternity &amp; Sorority, Inc., thank you "
+        f"for your generosity during the {year} calendar year. Your contributions sustain our "
+        f"chapters, our veteran-focused community programs, and the mission we share.",
+        body_style,
+    ))
+    elements.append(Spacer(1, 8))
+    elements.append(Paragraph(
+        "This letter serves as your official acknowledgment of charitable contributions "
+        "for tax-reporting purposes. Alpha Omega Phi Military Fraternity &amp; Sorority, Inc. "
+        "is a 501(c)(3) tax-exempt organization. <b>EIN: 82-0794957.</b> No goods or services "
+        "were provided to you in exchange for these contributions, except for intangible "
+        "religious or membership benefits.",
+        body_style,
+    ))
+    elements.append(Spacer(1, 14))
+
+    # Itemized table
+    rows = [["Date", "Description", "Type", "Amount"]]
+    for t in txs:
+        rows.append([
+            (t.get("created_at") or "")[:10],
+            (t.get("description") or "—")[:55],
+            ("Dues" if (t.get("purpose") == "dues" or t.get("type") == "renewal") else (t.get("type") or "—").title()),
+            f"${float(t.get('amount') or 0):.2f}",
+        ])
+    rows.append(["", "", "Total", f"${total:.2f}"])
+    item_tbl = Table(rows, colWidths=[0.95 * inch, 3.4 * inch, 0.9 * inch, 1.0 * inch])
+    item_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0EBE3")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, 0), (-1, 0), AOP_NAVY),
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#EFEFEF")),
+        ("LINEABOVE", (0, -1), (-1, -1), 0.75, AOP_NAVY),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("ALIGN", (3, 0), (3, -1), "RIGHT"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(item_tbl)
+    elements.append(Spacer(1, 12))
+    elements.append(Paragraph(
+        f"Summary: Annual dues <b>${dues_total:,.2f}</b> · Donations <b>${donation_total:,.2f}</b> · "
+        f"<b>Total tax-deductible contributions: ${total:,.2f}</b>.",
+        body_style,
+    ))
+    elements.append(Spacer(1, 18))
+
+    elements.append(Paragraph(
+        "Please retain this letter with your tax records. Consult your tax advisor regarding the "
+        "deductibility of your contributions. Should you need anything further, contact us at "
+        "info@alphaomegaphi.org.",
+        body_style,
+    ))
+    elements.append(Spacer(1, 22))
+    elements.append(Paragraph("With sincere thanks,", body_style))
+
+    # Signature image — pulled from bundled assets directory.
+    sig_path = "/app/backend/assets/cory_signature.png"
+    if os.path.isfile(sig_path):
+        try:
+            elements.append(Spacer(1, 4))
+            elements.append(Image(sig_path, width=2.0 * inch, height=0.78 * inch))
+        except Exception as ex:
+            logger.warning(f"[tax-letter] signature render failed: {ex}")
+
+    elements.append(Paragraph("<b>Cory T. Burnett</b>", body_style))
+    elements.append(Paragraph("Co-Founder", body_style))
+    elements.append(Paragraph("Alpha Omega Phi Military Fraternity &amp; Sorority, Inc.", body_style))
+    elements.append(Spacer(1, 16))
+    elements.append(Paragraph(
+        f"Tax-acknowledgment letter for the {year} calendar year. Generated {today}. "
+        f"This document is auto-produced and certified by the organization records system.",
+        small,
+    ))
+
+    doc.build(elements)
+    buf.seek(0)
+    safe_name = (user.get("name") or "member").replace(" ", "_")
+    filename = f"aop-tax-letter-{safe_name}-{year}.pdf"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------- Seed Phase B sample data (idempotent) ----------
