@@ -383,7 +383,14 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Refactor progress**: `server.py` 7,053 → 6,711 lines (−342 lines, −5%). Modules under `routes/` now: pages, site_settings, ai, news, chapters, tiers, payments, auth.
 - **Tests**: 28/28 backend pytest pass in `/app/backend/tests/test_iteration25_auth_zeffy.py`. Frontend live-validation + submit flow verified.
 
+### Iteration 27 — Event cancellation + Bulk CSV import + Member Title (2026-06-03)
+- **Event cancellation**: admin can flip an event to "cancelled" via the EventDialog (`data-testid="event-cancelled-toggle"`) with optional reason. Backend stamps `cancelled_at` on flip-on, blocks new RSVPs (400 "This event has been cancelled — RSVPs are closed.") and guest-list edits (400 "guest list is locked"). Event still appears on the calendar/events grid with a red "Cancelled" pill + strikethrough title. EventDetail page shows a prominent banner + reason. Un-cancelling clears `cancelled_at` and re-enables RSVPs.
+- **Bulk CSV member import** (`POST /api/admin/members/bulk-import`): admin uploads a CSV (typically a ClubExpress roster export). One user per row; `membership_expires_at = renewal_date + 365 days`. Accepts flexible column aliases (FirstName/First Name/First, Renewal Date/Renewal/Expires, etc.), 9-format title normalization, multi-format date parsing via `dateutil`. Dry-run preview mode returns counts without inserting. Duplicates by email are skipped, not overwritten. Per-row error capture so admins can fix and re-upload. 5 MB cap. Template download at `GET /api/admin/members/bulk-import/template`. New `BulkImportMembersDialog.jsx` component on Admin → Members tab next to "New member".
+- **Title field** (optional): Mr. / Mrs. / Ms. / Miss / Dr. / Prof. / Rev. / Hon. / Mx. — added to user model (`u.title`), Profile (member self-edit), Admin New/Edit member dialogs, and Directory display (prefixed before the name).
+- **Tests**: 17/17 backend pytest pass in `/app/backend/tests/test_iteration27_features.py`. Bulk import dialog + profile title persistence + event-edit testid all verified.
 
+
+### P0 — Production polish
 - Resend domain verification + update `RESEND_FROM` env to verified address.
 - Register Resend webhook URL in dashboard.
 - Add Resend webhook signature verification (svix).

@@ -115,7 +115,7 @@ function EventsAdmin() {
                             <div className="text-sm text-muted-foreground mt-1">{format(parseISO(e.start_at), "EEE, MMM d · h:mm a")} · {e.rsvp_count} RSVPs</div>
                         </div>
                         <div className="flex gap-2">
-                            <EventDialog event={e} onSaved={load} trigger={<Button variant="outline" className="rounded-full">Edit</Button>} />
+                            <EventDialog event={e} onSaved={load} trigger={<Button variant="outline" className="rounded-full" data-testid={`edit-event-${e.id}`}>Edit</Button>} />
                             <Button variant="ghost" size="icon" onClick={() => del(e.id)} data-testid={`delete-event-${e.id}`}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                         </div>
                     </div>
