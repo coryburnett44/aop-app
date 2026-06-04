@@ -819,6 +819,10 @@ function TableLike({ headers, rows }) {
     );
 }
 
+function Empty() {
+    return <div className="text-xs text-muted-foreground italic px-1">— None on record —</div>;
+}
+
 function FilterSelect({ label, value, onChange, options, testid }) {
     return (
         <div>
