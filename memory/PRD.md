@@ -369,6 +369,14 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Resend webhook**: endpoint exists at `POST /api/email/webhook`. **Action for user**: configure this URL at resend.com/webhooks (use the deployed `*.emergent.host` URL, not preview). Signature verification not yet added.
 - **PayPal**: LIVE mode is active. Test orders persist in `transactions` collection as pending until a real buyer approves & capture is called. No real money moves until capture.
 
+### Iteration 29 — Profile extras + admin hours-adjust + member self-download brief + MacBook founders bug fix (2026-06-04)
+- **MacBook founders fix**: `mediaUrl()` (in `lib/api.js`) now rewrites stale `*.emergentagent.com` preview-origin URLs to current `REACT_APP_BACKEND_URL`. All `<img>` on Home.jsx wrap src with `mediaUrl()`. Fixes the production aop-app.org Safari issue where founder images saved with preview hostnames couldn't load.
+- **Admin can adjust hours value at any time**: `HoursReviewIn` accepts `status='pending'` (revert path) + optional `hours / activity / agency_name / event_type`. Audit fields `hours_adjusted_by_name` + `hours_adjusted_at` stamped on adjustment. `AdminHoursActions` in Hours.jsx adds an inline number-input "✏️ Edit hrs" on every row — pending OR approved.
+- **Profile extras** (member self-service): `marital_status` dropdown beside Phone, up to 3 spoken languages (speaking/reading/writing proficiency + year), up to 5 civilian degrees (level + type + field + institution + grad month/year). New `ProfileExtrasEditor.jsx`.
+- **Member can download own Personnel Brief**: `GET /me/personnel-brief` + `GET /me/personnel-brief/pdf`. `DownloadMyBriefButton` in Profile header.
+- **Tests**: 13/13 new + 73/73 full regression.
+
+
 ### Iteration 25 — Zeffy receipt validation + auth/payments route extraction (2026-06-03)
 - **Backend `routes/payments.py`** (new) — extracted Zeffy + transaction routes from `server.py`:
   - `classify_zeffy_receipt()` — regex-based format detection. Returns `'rct'` (RCT-XXXX-XXXX), `'zf'` (ZF-XXXXXX), `'email'` (donor@example.com), `'alnum'` (10-40 char alphanumeric id), or `None`.
@@ -384,6 +392,13 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Tests**: 28/28 backend pytest pass in `/app/backend/tests/test_iteration25_auth_zeffy.py`. Frontend live-validation + submit flow verified.
 
 ### Iteration 28 — Paid events + AOP events-inbox CC + Optional ticket types + Set-password email blast (2026-06-04)
+- **MacBook founders fix**: `mediaUrl()` (in `lib/api.js`) now rewrites stale `*.emergentagent.com` preview-origin URLs to the current `REACT_APP_BACKEND_URL`. All `<img>` tags on Home.jsx (founders, leadership, avatars, event covers, news covers) now wrap their src with `mediaUrl()`. Root cause: founder images were uploaded while editing in preview and saved with the preview hostname; production page (aop-app.org) couldn't load them due to Safari ITP / origin restrictions.
+- **Admin can adjust hours value at any time**: `HoursReviewIn` accepts `status='pending'` (revert path) + optional `hours / activity / agency_name / event_type`. Audit fields `hours_adjusted_by`, `hours_adjusted_by_name`, `hours_adjusted_at` stamped on adjustment. Front-end `AdminHoursActions` (Hours.jsx) adds an inline number-input "✏️ Edit hrs" on every row regardless of status — pending and approved alike. Adjustment count audit visible inline.
+- **Profile extras** (member self-service): added `marital_status` (single dropdown placed beside Phone), up to 3 spoken languages (`{language, speaking, reading, writing, year_accomplished}`), up to 5 civilian degrees (`{degree_level, degree_type, field_of_study, institution, graduation_month, graduation_year}`). New `ProfileExtrasEditor.jsx` (`MaritalStatusField`, `LanguagesEditor`, `CivilianDegreesEditor`) keeps Profile.jsx tidy. Pydantic models `LanguageEntry` + `CivilianDegreeEntry` validate sub-fields. `public_user` surfaces them.
+- **Member can download own Personnel Brief**: new endpoints `GET /me/personnel-brief` and `GET /me/personnel-brief/pdf` (uses `_personnel_brief_data` helper shared with admin endpoint). `DownloadMyBriefButton` lives in the Profile header.
+- **Tests**: 13/13 new pytest cases + 73/73 full regression in ~30s.
+
+
 - **Paid events**: `Event` model adds `is_paid`, `payment_url` (Zeffy URL), `payment_amount`. Free RSVP on a paid event returns **402**. New `POST /events/{id}/payment/confirm` (Zeffy receipt → pending `event_ticket` tx) + `PUT /transactions/{id}/approve-event-ticket` (admin approval creates RSVP + emails ticket). Mirrors dues flow: trust_zeffy + valid receipt format → auto-approval. Duplicate-payment guard returns 400. `PaidEventCheckout.jsx` is the member-side UI.
 - **Events inbox CC**: `send_rsvp_ticket_email` now CC's `EVENTS_INBOX_EMAIL` (default `info@alphaomegaphi.org`) on every RSVP ticket email, including the QR code. Env-configurable.
 - **Optional / selectable ticket types**: Event model adds `enabled_ticket_types: List[str]`. Empty = no ticket types. Otherwise admin picks any subset of vip/all_access/general/guest/speaker/volunteer. EventDialog renders 6 checkboxes; both MemberTicketPicker and PaidEventCheckout filter to only enabled types.
