@@ -49,12 +49,26 @@ api.interceptors.request.use((config) => {
 
 // Convert a relative storage URL like "/api/files/xyz" into an absolute URL
 // that works regardless of whether REACT_APP_BACKEND_URL is the same origin as
-// the page. Absolute http(s) URLs are returned unchanged. Empty/null values
-// pass through. Use this anywhere you render an avatar / cover / image whose
-// path may have been saved as a relative API URL.
+// the page. Absolute http(s) URLs are returned unchanged UNLESS they point to
+// a stale Emergent preview host (e.g. images uploaded from the preview env but
+// being viewed in production at aop-app.org). In that case we rewrite the
+// origin to the current backend so Safari ITP / CORS doesn't block them.
 export function mediaUrl(url) {
     if (!url) return url || "";
-    if (/^(https?:|data:|blob:)/i.test(url)) return url;
+    if (/^(data:|blob:)/i.test(url)) return url;
+    if (/^https?:/i.test(url)) {
+        // Rewrite stale preview-host image URLs to the current backend origin.
+        // This fixes a Safari/MacBook issue where founder/leadership images
+        // saved while editing in preview-mode were stuck pointing at the
+        // preview host and failed to load in production due to ITP.
+        try {
+            const u = new URL(url);
+            if (/emergentagent\.com$/i.test(u.hostname) && BACKEND_URL && BACKEND_URL !== `${u.protocol}//${u.host}`) {
+                return `${BACKEND_URL}${u.pathname}${u.search}${u.hash}`;
+            }
+        } catch { /* not a parseable URL — return as-is */ }
+        return url;
+    }
     if (url.startsWith("/api/")) return `${BACKEND_URL}${url}`;
     if (url.startsWith("/")) return `${BACKEND_URL}${url}`;
     return url;

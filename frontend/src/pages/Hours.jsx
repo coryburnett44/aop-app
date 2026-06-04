@@ -254,10 +254,12 @@ function ReviewQueue() {
     const load = () => api.get(`/hours${filter !== "all" ? `?status_filter=${filter}` : ""}`).then(({ data }) => setEntries(data));
     useEffect(() => { load(); }, [filter]);
 
-    async function review(id, status) {
+    async function review(id, status, hours = null) {
         try {
-            await api.put(`/hours/${id}/review`, { status, note: "" });
-            toast.success(status === "approved" ? "Approved ✅" : "Rejected");
+            const payload = { status, note: "" };
+            if (hours !== null) payload.hours = Number(hours);
+            await api.put(`/hours/${id}/review`, payload);
+            toast.success(status === "approved" ? "Approved ✅" : status === "rejected" ? "Rejected" : "Updated");
             load();
         } catch (e) {
             toast.error(e.response?.data?.detail || "Failed");
@@ -285,18 +287,7 @@ function ReviewQueue() {
                 <div className="space-y-3">
                     {entries.map((h) => (
                         <HoursCard key={h.id} h={h}>
-                            {h.status === "pending" ? (
-                                <div className="flex gap-2 shrink-0">
-                                    <Button size="sm" onClick={() => review(h.id, "approved")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`approve-${h.id}`}>
-                                        <Check className="h-4 w-4 mr-1" /> Approve
-                                    </Button>
-                                    <Button size="sm" variant="outline" onClick={() => review(h.id, "rejected")} className="rounded-full" data-testid={`reject-${h.id}`}>
-                                        <X className="h-4 w-4 mr-1" /> Reject
-                                    </Button>
-                                </div>
-                            ) : (
-                                <StatusBadge status={h.status} />
-                            )}
+                            <AdminHoursActions h={h} onReview={review} />
                         </HoursCard>
                     ))}
                 </div>
@@ -324,5 +315,74 @@ function StatusBadge({ status }) {
         <span className={`text-xs uppercase tracking-wider font-semibold rounded-full px-3 py-1 shrink-0 ${map[status] || "bg-muted"}`}>
             {status}
         </span>
+    );
+}
+
+
+/**
+ * Inline editor + action buttons for the admin hours queue.
+ * Admins need to (a) approve / reject pending submissions AND (b) correct the
+ * recorded hours value at any time — even after approval. Members occasionally
+ * over- or under-report; rather than asking them to resubmit, the admin can
+ * tweak the value in place and the audit trail (hours_adjusted_by_name +
+ * hours_adjusted_at) gets stamped server-side.
+ */
+function AdminHoursActions({ h, onReview }) {
+    const [editing, setEditing] = useState(false);
+    const [val, setVal] = useState(String(h.hours));
+
+    async function save() {
+        const n = Number(val);
+        if (!n || n <= 0 || n > 1000) { toast.error("Enter a valid hours value (0–1000)"); return; }
+        await onReview(h.id, h.status === "pending" ? "approved" : h.status, n);
+        setEditing(false);
+    }
+
+    return (
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <div className="flex items-center gap-2">
+                <StatusBadge status={h.status} />
+                {!editing && (
+                    <button
+                        type="button"
+                        onClick={() => { setVal(String(h.hours)); setEditing(true); }}
+                        className="text-[11px] text-primary hover:underline font-semibold"
+                        data-testid={`edit-hours-${h.id}`}
+                    >
+                        ✏️ Edit hrs
+                    </button>
+                )}
+            </div>
+            {editing && (
+                <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-full px-2 py-1">
+                    <Input
+                        type="number"
+                        min="0"
+                        max="1000"
+                        step="0.25"
+                        value={val}
+                        onChange={(e) => setVal(e.target.value)}
+                        className="h-7 w-20 text-xs rounded-full"
+                        data-testid={`edit-hours-input-${h.id}`}
+                        autoFocus
+                    />
+                    <Button size="sm" onClick={save} className="h-7 rounded-full text-xs bg-amber-600 hover:bg-amber-700 text-white px-3" data-testid={`save-hours-${h.id}`}>Save</Button>
+                    <button type="button" onClick={() => setEditing(false)} className="text-[11px] text-slate-600 hover:underline">cancel</button>
+                </div>
+            )}
+            {h.status === "pending" && !editing && (
+                <div className="flex gap-2">
+                    <Button size="sm" onClick={() => onReview(h.id, "approved")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`approve-${h.id}`}>
+                        <Check className="h-4 w-4 mr-1" /> Approve
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => onReview(h.id, "rejected")} className="rounded-full" data-testid={`reject-${h.id}`}>
+                        <X className="h-4 w-4 mr-1" /> Reject
+                    </Button>
+                </div>
+            )}
+            {h.hours_adjusted_by_name && (
+                <div className="text-[10px] text-muted-foreground italic">adjusted by {h.hours_adjusted_by_name}</div>
+            )}
+        </div>
     );
 }

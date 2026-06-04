@@ -145,6 +145,10 @@ def public_user(u: dict) -> dict:
         "status": status,
         "status_override": u.get("status_override"),
         "interests": u.get("interests", []),
+        "marital_status": u.get("marital_status", ""),
+        "languages": u.get("languages", []),
+        "civilian_degrees": u.get("civilian_degrees", []),
+        "assignment_history": u.get("assignment_history", []),
         "avatar_url": u.get("avatar_url", ""),
         "membership_tier": u.get("membership_tier", "standard"),
         "tier_id": u.get("tier_id"),
@@ -2191,6 +2195,9 @@ def hours_out(h: dict) -> dict:
         "reviewed_by_name": h.get("reviewed_by_name"),
         "reviewed_at": h.get("reviewed_at"),
         "note": h.get("note", ""),
+        "hours_adjusted_by": h.get("hours_adjusted_by"),
+        "hours_adjusted_by_name": h.get("hours_adjusted_by_name"),
+        "hours_adjusted_at": h.get("hours_adjusted_at"),
         "created_at": h.get("created_at"),
     }
 
@@ -2231,19 +2238,39 @@ async def list_hours(status_filter: Optional[str] = None, admin: dict = Depends(
 
 @api.put("/hours/{hours_id}/review")
 async def review_hours(hours_id: str, body: HoursReviewIn, admin: dict = Depends(admin_tab_dep("hours"))):
-    await db.volunteer_hours.update_one(
-        {"id": hours_id},
-        {"$set": {
-            "status": body.status,
-            "note": body.note or "",
-            "reviewed_by": admin["id"],
-            "reviewed_by_name": admin.get("name", "Admin"),
-            "reviewed_at": iso(now_utc()),
-        }},
-    )
-    h = await db.volunteer_hours.find_one({"id": hours_id}, {"_id": 0})
-    if not h:
+    """Admin reviews a member's volunteer-hours submission.
+
+    Admin can:
+      - Flip status: pending → approved | rejected (and any time after, re-flip).
+      - Optionally adjust the recorded hours value (e.g. submitter logged 5, only 4.5 worked).
+      - Optionally edit activity / agency / event_type along with approval.
+    Editing after approval is supported by passing the same status again with
+    a corrected hours value — this is how admins fix data after the fact.
+    """
+    existing = await db.volunteer_hours.find_one({"id": hours_id})
+    if not existing:
         raise HTTPException(status_code=404, detail="Hours entry not found")
+    update_doc: dict = {
+        "status": body.status,
+        "note": body.note or existing.get("note", ""),
+        "reviewed_by": admin["id"],
+        "reviewed_by_name": admin.get("name", "Admin"),
+        "reviewed_at": iso(now_utc()),
+    }
+    if body.hours is not None:
+        update_doc["hours"] = float(body.hours)
+        # Stamp the admin who adjusted the value so the audit trail is clear.
+        update_doc["hours_adjusted_by"] = admin["id"]
+        update_doc["hours_adjusted_by_name"] = admin.get("name", "Admin")
+        update_doc["hours_adjusted_at"] = iso(now_utc())
+    if body.activity:
+        update_doc["activity"] = body.activity
+    if body.agency_name:
+        update_doc["agency_name"] = body.agency_name
+    if body.event_type:
+        update_doc["event_type"] = body.event_type
+    await db.volunteer_hours.update_one({"id": hours_id}, {"$set": update_doc})
+    h = await db.volunteer_hours.find_one({"id": hours_id}, {"_id": 0})
     return hours_out(h)
 
 @api.delete("/hours/{hours_id}")
@@ -4908,9 +4935,9 @@ async def report_donations(
     items = await db.transactions.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
     return items
 
-@api.get("/reports/personnel-brief/{user_id}")
-async def personnel_brief(user_id: str, _: dict = Depends(admin_tab_dep("reports"))):
-    """Compiles everything for a printable member brief."""
+async def _personnel_brief_data(user_id: str) -> dict:
+    """Compile the personnel-brief payload. Shared by the admin and member endpoints.
+    Does no auth — caller is responsible for guarding."""
     u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not u:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -4955,17 +4982,28 @@ async def personnel_brief(user_id: str, _: dict = Depends(admin_tab_dep("reports
         "events": events_attended,
         "events_count": len(events_attended),
         "checkins": checkins,
+        "rsvps": rsvps,
         "transactions": txs,
         "total_paid": total_paid,
         "generated_at": iso(now_utc()),
     }
 
 
+@api.get("/reports/personnel-brief/{user_id}")
+async def personnel_brief(user_id: str, _: dict = Depends(admin_tab_dep("reports"))):
+    """Compiles everything for a printable member brief."""
+    return await _personnel_brief_data(user_id)
+
+
 @api.get("/reports/personnel-brief/{user_id}/pdf")
 async def personnel_brief_pdf(user_id: str, admin: dict = Depends(admin_tab_dep("reports"))):
     """Generates a printable PDF version of the personnel brief."""
-    # Reuse the same data-gathering as the JSON endpoint by calling it directly.
-    data = await personnel_brief(user_id, admin)
+    return await _personnel_brief_pdf_response(user_id)
+
+
+async def _personnel_brief_pdf_response(user_id: str):
+    """Build and stream the personnel-brief PDF for the given user id."""
+    data = await _personnel_brief_data(user_id)
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
@@ -5115,6 +5153,21 @@ async def personnel_brief_pdf(user_id: str, admin: dict = Depends(admin_tab_dep(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------- Member-self brief download ----------
+# Convenience wrappers so a member can pull their own personnel brief without
+# admin privileges. They forward to the admin endpoint with their own user_id.
+@api.get("/me/personnel-brief")
+async def my_personnel_brief(user: dict = Depends(get_current_user)):
+    """Member-side: their own personnel brief JSON."""
+    return await _personnel_brief_data(user["id"])
+
+
+@api.get("/me/personnel-brief/pdf")
+async def my_personnel_brief_pdf(user: dict = Depends(get_current_user)):
+    """Member-side: their own personnel brief as a PDF download."""
+    return await _personnel_brief_pdf_response(user["id"])
 
 
 # ---------- Seed Phase B sample data (idempotent) ----------

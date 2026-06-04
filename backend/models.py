@@ -54,6 +54,34 @@ class LoginIn(BaseModel):
 
 TITLE_CHOICES = Literal["Mr.", "Mrs.", "Ms.", "Miss", "Dr.", "Prof.", "Rev.", "Hon.", "Mx."]
 
+MARITAL_STATUS_CHOICES = Literal["", "Single", "Engaged", "Domestic Partnership", "Married", "Divorced", "Widowed"]
+
+PROFICIENCY_CHOICES = Literal["", "Native", "Fluent", "Advanced", "Intermediate", "Basic"]
+
+DEGREE_LEVEL_CHOICES = Literal[
+    "", "HS Diploma", "Trade Cert", "Associate", "Bachelors",
+    "Masters", "Masters Certificate", "Doctorate", "Doctor of Philosophy",
+]
+
+
+class LanguageEntry(BaseModel):
+    """One spoken-language profile entry. Up to 3 per user."""
+    language: str = ""
+    speaking: str = ""        # PROFICIENCY_CHOICES
+    reading: str = ""
+    writing: str = ""
+    year_accomplished: Optional[int] = None
+
+
+class CivilianDegreeEntry(BaseModel):
+    """One civilian-degree entry. Up to 5 per user."""
+    degree_level: str = ""    # DEGREE_LEVEL_CHOICES
+    degree_type: str = ""     # e.g. "BS", "MBA", "Ph.D"
+    field_of_study: str = ""
+    institution: str = ""
+    graduation_month: Optional[int] = None  # 1–12
+    graduation_year: Optional[int] = None
+
 
 class ProfileUpdateIn(BaseModel):
     name: Optional[str] = None
@@ -74,6 +102,9 @@ class ProfileUpdateIn(BaseModel):
     country: Optional[str] = None
     birthdate: Optional[str] = None
     branch_of_service: Optional[str] = None
+    marital_status: Optional[str] = None
+    languages: Optional[List[LanguageEntry]] = None
+    civilian_degrees: Optional[List[CivilianDegreeEntry]] = None
     interests: Optional[List[str]] = None
     avatar_url: Optional[str] = None
     chat_email_notifications: Optional[bool] = None
@@ -187,6 +218,9 @@ class AdminUpdateMemberIn(BaseModel):
     country: Optional[str] = None
     birthdate: Optional[str] = None
     branch_of_service: Optional[str] = None
+    marital_status: Optional[str] = None
+    languages: Optional[List[LanguageEntry]] = None
+    civilian_degrees: Optional[List[CivilianDegreeEntry]] = None
     interests: Optional[List[str]] = None
     avatar_url: Optional[str] = None
     role: Optional[Literal["member", "admin"]] = None
@@ -378,8 +412,15 @@ class AwardUpdateIn(BaseModel):
 
 
 class HoursReviewIn(BaseModel):
-    status: Literal["approved", "rejected"]
+    status: Literal["pending", "approved", "rejected"]
     note: Optional[str] = ""
+    # Admin can adjust the hours value when approving (e.g. member submitted 5.0
+    # but only 4.5 were actually worked). Allowing this on both initial review
+    # and post-approval edits keeps reconciliation easy.
+    hours: Optional[float] = Field(None, gt=0, le=1000)
+    activity: Optional[str] = None
+    agency_name: Optional[str] = None
+    event_type: Optional[Literal["aop_related", "other"]] = None
 
 
 class AssignChapterIn(BaseModel):

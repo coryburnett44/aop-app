@@ -15,11 +15,12 @@ import { toast } from "sonner";
 import {
     Calendar, MapPin, Trophy, Clock, Medal, Star, Heart, GraduationCap, Sparkles,
     Award as AwardIcon, Building2, Lock, DollarSign, Activity, Phone, AtSign,
-    Facebook, Instagram, Linkedin, Twitter, Youtube, Globe,
+    Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Download,
 } from "lucide-react";
 import PayPalCheckout from "../components/PayPalCheckout";
 import ZeffyCheckout from "../components/ZeffyCheckout";
 import AvatarUploader from "../components/AvatarUploader";
+import { MaritalStatusField, LanguagesEditor, CivilianDegreesEditor } from "../components/ProfileExtrasEditor";
 
 const ICON_MAP = { medal: Medal, star: Star, heart: Heart, "graduation-cap": GraduationCap, sparkles: Sparkles, trophy: Trophy, award: AwardIcon };
 
@@ -33,6 +34,9 @@ export default function Profile() {
         intake_line: "", intake_completed_at: "",
         username: "", phone: "", bio: "", city: "", address: "", state: "", zip_code: "", country: "",
         birthdate: "", interests: "", avatar_url: "", chapter_id: "",
+        marital_status: "",
+        languages: [],
+        civilian_degrees: [],
     });
     const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
     const [chapters, setChapters] = useState([]);
@@ -74,6 +78,9 @@ export default function Profile() {
                 pinterest_url: user.pinterest_url || "",
                 youtube_url: user.youtube_url || "",
                 website_url: user.website_url || "",
+                marital_status: user.marital_status || "",
+                languages: user.languages || [],
+                civilian_degrees: user.civilian_degrees || [],
             });
         }
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
@@ -102,6 +109,9 @@ export default function Profile() {
                 linkedin_url: form.linkedin_url, tiktok_url: form.tiktok_url,
                 twitter_url: form.twitter_url, pinterest_url: form.pinterest_url,
                 youtube_url: form.youtube_url, website_url: form.website_url,
+                marital_status: form.marital_status,
+                languages: form.languages,
+                civilian_degrees: form.civilian_degrees,
             };
             const { data } = await api.put("/members/me", payload);
             // Chapter is a separate endpoint
@@ -154,7 +164,7 @@ export default function Profile() {
                         if (data) setUser(data);
                     }}
                 />
-                <div>
+                <div className="flex-1">
                     <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight">{user.name}</h1>
                     {user.line_name && <div className="text-sm font-bold uppercase tracking-widest text-primary mt-0.5">"{user.line_name}"</div>}
                     <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 mt-1">
@@ -162,6 +172,7 @@ export default function Profile() {
                         {user.membership_tier && <span className="text-xs bg-accent/40 rounded-full px-2.5 py-0.5 font-semibold uppercase tracking-wider">{user.membership_tier}</span>}
                     </div>
                 </div>
+                <DownloadMyBriefButton />
             </div>
 
             <div className="rounded-2xl bg-gradient-to-br from-primary/15 via-secondary/25 to-accent/40 p-6 border border-border mb-8" data-testid="membership-card">
@@ -273,8 +284,9 @@ export default function Profile() {
                                 )}
                             </div>
                         </div>
-                        <div className="grid sm:grid-cols-2 gap-4">
+                        <div className="grid sm:grid-cols-3 gap-4">
                             <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-phone" /></div>
+                            <MaritalStatusField value={form.marital_status} onChange={(v) => setForm({ ...form, marital_status: v })} />
                             <div><Label>City</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-city" /></div>
                         </div>
                         <div className="grid sm:grid-cols-2 gap-4">
@@ -339,6 +351,8 @@ export default function Profile() {
                             </div>
                         </div>
                         <div><Label>Bio</Label><Textarea rows={4} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-bio" /></div>
+                        <LanguagesEditor value={form.languages} onChange={(v) => setForm({ ...form, languages: v })} />
+                        <CivilianDegreesEditor value={form.civilian_degrees} onChange={(v) => setForm({ ...form, civilian_degrees: v })} />
                         <div className="flex justify-end">
                             <Button type="submit" disabled={saving} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="profile-save-btn">{saving ? "Saving…" : "Save changes"}</Button>
                         </div>
@@ -586,3 +600,43 @@ function ToggleRow({ title, description, checked, onChange, disabled, testid }) 
         </div>
     );
 }
+
+/**
+ * Tiny self-contained button — fetches the current user's personnel-brief PDF
+ * and triggers a download. Lives in the profile header so members always have
+ * a one-click escape hatch to grab their record (great for reimbursements,
+ * career packets, and PCS/transfer files).
+ */
+function DownloadMyBriefButton() {
+    const [busy, setBusy] = useState(false);
+    async function download() {
+        setBusy(true);
+        try {
+            const res = await api.get("/me/personnel-brief/pdf", { responseType: "blob" });
+            const url = URL.createObjectURL(res.data);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `my-personnel-brief-${new Date().toISOString().slice(0, 10)}.pdf`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+            toast.success("Personnel brief downloaded");
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not download brief");
+        }
+        setBusy(false);
+    }
+    return (
+        <Button
+            type="button"
+            onClick={download}
+            disabled={busy}
+            variant="outline"
+            className="rounded-full self-start"
+            data-testid="download-my-brief-btn"
+        >
+            <Download className="h-4 w-4 mr-1.5" />
+            {busy ? "Generating…" : "Download my brief"}
+        </Button>
+    );
+}
+
