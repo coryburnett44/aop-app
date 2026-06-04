@@ -370,11 +370,25 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **PayPal**: LIVE mode is active. Test orders persist in `transactions` collection as pending until a real buyer approves & capture is called. No real money moves until capture.
 
 ### Iteration 29 — Profile extras + admin hours-adjust + member self-download brief + MacBook founders bug fix (2026-06-04)
+- **Personnel Brief PDF redesigned** (`_personnel_brief_pdf_response`): header with photo + title + name + line name + email + phone, then 10 numbered navy-banner sections — §1 Personal Info, §2 Org Info, §3 Civilian Education (chronological), §4 Languages (most-recent year first), §5 Financial Obligations / Annual Dues (last 5), §6 Donations (last 5 — cause/amount/date), §7 Community Service (current-year only — agency / event_type / hours / status / date), §8 Awards (with 1st/2nd/3rd ordinal per award), §9 Events (current-year check-ins only), §10 Assignment History (current first).
+- **Annual Tax Donation Letter** (`/api/me/tax-letter/pdf?year=...`): member-only PDF that sums all COMPLETED dues + donations + fees inside a calendar year. Includes EIN 82-0794957, signature line block (Cory T. Burnett / Co-Founder / Alpha Omega Phi Military Fraternity & Sorority, Inc.) with Cory's hand-signed image (`/app/backend/assets/cory_signature.png`) embedded directly above the block. Defaults to last completed year. Pending tx are excluded.
+- **Assignment History admin UI** (`AssignmentHistoryEditor.jsx`): single-line rows with Start / End-or-Current / Chapter / State / Location / Duty Title / Rank. 8-rank dropdown (Grand Sirius 5★ → Master/Senior/Advanced/Junior Sirius → Eagle/Clover/Guardian). Current toggle disables End-date input. ↑/↓ reorder and Remove available per row. `RANK_CHOICES` Literal + `AssignmentEntry` model + `AdminUpdateMemberIn.assignment_history`.
+- **Profile additions**: "Tax letter" button with year picker (current + 5 prior) next to "Download my brief".
+- **Tests**: 12/12 new pytest + 85/85 full regression in ~33 s.
+
+
 - **MacBook founders fix**: `mediaUrl()` (in `lib/api.js`) now rewrites stale `*.emergentagent.com` preview-origin URLs to current `REACT_APP_BACKEND_URL`. All `<img>` on Home.jsx wrap src with `mediaUrl()`. Fixes the production aop-app.org Safari issue where founder images saved with preview hostnames couldn't load.
 - **Admin can adjust hours value at any time**: `HoursReviewIn` accepts `status='pending'` (revert path) + optional `hours / activity / agency_name / event_type`. Audit fields `hours_adjusted_by_name` + `hours_adjusted_at` stamped on adjustment. `AdminHoursActions` in Hours.jsx adds an inline number-input "✏️ Edit hrs" on every row — pending OR approved.
 - **Profile extras** (member self-service): `marital_status` dropdown beside Phone, up to 3 spoken languages (speaking/reading/writing proficiency + year), up to 5 civilian degrees (level + type + field + institution + grad month/year). New `ProfileExtrasEditor.jsx`.
 - **Member can download own Personnel Brief**: `GET /me/personnel-brief` + `GET /me/personnel-brief/pdf`. `DownloadMyBriefButton` in Profile header.
 - **Tests**: 13/13 new + 73/73 full regression.
+
+### Iteration 30 — New Personnel Brief 10-section layout + Annual Tax Letter PDF + Assignment History admin (2026-06-04)
+- **Personnel Brief PDF redesigned** (`_personnel_brief_pdf_response`): header (photo + title + name + line + email + phone), then 10 numbered navy-banner sections covering Personal Info / Org Info / Civilian Education (chronological) / Languages (most-recent year first) / Financial Obligations (last 5 dues) / Donations (last 5) / Community Service (current year only) / Awards (with 1st-2nd-3rd ordinal) / Events (current-year check-ins only) / Assignment History (current first).
+- **Annual Tax Donation Letter** (`GET /api/me/tax-letter/pdf?year=...`): member-only PDF summing all COMPLETED dues + donations + fees inside a calendar year. Includes EIN 82-0794957, hand-signed Cory T. Burnett signature image above his Co-Founder block. Defaults to last completed year. Pending tx excluded.
+- **Assignment History admin UI** (`AssignmentHistoryEditor.jsx`): single-line rows with Start / End-or-Current / Chapter / State / Location / Duty Title / Rank. 8-rank dropdown (Grand Sirius 5★ → Master/Senior/Advanced/Junior Sirius → Eagle/Clover/Guardian). Current toggle disables End-date. ↑/↓ reorder + Remove per row.
+- **Profile additions**: "Tax letter" button with year picker (current + 5 prior) next to "Download my brief".
+- **Tests**: 12/12 new pytest + 85/85 full regression in ~33 s.
 
 
 ### Iteration 25 — Zeffy receipt validation + auth/payments route extraction (2026-06-03)
