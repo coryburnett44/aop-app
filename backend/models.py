@@ -124,6 +124,7 @@ class ProfileUpdateIn(BaseModel):
     marital_status: Optional[str] = None
     languages: Optional[List[LanguageEntry]] = None
     civilian_degrees: Optional[List[CivilianDegreeEntry]] = None
+    custom_fields: Optional[Dict[str, Any]] = None
     interests: Optional[List[str]] = None
     avatar_url: Optional[str] = None
     chat_email_notifications: Optional[bool] = None
@@ -240,6 +241,7 @@ class AdminUpdateMemberIn(BaseModel):
     marital_status: Optional[str] = None
     languages: Optional[List[LanguageEntry]] = None
     civilian_degrees: Optional[List[CivilianDegreeEntry]] = None
+    custom_fields: Optional[Dict[str, Any]] = None
     interests: Optional[List[str]] = None
     avatar_url: Optional[str] = None
     role: Optional[Literal["member", "admin"]] = None

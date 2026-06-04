@@ -149,6 +149,7 @@ def public_user(u: dict) -> dict:
         "languages": u.get("languages", []),
         "civilian_degrees": u.get("civilian_degrees", []),
         "assignment_history": u.get("assignment_history", []),
+        "custom_fields": u.get("custom_fields") or {},
         "avatar_url": u.get("avatar_url", ""),
         "membership_tier": u.get("membership_tier", "standard"),
         "tier_id": u.get("tier_id"),
@@ -5043,27 +5044,53 @@ async def _personnel_brief_pdf_response(user_id: str):
     current_year = now_utc().year
 
     # ---------- Header: photo + identity ----------
-    avatar_path = None
-    avatar_src = m.get("avatar_url") or ""
-    if avatar_src:
+    # Resolve the member's avatar to a BytesIO ReportLab can ingest. We try
+    # PIL.Image.open() first as a sanity check and re-export as PNG/JPEG to
+    # normalize any oddities (corrupt EXIF, weird color profiles, etc.) that
+    # would otherwise crash ReportLab during drawImage().
+    avatar_bytes: Optional[BytesIO] = None
+    avatar_src = (m.get("avatar_url") or "").strip()
+
+    def _normalize_image_bytes(raw: bytes) -> Optional[BytesIO]:
         try:
-            if avatar_src.startswith("/api/"):
-                # Local file system path (object storage stores in db.file_meta — we render a placeholder)
-                avatar_path = None
-            elif avatar_src.startswith("http"):
-                tmp = BytesIO()
-                with urllib.request.urlopen(avatar_src, timeout=4) as r:
-                    tmp.write(r.read())
-                tmp.seek(0)
-                avatar_path = tmp
-        except Exception:
-            avatar_path = None
+            from PIL import Image as PILImage
+            im = PILImage.open(BytesIO(raw))
+            im.load()
+            if im.mode not in ("RGB", "RGBA"):
+                im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
+            out = BytesIO()
+            im.save(out, format="PNG")
+            out.seek(0)
+            return out
+        except Exception as ex:
+            logger.warning(f"[brief] avatar normalization failed: {ex}")
+            return None
+
+    if avatar_src.startswith("/api/files/"):
+        try:
+            storage_path = avatar_src.split("/api/files/", 1)[1]
+            raw, _ct = get_object(storage_path)
+            avatar_bytes = _normalize_image_bytes(raw)
+        except Exception as ex:
+            logger.warning(f"[brief] could not read avatar from storage {avatar_src}: {ex}")
+    elif avatar_src.startswith("http"):
+        try:
+            req = urllib.request.Request(avatar_src, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; AlphaOmegaPhi-Brief/1.0)",
+                "Accept": "image/*,*/*;q=0.8",
+            })
+            with urllib.request.urlopen(req, timeout=6) as r:
+                raw = r.read()
+            avatar_bytes = _normalize_image_bytes(raw)
+        except Exception as ex:
+            logger.warning(f"[brief] avatar fetch failed for {avatar_src}: {ex}")
 
     photo_cell = ""
-    if avatar_path:
+    if avatar_bytes:
         try:
-            photo_cell = Image(avatar_path, width=1.1 * inch, height=1.1 * inch)
-        except Exception:
+            photo_cell = Image(avatar_bytes, width=1.2 * inch, height=1.2 * inch, kind="proportional")
+        except Exception as ex:
+            logger.warning(f"[brief] avatar render failed: {ex}")
             photo_cell = ""
 
     title_name = " ".join(p for p in [m.get("title"), m.get("name")] if p) or m.get("name", "—")

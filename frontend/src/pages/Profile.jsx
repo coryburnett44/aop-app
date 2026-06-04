@@ -37,6 +37,7 @@ export default function Profile() {
         marital_status: "",
         languages: [],
         civilian_degrees: [],
+        custom_fields: {},
     });
     const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
     const [chapters, setChapters] = useState([]);
@@ -47,6 +48,16 @@ export default function Profile() {
     const [activity, setActivity] = useState([]);
     const [saving, setSaving] = useState(false);
     const [changingPwd, setChangingPwd] = useState(false);
+    const [siteSettings, setSiteSettings] = useState({ profile_layout: [], profile_custom_fields: [] });
+
+    useEffect(() => {
+        // Fetch the admin-configured profile layout so we know which sections
+        // are hidden and which custom fields to render.
+        api.get("/site-settings").then(({ data }) => setSiteSettings({
+            profile_layout: data.profile_layout || [],
+            profile_custom_fields: data.profile_custom_fields || [],
+        })).catch(() => {});
+    }, []);
 
     useEffect(() => {
         if (user) {
@@ -81,6 +92,7 @@ export default function Profile() {
                 marital_status: user.marital_status || "",
                 languages: user.languages || [],
                 civilian_degrees: user.civilian_degrees || [],
+                custom_fields: user.custom_fields || {},
             });
         }
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
@@ -112,6 +124,7 @@ export default function Profile() {
                 marital_status: form.marital_status,
                 languages: form.languages,
                 civilian_degrees: form.civilian_degrees,
+                custom_fields: form.custom_fields,
             };
             const { data } = await api.put("/members/me", payload);
             // Chapter is a separate endpoint
@@ -354,6 +367,22 @@ export default function Profile() {
                         <div><Label>Bio</Label><Textarea rows={4} value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-bio" /></div>
                         <LanguagesEditor value={form.languages} onChange={(v) => setForm({ ...form, languages: v })} />
                         <CivilianDegreesEditor value={form.civilian_degrees} onChange={(v) => setForm({ ...form, civilian_degrees: v })} />
+                        {(siteSettings.profile_custom_fields || []).length > 0 && (
+                            <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 space-y-3" data-testid="custom-fields-section">
+                                <div>
+                                    <Label className="text-base font-semibold">Additional information</Label>
+                                    <p className="text-xs text-muted-foreground">Fields configured by your chapter admin.</p>
+                                </div>
+                                {siteSettings.profile_custom_fields.map((f) => (
+                                    <CustomFieldInput
+                                        key={f.key}
+                                        field={f}
+                                        value={(form.custom_fields || {})[f.key] ?? ""}
+                                        onChange={(v) => setForm({ ...form, custom_fields: { ...(form.custom_fields || {}), [f.key]: v } })}
+                                    />
+                                ))}
+                            </div>
+                        )}
                         <div className="flex justify-end">
                             <Button type="submit" disabled={saving} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="profile-save-btn">{saving ? "Saving…" : "Save changes"}</Button>
                         </div>
@@ -687,6 +716,48 @@ function DownloadTaxLetterButton() {
                 <Download className="h-4 w-4 mr-1.5" />
                 {busy ? "Generating…" : "Tax letter"}
             </Button>
+        </div>
+    );
+}
+
+
+/**
+ * Renders one admin-defined custom profile field. Supported types:
+ *   text / textarea / date / number / select
+ * The field's `key` becomes the persisted key on users.custom_fields.
+ */
+function CustomFieldInput({ field, value, onChange }) {
+    const id = `cf-${field.key}`;
+    if (field.type === "textarea") {
+        return (
+            <div>
+                <Label htmlFor={id}>{field.label}{field.required && <span className="text-rose-500 ml-1">*</span>}</Label>
+                <Textarea id={id} rows={3} value={value || ""} onChange={(e) => onChange(e.target.value)} className="rounded-xl mt-1.5" data-testid={`custom-field-input-${field.key}`} />
+                {field.help_text && <p className="text-[11px] text-muted-foreground mt-1">{field.help_text}</p>}
+            </div>
+        );
+    }
+    if (field.type === "select") {
+        return (
+            <div>
+                <Label htmlFor={id}>{field.label}{field.required && <span className="text-rose-500 ml-1">*</span>}</Label>
+                <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? "" : v)}>
+                    <SelectTrigger className="rounded-xl mt-1.5" data-testid={`custom-field-input-${field.key}`}><SelectValue placeholder="—" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="__none__">— None —</SelectItem>
+                        {(field.options || []).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+                {field.help_text && <p className="text-[11px] text-muted-foreground mt-1">{field.help_text}</p>}
+            </div>
+        );
+    }
+    const inputType = field.type === "date" ? "date" : field.type === "number" ? "number" : "text";
+    return (
+        <div>
+            <Label htmlFor={id}>{field.label}{field.required && <span className="text-rose-500 ml-1">*</span>}</Label>
+            <Input id={id} type={inputType} value={value || ""} onChange={(e) => onChange(e.target.value)} className="rounded-xl mt-1.5" data-testid={`custom-field-input-${field.key}`} />
+            {field.help_text && <p className="text-[11px] text-muted-foreground mt-1">{field.help_text}</p>}
         </div>
     );
 }

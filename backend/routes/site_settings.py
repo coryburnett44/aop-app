@@ -32,6 +32,24 @@ def make_default_settings(iso, now_utc):
         "hero_cta_label": "Become a member",
         "hero_cta_href": "/apply",
         "footer_text": "© Alpha Omega Phi Military Fraternity & Sorority, Inc. — All rights reserved.",
+        # Ordered list of profile-page sections. Admin can reorder via drag-drop
+        # to apply ONE layout to every member's profile. Each entry is a
+        # stable section key (built-in) OR a custom field defined alongside.
+        # Members see the order; built-in sections are always preserved on the
+        # backend (you can hide them via "visible:false") so we never lose
+        # functionality on misconfiguration.
+        "profile_layout": [
+            {"key": "identity", "visible": True, "label": "Identity"},
+            {"key": "contact", "visible": True, "label": "Contact"},
+            {"key": "fraternity", "visible": True, "label": "Fraternity Details"},
+            {"key": "languages", "visible": True, "label": "Languages"},
+            {"key": "education", "visible": True, "label": "Civilian Education"},
+            {"key": "social", "visible": True, "label": "Social Links"},
+        ],
+        # Up to 12 admin-defined custom fields rendered as a "Custom Fields"
+        # section on the member profile form. Each field stores into
+        # users.custom_fields[<key>]. Types: text / textarea / date / number / select.
+        "profile_custom_fields": [],
         "footer_links": [
             {"label": "About", "href": "/about"},
             {"label": "Contact", "href": "mailto:info@aop-app.org"},
@@ -99,6 +117,23 @@ class FounderItemIn(BaseModel):
         return _validate_url_field(v)
 
 
+class ProfileLayoutItem(BaseModel):
+    key: str = Field(min_length=1, max_length=60)
+    visible: bool = True
+    label: str = Field("", max_length=120)
+
+
+class ProfileCustomField(BaseModel):
+    """Admin-defined custom profile field. Keys are normalized to snake_case
+    on the client; we trust them here but cap length and type."""
+    key: str = Field(min_length=1, max_length=60, pattern=r"^[a-z0-9_]+$")
+    label: str = Field(min_length=1, max_length=120)
+    type: str = Field("text")  # text|textarea|date|number|select
+    options: List[str] = Field(default_factory=list, max_length=30)
+    required: bool = False
+    help_text: str = Field("", max_length=200)
+
+
 class SiteSettingsIn(BaseModel):
     hero_eyebrow: Optional[str] = Field(None, max_length=300)
     hero_headline: Optional[str] = Field(None, max_length=300)
@@ -118,6 +153,8 @@ class SiteSettingsIn(BaseModel):
     founders_section_title: Optional[str] = Field(None, max_length=200)
     founders_section_eyebrow: Optional[str] = Field(None, max_length=120)
     founders_items: Optional[List[FounderItemIn]] = Field(None, max_length=12)
+    profile_layout: Optional[List[ProfileLayoutItem]] = Field(None, max_length=40)
+    profile_custom_fields: Optional[List[ProfileCustomField]] = Field(None, max_length=12)
 
 
 def register(api, *, db, admin_tab_dep, iso, now_utc):

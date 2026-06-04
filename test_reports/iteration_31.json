@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 31 testing: Bug C ✅ FIXED, Feature D backend ✅ FIXED, Feature D admin frontend ✅ FIXED, Bug B avatar PDF ✅ FIXED, Bug A ❌ BROKEN — BriefBody throws 'ReferenceError: Empty is not defined' when admin opens the floating Personnel Brief in Reports tab. The new BriefBody component references <Empty /> 8 times (lines 702, 712, 718, 727, 735, 745, 753, 759, 790 of /app/frontend/src/pages/Reports.jsx) but never imports or defines an Empty component. Backend: 14/14 new pytest cases pass, combined regression 99/99 passes (~36s). Frontend: home page founder CDN images all load (8/8 customer-assets.emergentagent.com images OK, 0 rewritten by mediaUrl), Admin → Pages tab renders ProfileLayoutAdmin with 6 section rows + 'Custom profile fields' card + 'Add field (0/12)' + 'Save layout', Personnel Brief tab modal opens but the body crashes with the missing-Empty ReferenceError so brief-body / brief-section-* testids never mount.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Reports.jsx → BriefBody",
+        "issue": "Uncaught ReferenceError: 'Empty is not defined' when the floating Personnel Brief renders. The component is referenced 8x as <Empty /> at lines 702, 712, 718, 727, 735, 745, 753, 759 (empty-state fallback for degrees/languages/dues/donations/hoursCY/awards/eventRows/assignments) AND at line 790 (visible.length===0 case), but `Empty` is never imported or defined anywhere in Reports.jsx. As a result, opening the admin floating Personnel Brief shows the CRA error overlay; brief-body and brief-section-1..brief-section-10 never mount. Bug A is NOT actually resolved.",
+        "selector": "[data-testid='brief-body']",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration31_layout_custom_avatar.py",
+    "/app/test_reports/pytest/iter31.xml",
+    "/app/test_reports/pytest/iter31_regression.xml"
+  ],
+  "action_items": [
+    "URGENT: Define (or import) the Empty placeholder component in /app/frontend/src/pages/Reports.jsx — e.g. `const Empty = () => <div className='text-sm text-muted-foreground italic'>—</div>;` placed above BriefBody. After this single-line fix, all 8 §-body table fallbacks plus the visible.length===0 branch will render and the modal will mount the brief-body + brief-section-1..10 testids. Verify by re-running the Bug A part of this Playwright test."
+  ],
+  "critical_code_review_comments": [
+    "Bug A regression: BriefBody references <Empty /> 9 times but the Empty component is neither imported nor defined in Reports.jsx — pure ReferenceError at first render. This is the entire payload of Bug A's fix and it is broken end-to-end in the admin floating view.",
+    "mediaUrl host narrowing (Bug C) is correctly scoped to *.preview.emergentagent.com and *.emergent.host only; customer-assets.emergentagent.com URLs pass through unchanged. Verified by inspecting all <img> tags on /: 8/8 customer-asset images loaded (naturalWidth>0) and 0 were rewritten.",
+    "Bug B avatar normalization is robust: PDF endpoint returns 200 + valid %PDF bytes for (a) remote https avatar (>=1 embedded image), (b) empty avatar_url, (c) bogus /api/files/<nonexistent> path. PIL fallback handles corrupt blobs gracefully.",
+    "Feature D backend: defaults + PUT/GET round-trip + snake_case validation + member custom_fields → /auth/me round-trip all pass. ProfileCustomField regex ^[a-z0-9_]+$ correctly rejects 'BadKey-1'.",
+    "Feature D admin UI (ProfileLayoutAdmin) is mounted under Admin → Pages tab (not a dedicated 'Settings' tab) below SiteSettingsAdmin. Card titles 'Profile section order' and 'Custom profile fields' are rendered; 6 default rows (identity/contact/fraternity/languages/education/social) are present with drag handles, label inputs, and eye-toggle buttons. 'Save layout' button present.",
+    "Minor: profile_custom_fields list reorder via PUT survives, but I did not exhaustively verify the dnd-kit drag-reorder gesture on the admin UI — backend round-trip is the source of truth and works.",
+    "Minor (LOW, carry-over from iter30): per-row 'edit-event-{id}' on Admin Events list still missing."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration31_layout_custom_avatar.py (new, 14 pytest cases — Bug B avatar embedding for remote/empty/corrupt avatars, Feature D site-settings layout & custom fields, member round-trip, snake_case regex enforcement, regression smokes for login/zeffy/brief-pdf/tax-letter/bulk-import)",
+    "/app/test_reports/pytest/iter31.xml (junit, 14 passed)",
+    "/app/test_reports/pytest/iter31_regression.xml (junit, 99 passed: iter25+27+28+29+30+31)"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14 new, 99/99 regression)",
+    "frontend": "75% — Bug C (8/8 founder CDN images OK), Feature D admin (ProfileLayoutAdmin renders, 6 default rows, both cards present) — but Bug A floating brief is fully broken by ReferenceError: 'Empty is not defined'"
+  },
+  "test_credentials": "admin@clubhaven.app / Admin123! and member@clubhaven.app / Member123! — both work.",
+  "seed_data_creation": "test_member_custom_fields_round_trip writes custom_fields.favorite_color=blue_<uuid> on member@clubhaven.app then the cleanup fixture clears it back to {}. test_brief_pdf_with_* sets avatar_url to remote/empty/bogus values on member; cleanup resets avatar_url to ''. test_admin_can_update_layout_and_custom_fields toggles contact.visible=false and adds 2 custom fields (favorite_color, tshirt_size); cleanup restores the default 6-section layout + empty custom_fields list.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent defines/imports `Empty` in Reports.jsx, re-run the Bug A part of the frontend test (Admin → Reports → Personnel Brief tab → pick member@clubhaven.app → click 'Generate' → assert [data-testid='brief-body'] mounts AND [data-testid='brief-section-1'] through [data-testid='brief-section-10'] all exist AND the body text contains the 10 section headers AND §10 contains 'Senior Sirius' or 'Treasurer' or 'Texas' from the iter30 seeded assignment_history row). Backend suite to inherit: /app/backend/tests/test_iteration31_layout_custom_avatar.py (14 tests, ~5s). Combined regression: iter25+27+28+29+30+31 = 99 tests, ~36s. The ProfileLayoutAdmin lives under Admin → Pages tab (not a separate Settings tab).",
+  "rca of the issue": "Bug A RCA — In /app/frontend/src/pages/Reports.jsx, the BriefBody component (rewritten for iter31's 10-section layout) uses an `<Empty />` placeholder JSX element 9 times to render the '—' empty-state for §3..§10 table sections and the §10-overflow visible-list fallback. However, no `Empty` component is imported or declared anywhere in the file. At render time React encounters `<Empty />` and throws ReferenceError, which the CRA dev overlay catches and displays. Reproduction: 1) login admin@clubhaven.app, 2) /admin → click data-testid='admin-tab-reports' → click data-testid='reports-tab-brief', 3) pick any member in data-testid='brief-member-select', 4) click data-testid='brief-generate-btn'. The modal opens but the body fails to mount; the dev overlay shows 'Empty is not defined at BriefBody'. Mitigation (one-line fix): add `const Empty = () => <span className='text-sm text-muted-foreground italic'>—</span>;` (or any small placeholder component) near the top of BriefBody / above the file's BriefBody declaration. After that single change, the 10 brief-section-N testids will mount and the iter31 Bug A acceptance criteria will be met."
+}

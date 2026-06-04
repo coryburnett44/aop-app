@@ -61,9 +61,16 @@ export function mediaUrl(url) {
         // This fixes a Safari/MacBook issue where founder/leadership images
         // saved while editing in preview-mode were stuck pointing at the
         // preview host and failed to load in production due to ITP.
+        //
+        // IMPORTANT: only rewrite hostnames that look like a *preview* origin
+        // (e.g. `xyz-abc.preview.emergentagent.com`). Customer asset CDN URLs
+        // (`customer-assets.emergentagent.com`, `images.emergentagent.com`)
+        // are publicly-hosted and must pass through unchanged.
         try {
             const u = new URL(url);
-            if (/emergentagent\.com$/i.test(u.hostname) && BACKEND_URL && BACKEND_URL !== `${u.protocol}//${u.host}`) {
+            const host = u.hostname.toLowerCase();
+            const isPreviewHost = /\.preview\.emergentagent\.com$/.test(host) || /\.emergent\.host$/.test(host);
+            if (isPreviewHost && BACKEND_URL && BACKEND_URL !== `${u.protocol}//${u.host}`) {
                 return `${BACKEND_URL}${u.pathname}${u.search}${u.hash}`;
             }
         } catch { /* not a parseable URL — return as-is */ }

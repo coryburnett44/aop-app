@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -600,85 +600,172 @@ function PersonnelBriefSection() {
 
 function BriefBody({ b }) {
     const m = b.member;
+    const chapter = b.chapter || {};
+    const tier = b.tier || {};
+    const currentYear = new Date().getFullYear();
+
+    // §3 Education — sort chronologically (oldest → newest) per spec
+    const degrees = [...(m.civilian_degrees || [])].sort((a, c) => (
+        (a.graduation_year || 0) - (c.graduation_year || 0) ||
+        (a.graduation_month || 0) - (c.graduation_month || 0)
+    ));
+
+    // §4 Languages — most recent year first
+    const languages = [...(m.languages || [])].sort((a, c) => (c.year_accomplished || 0) - (a.year_accomplished || 0));
+
+    const dues = (b.transactions || []).filter((t) => t.purpose === "dues" || t.type === "renewal").slice(0, 5);
+    const donations = (b.transactions || []).filter((t) => t.type === "donation").slice(0, 5);
+    const hoursCY = (b.hours || []).filter((h) => (h.date || "").slice(0, 4) === String(currentYear));
+
+    // §8 Awards — ordinal label per repeated award name
+    const awardCounts = {};
+    const awardsOrdered = [...(b.awards || [])].sort((a, c) => (a.granted_at || "").localeCompare(c.granted_at || ""));
+    const awardsWithOrdinal = awardsOrdered.map((g) => {
+        const nm = g.award_name || g.name || "—";
+        awardCounts[nm] = (awardCounts[nm] || 0) + 1;
+        const n = awardCounts[nm];
+        const ord = n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`;
+        return { ...g, ord };
+    });
+
+    // §9 Events — current-year check-ins only, dedup by event_id
+    const checkinsCY = (b.checkins || []).filter((c) => (c.checked_in_at || "").slice(0, 4) === String(currentYear));
+    const eventLookup = Object.fromEntries((b.events || []).map((e) => [e.id, e]));
+    const rsvpLookup = Object.fromEntries((b.rsvps || []).map((r) => [r.event_id, r]));
+    const seenEv = new Set();
+    const eventRows = [];
+    for (const c of checkinsCY) {
+        if (seenEv.has(c.event_id)) continue;
+        seenEv.add(c.event_id);
+        const ev = eventLookup[c.event_id] || {};
+        const rs = rsvpLookup[c.event_id] || {};
+        eventRows.push({
+            title: ev.title || "—",
+            guests: (rs.guests || []).length,
+            ticket_type: (c.ticket_type || rs.ticket_type || "general").replace("_", " "),
+            date: (c.checked_in_at || "").slice(0, 10),
+        });
+    }
+
+    // §10 Assignment History — current-first, then by start_date desc
+    const assignments = [...(m.assignment_history || [])].sort((a, c) => {
+        if (a.is_current && !c.is_current) return -1;
+        if (c.is_current && !a.is_current) return 1;
+        return (c.start_date || "").localeCompare(a.start_date || "");
+    });
+
     return (
         <div className="space-y-5 print:text-black" data-testid="brief-body">
-            <div className="flex items-start gap-4">
-                <div className="w-16 h-16 rounded-full bg-primary/15 text-primary grid place-items-center font-heading font-black text-2xl shrink-0">
-                    {(m.name || m.email)[0]?.toUpperCase()}
-                </div>
-                <div>
-                    <div className="font-heading text-2xl font-black">{m.name}</div>
-                    {m.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary">"{m.line_name}"</div>}
+            {/* Header — photo + title + name + line + email + phone */}
+            <div className="flex items-start gap-4 border-b border-border pb-4">
+                {m.avatar_url ? (
+                    <img src={mediaUrl(m.avatar_url)} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
+                ) : (
+                    <div className="w-20 h-20 rounded-lg bg-primary/15 text-primary grid place-items-center font-heading font-black text-3xl shrink-0">
+                        {(m.name || m.email)[0]?.toUpperCase()}
+                    </div>
+                )}
+                <div className="flex-1 min-w-0">
+                    <div className="font-heading text-2xl font-black leading-tight">{m.title ? `${m.title} ` : ""}{m.name}</div>
+                    {m.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary mt-0.5">"{m.line_name}"</div>}
                     <div className="text-sm text-muted-foreground mt-1">{m.email}</div>
-                    <div className="text-xs text-muted-foreground">Status: <strong className="uppercase">{m.status}</strong> · Role: {m.role}</div>
+                    {m.phone && <div className="text-sm text-muted-foreground">{m.phone}</div>}
                 </div>
             </div>
 
-            <Section title="Identity">
-                <Kvp k="Phone" v={m.phone} />
-                <Kvp k="Address" v={[m.address, m.city].filter(Boolean).join(", ")} />
-                <Kvp k="Birthdate" v={m.birthdate} />
-                <Kvp k="Branch of service" v={m.branch_of_service} />
-                <Kvp k="Joined" v={m.created_at?.slice(0, 10)} />
-                <Kvp k="Membership expires" v={m.membership_expires_at?.slice(0, 10)} />
-            </Section>
+            <BriefSection num="1" title="Personal Information">
+                <KvpGrid items={[
+                    ["Address", m.address],
+                    ["City", m.city],
+                    ["State", m.state],
+                    ["Country", m.country],
+                    ["Zip code", m.zip_code],
+                    ["Marital status", m.marital_status],
+                    ["Birthdate", (m.birthdate || "").slice(0, 10)],
+                    ["Branch of Service", m.branch_of_service],
+                ]} />
+            </BriefSection>
 
-            <Section title="Chapter & Tier">
-                <Kvp k="Chapter" v={b.chapter?.name} />
-                <Kvp k="Region/State" v={[b.chapter?.region, b.chapter?.state].filter(Boolean).join(" / ")} />
-                <Kvp k="Tier" v={b.tier?.name} />
-                <Kvp k="Annual dues" v={b.tier ? `$${b.tier.annual_dues?.toFixed(2)}` : ""} />
-            </Section>
+            <BriefSection num="2" title="Organization Information">
+                <KvpGrid items={[
+                    ["Chapter", chapter.name],
+                    ["Region", chapter.region],
+                    ["Status", (m.status || "").toUpperCase()],
+                    ["Tier", tier.name],
+                    ["Role", (m.role || "member")],
+                    ["Joined", (m.join_date || m.created_at || "").slice(0, 10)],
+                    ["Renewal", (m.membership_expires_at || "").slice(0, 10)],
+                ]} />
+            </BriefSection>
 
-            <div className="grid sm:grid-cols-3 gap-3">
-                <Stat label="Approved hours" value={`${b.approved_hours?.toFixed(1)}h`} />
-                <Stat label="Awards" value={b.awards_count} />
-                <Stat label="Events" value={b.events_count} />
-            </div>
+            <BriefSection num="3" title="Civilian Education">
+                {degrees.length === 0 ? <Empty /> : <TableLike headers={["Level", "Type", "Field", "Institution", "Graduated"]} rows={degrees.map((d) => [
+                    d.degree_level || "—",
+                    d.degree_type || "—",
+                    d.field_of_study || "—",
+                    d.institution || "—",
+                    `${["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.graduation_month || 0]} ${d.graduation_year || ""}`.trim() || "—",
+                ])} />}
+            </BriefSection>
 
-            <Section title={`Awards (${b.awards_count})`}>
-                {b.awards.length === 0 ? <Empty /> : b.awards.map((g) => (
-                    <div key={g.id} className="text-sm border-l-2 border-primary/40 pl-3 py-1">
-                        <strong>{g.award_name}</strong> · {g.granted_at?.slice(0, 10)}
-                        {g.reason && <div className="text-xs text-muted-foreground italic">{g.reason}</div>}
-                    </div>
-                ))}
-            </Section>
+            <BriefSection num="4" title="Languages">
+                {languages.length === 0 ? <Empty /> : <TableLike headers={["Language", "Speaking", "Reading", "Writing", "Year"]} rows={languages.map((l) => [
+                    l.language || "—", l.speaking || "—", l.reading || "—", l.writing || "—", String(l.year_accomplished || "—"),
+                ])} />}
+            </BriefSection>
 
-            <Section title={`Volunteer hours (${b.hours.length})`}>
-                {b.hours.length === 0 ? <Empty /> : (
-                    <div className="text-sm space-y-1.5">
-                        {b.hours.slice(0, 20).map((h) => (
-                            <div key={h.id} className="flex items-start gap-3 border-l-2 border-accent pl-3 py-1">
-                                <div className="font-bold w-12 shrink-0">{h.hours}h</div>
-                                <div className="flex-1 min-w-0">
-                                    <div>{h.activity || h.description}</div>
-                                    <div className="text-xs text-muted-foreground">{h.date?.slice(0, 10)} · {h.event_type} · {h.status}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </Section>
+            <BriefSection num="5" title="Financial Obligations (Annual Dues)">
+                {dues.length === 0 ? <Empty /> : <TableLike headers={["Date", "Amount", "Status", "Description"]} rows={dues.map((t) => [
+                    (t.created_at || "").slice(0, 10),
+                    `$${(t.amount || 0).toFixed(2)}`,
+                    (t.status || "—").toUpperCase(),
+                    t.description || "—",
+                ])} />}
+            </BriefSection>
 
-            <Section title={`Transactions ($${b.total_paid?.toFixed(2)} lifetime)`}>
-                {b.transactions.length === 0 ? <Empty /> : (
-                    <div className="text-sm">
-                        {b.transactions.slice(0, 10).map((t) => (
-                            <div key={t.id} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
-                                <div className="min-w-0">
-                                    <div className="text-xs uppercase tracking-wider font-bold">{t.type}</div>
-                                    <div className="text-xs text-muted-foreground">{t.created_at?.slice(0, 10)} · {t.description}</div>
-                                </div>
-                                <div className="text-right shrink-0">
-                                    <div className="font-bold">${t.amount?.toFixed(2)}</div>
-                                    <div className="text-[10px] uppercase tracking-wider">{t.status}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </Section>
+            <BriefSection num="6" title="Donations">
+                {donations.length === 0 ? <Empty /> : <TableLike headers={["Date", "Cause", "Amount"]} rows={donations.map((t) => [
+                    (t.created_at || "").slice(0, 10),
+                    t.description || "General fund",
+                    `$${(t.amount || 0).toFixed(2)}`,
+                ])} />}
+            </BriefSection>
+
+            <BriefSection num="7" title={`Community Service (${currentYear})`}>
+                {hoursCY.length === 0 ? <Empty /> : <TableLike headers={["Agency", "Event Type", "Hours", "Status", "Date"]} rows={hoursCY.map((h) => [
+                    h.agency_name || "—",
+                    (h.event_type || "other").replace("_", " "),
+                    String(h.hours || 0),
+                    (h.status || "—").toUpperCase(),
+                    (h.date || "").slice(0, 10),
+                ])} />}
+            </BriefSection>
+
+            <BriefSection num="8" title="Awards">
+                {awardsWithOrdinal.length === 0 ? <Empty /> : <TableLike headers={["Award", "Order", "Date Granted"]} rows={awardsWithOrdinal.map((g) => [
+                    g.award_name || "—",
+                    `${g.ord} award`,
+                    (g.granted_at || "").slice(0, 10),
+                ])} />}
+            </BriefSection>
+
+            <BriefSection num="9" title={`Events Attended (${currentYear} check-ins)`}>
+                {eventRows.length === 0 ? <Empty /> : <TableLike headers={["Event", "Guests", "Ticket Type", "Check-in Date"]} rows={eventRows.map((e) => [
+                    e.title, String(e.guests), e.ticket_type, e.date,
+                ])} />}
+            </BriefSection>
+
+            <BriefSection num="10" title="Assignment History">
+                {assignments.length === 0 ? <Empty /> : <TableLike headers={["Start", "End", "Chapter", "State", "Location", "Duty Title", "Rank"]} rows={assignments.map((a) => [
+                    (a.start_date || "—").slice(0, 10) || "—",
+                    a.is_current ? "Current" : ((a.end_date || "").slice(0, 10) || "—"),
+                    a.chapter_name || "—",
+                    a.state || "—",
+                    a.location || "—",
+                    a.duty_title || "—",
+                    a.rank || "—",
+                ])} />}
+            </BriefSection>
 
             <div className="text-xs text-muted-foreground text-right mt-6 print:mt-12">
                 Brief generated {b.generated_at?.slice(0, 16).replace("T", " ")} · Alpha Omega Phi
@@ -687,22 +774,50 @@ function BriefBody({ b }) {
     );
 }
 
-function Section({ title, children }) {
+function BriefSection({ num, title, children }) {
     return (
-        <div>
-            <h3 className="font-heading text-xs uppercase tracking-widest text-muted-foreground mb-2 border-b border-border pb-1">{title}</h3>
-            <div className="space-y-1.5">{children}</div>
+        <div data-testid={`brief-section-${num}`}>
+            <h3 className="font-heading text-sm uppercase tracking-widest text-white bg-[hsl(220_45%_12%)] px-3 py-1.5 rounded mb-2">
+                <span className="opacity-60 mr-2">§{num}</span>{title}
+            </h3>
+            <div className="space-y-1">{children}</div>
         </div>
     );
 }
-function Kvp({ k, v }) {
-    if (!v) return null;
-    return <div className="flex items-start gap-3 text-sm"><div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground w-32 shrink-0 pt-0.5">{k}</div><div className="flex-1">{v}</div></div>;
+
+function KvpGrid({ items }) {
+    const visible = items.filter(([_, v]) => v);
+    if (visible.length === 0) return <Empty />;
+    return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+            {visible.map(([k, v]) => (
+                <div key={k} className="flex items-start gap-3 py-1.5 border-b border-border/50 text-sm">
+                    <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground w-32 shrink-0 pt-0.5">{k}</div>
+                    <div className="flex-1 break-words">{v}</div>
+                </div>
+            ))}
+        </div>
+    );
 }
-function Stat({ label, value }) {
-    return <div className="bg-muted/40 rounded-xl p-3 text-center"><div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">{label}</div><div className="font-heading font-black text-2xl mt-1">{value}</div></div>;
+
+function TableLike({ headers, rows }) {
+    return (
+        <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-xs">
+                <thead className="bg-muted/40">
+                    <tr>{headers.map((h) => <th key={h} className="text-left font-bold uppercase tracking-wider text-[10px] px-2.5 py-1.5">{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                    {rows.map((r, i) => (
+                        <tr key={i} className="border-t border-border/50">
+                            {r.map((cell, j) => <td key={j} className="px-2.5 py-1.5 align-top">{cell}</td>)}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
 }
-function Empty() { return <div className="text-xs text-muted-foreground italic">None on record.</div>; }
 
 function FilterSelect({ label, value, onChange, options, testid }) {
     return (
