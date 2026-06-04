@@ -188,7 +188,7 @@ export default function Directory() {
                             </div>
                             <div className="p-5 flex-1 flex flex-col">
                                 <div className="flex items-start justify-between gap-2 mb-1">
-                                    <h3 className="font-heading font-bold text-xl leading-tight flex-1">{m.name}</h3>
+                                    <h3 className="font-heading font-bold text-xl leading-tight flex-1">{m.title ? `${m.title} ` : ""}{m.name}</h3>
                                 </div>
                                 {m.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary mb-2">"{m.line_name}"</div>}
                                 <div className="space-y-1.5 text-xs text-foreground/80">

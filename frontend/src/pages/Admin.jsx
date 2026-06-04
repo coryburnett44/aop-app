@@ -17,6 +17,7 @@ import RichEditor from "../components/RichEditor";
 import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
 import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
 import PageBuilder from "../components/cms/PageBuilder";
+import BulkImportMembersDialog from "../components/BulkImportMembersDialog";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
@@ -136,6 +137,8 @@ function EventDialog({ event, onSaved, trigger }) {
         cover_image: event?.cover_image || "",
         category: event?.category || "social",
         price: event?.price || 0,
+        cancelled: event?.cancelled || false,
+        cancellation_note: event?.cancellation_note || "",
     });
     const [aiBusy, setAiBusy] = useState(false);
     const [coverUploading, setCoverUploading] = useState(false);
@@ -221,6 +224,37 @@ function EventDialog({ event, onSaved, trigger }) {
                             </div>
                         </div>
                     </div>
+                    {event && (
+                        <div className={`rounded-2xl border-2 p-4 ${form.cancelled ? "border-red-300 bg-red-50" : "border-slate-200 bg-slate-50"}`}>
+                            <label className="flex items-center gap-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={form.cancelled}
+                                    onChange={(e) => setForm({ ...form, cancelled: e.target.checked })}
+                                    className="h-4 w-4 rounded border-2 border-slate-300 accent-red-600"
+                                    data-testid="event-cancelled-toggle"
+                                />
+                                <span className="font-semibold text-sm">
+                                    {form.cancelled ? "🚫 Event is cancelled — RSVPs are blocked" : "Mark this event as cancelled"}
+                                </span>
+                            </label>
+                            {form.cancelled && (
+                                <div className="mt-3">
+                                    <Label className="text-xs">Reason (optional, shown on the event page)</Label>
+                                    <Input
+                                        value={form.cancellation_note}
+                                        onChange={(e) => setForm({ ...form, cancellation_note: e.target.value })}
+                                        placeholder="e.g. Severe weather"
+                                        className="rounded-xl mt-1.5"
+                                        data-testid="event-cancellation-note"
+                                    />
+                                    <p className="text-[11px] text-red-700 mt-2 leading-snug">
+                                        Members will see a CANCELLED banner. The event will still appear on the calendar but the RSVP button will be disabled.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
                 <DialogFooter>
                     <Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="event-save-btn">Save event</Button>
@@ -616,7 +650,10 @@ function MembersAdmin() {
             <PendingIntakeChangesPanel onChanged={load} />
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
-                <NewMemberDialog chapters={chapters} tiers={tiers} onSaved={load} />
+                <div className="flex items-center gap-2">
+                    <BulkImportMembersDialog chapters={chapters.filter(officialOnly)} onImported={load} />
+                    <NewMemberDialog chapters={chapters} tiers={tiers} onSaved={load} />
+                </div>
             </div>
             <div className="bg-card rounded-2xl border border-border overflow-x-auto shadow-warm">
                 <table className="w-full text-sm min-w-[1000px]">
@@ -701,7 +738,7 @@ function MembersAdmin() {
 function NewMemberDialog({ chapters, tiers, onSaved }) {
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({
-        email: "", password: "", first_name: "", middle_name: "", last_name: "",
+        email: "", password: "", title: "", first_name: "", middle_name: "", last_name: "",
         line_name: "", username: "", phone: "", city: "", address: "", birthdate: "",
         branch_of_service: "", role: "member",
         chapter_id: "", tier_id: "", member_status: "active",
@@ -718,7 +755,7 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
             await api.post("/admin/members", payload);
             toast.success("Member created");
             setOpen(false);
-            setForm({ email: "", password: "", first_name: "", middle_name: "", last_name: "", line_name: "", username: "", phone: "", city: "", address: "", birthdate: "", branch_of_service: "", role: "member", chapter_id: "", tier_id: "", member_status: "active" });
+            setForm({ email: "", password: "", title: "", first_name: "", middle_name: "", last_name: "", line_name: "", username: "", phone: "", city: "", address: "", birthdate: "", branch_of_service: "", role: "member", chapter_id: "", tier_id: "", member_status: "active" });
             onSaved();
         } catch (e) { toast.error(e.response?.data?.detail || "Create failed"); }
         setBusy(false);
@@ -737,7 +774,19 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
                         <div><Label>Email *</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-email" /></div>
                         <div><Label>Temporary password *</Label><Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-password" /></div>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-[110px_1fr_100px_1fr] gap-3">
+                        <div>
+                            <Label>Title</Label>
+                            <Select value={form.title} onValueChange={(v) => setForm({ ...form, title: v === "__none__" ? "" : v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="nm-title"><SelectValue placeholder="—" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none__">— None —</SelectItem>
+                                    {["Mr.", "Mrs.", "Ms.", "Miss", "Dr.", "Prof.", "Rev.", "Hon.", "Mx."].map((t) => (
+                                        <SelectItem key={t} value={t}>{t}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
                         <div><Label>First name</Label><Input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-first" /></div>
                         <div><Label>Middle</Label><Input value={form.middle_name} onChange={(e) => setForm({ ...form, middle_name: e.target.value })} className="rounded-xl mt-1.5" /></div>
                         <div><Label>Last name</Label><Input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="nm-last" /></div>
@@ -811,6 +860,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
         if (open) {
             setForm({
                 email: member.email,
+                title: member.title || "",
                 first_name: member.first_name || "",
                 middle_name: member.middle_name || "",
                 last_name: member.last_name || "",
@@ -874,7 +924,19 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                         <div><Label>Email</Label><Input value={form.email || ""} onChange={(e) => setForm({ ...form, email: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-email" /></div>
                         <div><Label>Username</Label><Input value={form.username || ""} onChange={(e) => setForm({ ...form, username: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-[110px_1fr_100px_1fr] gap-3">
+                        <div>
+                            <Label>Title</Label>
+                            <Select value={form.title || "__none__"} onValueChange={(v) => setForm({ ...form, title: v === "__none__" ? "" : v })}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="em-title"><SelectValue placeholder="—" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none__">— None —</SelectItem>
+                                    {["Mr.", "Mrs.", "Ms.", "Miss", "Dr.", "Prof.", "Rev.", "Hon.", "Mx."].map((t) => (
+                                        <SelectItem key={t} value={t}>{t}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
                         <div><Label>First name</Label><Input value={form.first_name || ""} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-first" /></div>
                         <div><Label>Middle</Label><Input value={form.middle_name || ""} onChange={(e) => setForm({ ...form, middle_name: e.target.value })} className="rounded-xl mt-1.5" /></div>
                         <div><Label>Last name</Label><Input value={form.last_name || ""} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="rounded-xl mt-1.5" /></div>

@@ -120,6 +120,7 @@ def public_user(u: dict) -> dict:
         "email": u["email"],
         "username": u.get("username", ""),
         "name": u.get("name", ""),
+        "title": u.get("title", ""),
         "first_name": u.get("first_name", ""),
         "middle_name": u.get("middle_name", ""),
         "last_name": u.get("last_name", ""),
@@ -934,6 +935,9 @@ def event_out(e: dict) -> dict:
         "guest_count": e.get("guest_count", 0),
         "parent_event_id": e.get("parent_event_id"),
         "allows_ticket_types": e.get("allows_ticket_types", False),
+        "cancelled": bool(e.get("cancelled")),
+        "cancellation_note": e.get("cancellation_note", ""),
+        "cancelled_at": e.get("cancelled_at"),
         "created_at": e.get("created_at"),
     }
 
@@ -970,6 +974,9 @@ async def create_event(body: EventIn, _: dict = Depends(admin_tab_dep("events"))
 
 @api.put("/events/{event_id}")
 async def update_event(event_id: str, body: EventUpdateIn, _: dict = Depends(admin_tab_dep("events"))):
+    existing = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Event not found")
     updates = {}
     for k, v in body.model_dump().items():
         if v is None:
@@ -978,6 +985,13 @@ async def update_event(event_id: str, body: EventUpdateIn, _: dict = Depends(adm
             updates[k] = iso(v)
         else:
             updates[k] = v
+    # Stamp cancelled_at the first time cancelled flips on; clear it on revert.
+    if "cancelled" in updates:
+        if updates["cancelled"] and not existing.get("cancelled"):
+            updates["cancelled_at"] = iso(now_utc())
+        elif not updates["cancelled"]:
+            updates["cancelled_at"] = None
+            updates["cancellation_note"] = updates.get("cancellation_note", "") or ""
     if updates:
         await db.events.update_one({"id": event_id}, {"$set": updates})
     e = await db.events.find_one({"id": event_id}, {"_id": 0})
@@ -996,6 +1010,11 @@ async def rsvp_event(event_id: str, body: Optional[EventRsvpIn] = None, user: di
     e = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not e:
         raise HTTPException(status_code=404, detail="Event not found")
+    if e.get("cancelled"):
+        raise HTTPException(
+            status_code=400,
+            detail="This event has been cancelled — RSVPs are closed.",
+        )
     # Parent events (which group sub-events) cannot be RSVP'd directly — members
     # RSVP individually to each sub-event listed underneath. This prevents the
     # awkward "RSVP to the umbrella" UX that confuses everyone.
@@ -1058,6 +1077,8 @@ async def update_rsvp_guests(event_id: str, body: EventRsvpIn, user: dict = Depe
     e = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not e:
         raise HTTPException(status_code=404, detail="Event not found")
+    if e.get("cancelled"):
+        raise HTTPException(status_code=400, detail="This event has been cancelled — guest list is locked.")
     prev_guests = rsvp.get("guests", []) or []
     prev_by_name = {(g.get("name") or "").strip().lower(): g for g in prev_guests}
     new_guests = []
@@ -1375,6 +1396,7 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
         "username": body.username,
         "password_hash": hash_password(body.password),
         "name": composed_name,
+        "title": body.title or "",
         "first_name": body.first_name,
         "middle_name": body.middle_name,
         "last_name": body.last_name,
@@ -1417,6 +1439,275 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
     except Exception as e:
         logger.warning(f"welcome email failed for {email}: {e}")
     return public_user(doc)
+
+
+# ---------- Bulk member import (CSV) ----------
+# Used to migrate the ClubExpress roster onto AOP. Admin uploads a CSV; we
+# create one user per row and extend membership_expires_at = renewal_date + 365d
+# (or today + 365d if renewal_date is missing / unparseable).
+#
+# Accepted CSV columns (case-insensitive, leading/trailing whitespace stripped,
+# multiple aliases supported so admin can paste ClubExpress export directly):
+#   - Email                                            (required, must be unique)
+#   - First Name / FirstName / First
+#   - Last Name  / LastName  / Last
+#   - Middle Name / MiddleName
+#   - Title         (Mr. / Mrs. / Ms. / Miss / Dr. / Prof. / Rev. / Hon. / Mx.)
+#   - Phone / Telephone
+#   - Address / Street
+#   - City
+#   - State
+#   - Zip / Zip Code / Postal Code
+#   - Country
+#   - Birthdate / Birth Date / Date of Birth          (any parseable date)
+#   - Branch of Service / Military Branch
+#   - Renewal Date / Renewal / Expires / Membership Expires
+#         → membership_expires_at = renewal_date + 365 days
+#   - Join Date / Joined / Member Since
+#   - Line Name / Line
+#   - Intake Line
+#   - Intake Completed At / Intake Date
+#   - Username
+#
+# We never overwrite an existing user (matched by lowercase email). Each row in
+# the response includes either {created: true} or {skipped: 'duplicate'|'invalid'}
+# plus the original row number so the admin can fix and re-upload.
+import csv as _csv
+import io as _io
+from dateutil import parser as _date_parser
+
+_BULK_COLUMN_ALIASES = {
+    "email": ["email", "e-mail", "email address"],
+    "title": ["title", "salutation", "honorific"],
+    "first_name": ["first name", "firstname", "first", "given name"],
+    "middle_name": ["middle name", "middlename", "middle"],
+    "last_name": ["last name", "lastname", "last", "surname", "family name"],
+    "phone": ["phone", "telephone", "mobile", "cell", "phone number"],
+    "address": ["address", "street", "address line 1", "street address"],
+    "city": ["city", "town"],
+    "state": ["state", "province", "region"],
+    "zip_code": ["zip", "zip code", "zipcode", "postal code", "postcode"],
+    "country": ["country"],
+    "birthdate": ["birthdate", "birth date", "date of birth", "dob"],
+    "branch_of_service": ["branch of service", "military branch", "branch", "service branch"],
+    "renewal_date": ["renewal date", "renewal", "expires", "expiration", "membership expires", "renew on"],
+    "join_date": ["join date", "joined", "member since", "join", "membership start"],
+    "line_name": ["line name", "line"],
+    "intake_line": ["intake line"],
+    "intake_completed_at": ["intake completed at", "intake date", "intake completed", "crossed"],
+    "username": ["username", "user name", "screen name"],
+    "chapter": ["chapter", "chapter name"],  # resolved by name → id below
+}
+
+_TITLE_VALID = {"Mr.", "Mrs.", "Ms.", "Miss", "Dr.", "Prof.", "Rev.", "Hon.", "Mx."}
+
+
+def _normalize_header(h: str) -> str:
+    return (h or "").strip().lower().replace("_", " ")
+
+
+def _map_row(row: dict) -> dict:
+    """Map a CSV row's header keys to our canonical field names."""
+    out: dict = {}
+    norm = {_normalize_header(k): (v.strip() if isinstance(v, str) else v) for k, v in row.items()}
+    for canonical, aliases in _BULK_COLUMN_ALIASES.items():
+        for a in aliases:
+            if a in norm and norm[a]:
+                out[canonical] = norm[a]
+                break
+    return out
+
+
+def _parse_date(s: str):
+    if not s:
+        return None
+    try:
+        dt = _date_parser.parse(str(s))
+        if dt.tzinfo is None:
+            from datetime import timezone as _tz
+            dt = dt.replace(tzinfo=_tz.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _normalize_title(raw: str) -> str:
+    if not raw:
+        return ""
+    s = raw.strip().rstrip(".")
+    candidates = {t.rstrip("."): t for t in _TITLE_VALID}
+    return candidates.get(s, candidates.get(s.title(), ""))
+
+
+@api.post("/admin/members/bulk-import")
+async def admin_bulk_import_members(
+    file: UploadFile = File(...),
+    default_chapter_id: Optional[str] = Form(None),
+    dry_run: bool = Form(False),
+    admin: dict = Depends(admin_tab_dep("members")),
+):
+    """Bulk-import members from a CSV (e.g. exported from ClubExpress).
+
+    - One user per row.
+    - membership_expires_at = renewal_date + 365 days (or today + 365 if no renewal_date).
+    - Duplicates (matched by lowercase email) are skipped, not overwritten.
+    - dry_run=true validates the CSV without inserting anything (useful preview).
+    - Returns per-row results so the admin can fix errors and re-upload.
+
+    Each new user gets a strong random temporary password and the
+    `pending_set_password=true` flag — admins should follow up with a
+    one-time set-password email if they want members to sign in directly.
+    """
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file")
+    raw = await file.read()
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="CSV too large (max 5 MB)")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+
+    reader = _csv.DictReader(_io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no header row")
+
+    # Pre-load chapters once for chapter-name → id resolution
+    chapters_list = await db.chapters.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    chapters_by_name = {(c.get("name") or "").lower().strip(): c["id"] for c in chapters_list}
+
+    results = {"created": [], "skipped": [], "errors": [], "total": 0}
+    now = now_utc()
+
+    for idx, raw_row in enumerate(reader, start=2):  # row 1 = header
+        results["total"] += 1
+        row = _map_row(raw_row)
+        email = (row.get("email") or "").lower().strip()
+        if not email or "@" not in email:
+            results["errors"].append({"row": idx, "email": email, "reason": "missing or invalid email"})
+            continue
+        # Duplicate guard
+        if await db.users.find_one({"email": email}):
+            results["skipped"].append({"row": idx, "email": email, "reason": "email already exists"})
+            continue
+
+        first = row.get("first_name", "")
+        last = row.get("last_name", "")
+        middle = row.get("middle_name", "")
+        title = _normalize_title(row.get("title", ""))
+        composed_name = " ".join(p for p in [first, middle, last] if p).strip() or email.split("@")[0]
+
+        # Resolve chapter — explicit on row, else fallback default
+        chapter_id = default_chapter_id
+        ch_raw = (row.get("chapter") or "").lower().strip()
+        if ch_raw and ch_raw in chapters_by_name:
+            chapter_id = chapters_by_name[ch_raw]
+
+        # Date parsing
+        renewal_dt = _parse_date(row.get("renewal_date", ""))
+        join_dt = _parse_date(row.get("join_date", "")) or now
+        if renewal_dt:
+            expires_dt = renewal_dt + timedelta(days=365)
+        else:
+            expires_dt = now + timedelta(days=365)
+        birth_dt = _parse_date(row.get("birthdate", ""))
+
+        if dry_run:
+            results["created"].append({
+                "row": idx,
+                "email": email,
+                "name": composed_name,
+                "membership_expires_at": iso(expires_dt),
+                "chapter_id": chapter_id,
+            })
+            continue
+
+        # Strong temp password — admin can use forgot-password flow to give members access
+        temp_password = secrets.token_urlsafe(18)
+        uid = str(uuid.uuid4())
+        doc = {
+            "id": uid,
+            "email": email,
+            "username": row.get("username", ""),
+            "password_hash": hash_password(temp_password),
+            "name": composed_name,
+            "title": title,
+            "first_name": first,
+            "middle_name": middle,
+            "last_name": last,
+            "line_name": row.get("line_name", ""),
+            "intake_line": row.get("intake_line", ""),
+            "intake_completed_at": row.get("intake_completed_at", ""),
+            "phone": row.get("phone", ""),
+            "address": row.get("address", ""),
+            "city": row.get("city", ""),
+            "state": row.get("state", ""),
+            "zip_code": row.get("zip_code", ""),
+            "country": row.get("country", ""),
+            "birthdate": iso(birth_dt) if birth_dt else "",
+            "branch_of_service": row.get("branch_of_service", ""),
+            "role": "member",
+            "bio": "",
+            "interests": [],
+            "avatar_url": "",
+            "membership_tier": "standard",
+            "chapter_id": chapter_id,
+            "join_date": iso(join_dt),
+            "membership_expires_at": iso(expires_dt),
+            "email_verified": True,
+            "pending_set_password": True,  # flag for admin follow-up
+            "imported_from": "clubexpress_csv",
+            "imported_at": iso(now),
+            "created_at": iso(now),
+        }
+        try:
+            await db.users.insert_one(doc)
+            results["created"].append({
+                "row": idx,
+                "email": email,
+                "name": composed_name,
+                "membership_expires_at": iso(expires_dt),
+            })
+        except Exception as ex:
+            results["errors"].append({"row": idx, "email": email, "reason": f"insert failed: {ex}"})
+
+    results["created_count"] = len(results["created"])
+    results["skipped_count"] = len(results["skipped"])
+    results["error_count"] = len(results["errors"])
+    results["dry_run"] = bool(dry_run)
+    logger.info(f"[bulk-import] admin={admin.get('email')} created={results['created_count']} skipped={results['skipped_count']} errors={results['error_count']} dry_run={dry_run}")
+    return results
+
+
+@api.get("/admin/members/bulk-import/template")
+async def admin_bulk_import_template(_: dict = Depends(admin_tab_dep("members"))):
+    """Returns a downloadable CSV template with the expected headers + one
+    example row. Admin clicks "Download template" in the bulk-import dialog."""
+    headers = [
+        "Email", "Title", "First Name", "Middle Name", "Last Name", "Username",
+        "Phone", "Address", "City", "State", "Zip Code", "Country",
+        "Birthdate", "Branch of Service",
+        "Renewal Date", "Join Date",
+        "Line Name", "Intake Line", "Intake Completed At",
+        "Chapter",
+    ]
+    example = [
+        "jane.doe@example.com", "Ms.", "Jane", "", "Doe", "janed",
+        "555-123-4567", "123 Main St", "Houston", "TX", "77001", "USA",
+        "1985-04-12", "Army",
+        "2026-01-15", "2020-01-15",
+        "Theta-3", "Spring 2020", "2020-06-01",
+        "Texas",
+    ]
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(headers)
+    w.writerow(example)
+    return FastResponse(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=aop-bulk-import-template.csv"},
+    )
 
 
 @api.put("/members/{user_id}")

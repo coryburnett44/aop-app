@@ -28,6 +28,7 @@ export default function Profile() {
     const [params] = useSearchParams();
     const [tab, setTab] = useState(params.get("tab") || "profile");
     const [form, setForm] = useState({
+        title: "",
         first_name: "", middle_name: "", last_name: "", line_name: "",
         intake_line: "", intake_completed_at: "",
         username: "", phone: "", bio: "", city: "", address: "", state: "", zip_code: "", country: "",
@@ -46,6 +47,7 @@ export default function Profile() {
     useEffect(() => {
         if (user) {
             setForm({
+                title: user.title || "",
                 first_name: user.first_name || "",
                 middle_name: user.middle_name || "",
                 last_name: user.last_name || "",
@@ -87,6 +89,7 @@ export default function Profile() {
         setSaving(true);
         try {
             const payload = {
+                title: form.title,
                 first_name: form.first_name, middle_name: form.middle_name, last_name: form.last_name,
                 line_name: form.line_name, intake_line: form.intake_line, intake_completed_at: form.intake_completed_at,
                 username: form.username, phone: form.phone,
@@ -234,7 +237,19 @@ export default function Profile() {
 
                 <TabsContent value="profile" className="mt-6">
                     <form onSubmit={save} className="bg-card rounded-2xl p-6 border border-border shadow-warm space-y-5" data-testid="profile-form">
-                        <div className="grid sm:grid-cols-3 gap-4">
+                        <div className="grid sm:grid-cols-[120px_1fr_1fr_1fr] gap-4">
+                            <div>
+                                <Label>Title <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                                <Select value={form.title || "__none__"} onValueChange={(v) => setForm({ ...form, title: v === "__none__" ? "" : v })}>
+                                    <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-title"><SelectValue placeholder="—" /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="__none__">— None —</SelectItem>
+                                        {["Mr.", "Mrs.", "Ms.", "Miss", "Dr.", "Prof.", "Rev.", "Hon.", "Mx."].map((t) => (
+                                            <SelectItem key={t} value={t}>{t}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
                             <div><Label>First name</Label><Input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-first" /></div>
                             <div><Label>Middle name</Label><Input value={form.middle_name} onChange={(e) => setForm({ ...form, middle_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-middle" /></div>
                             <div><Label>Last name</Label><Input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-last" /></div>

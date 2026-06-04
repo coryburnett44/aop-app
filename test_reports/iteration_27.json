@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 27 three new features tested end-to-end. Backend: 17/17 pytest tests pass — event cancellation (default-false, admin flip-on stamps cancelled_at, RSVP returns 400 'cancelled — RSVPs are closed', guest-edit returns 400 'guest list is locked', un-cancel clears cancelled_at and re-enables RSVP), bulk CSV import (template has Email/Title/First Name/Renewal Date headers, 4-row CSV with valid+chapter, valid no-chapter, missing email, duplicate => created=2 skipped=1 errors=1; dry_run does NOT insert; actual import inserts with title alias 'mr'->'Mr.', renewal_date+365 days; non-CSV rejected 400 '.csv'), title field (member self-update Dr. persists via /auth/me and clears on empty; admin create with Mrs. + admin update to Prof. persists). Smoke: /auth/me, /chapters, /events, /members all 200. Frontend: bulk-import dialog renders all controls (download-template, file, default-chapter, dry-run, submit), dry-run on a 2-row CSV returns the result tiles 'Would create 2 / Skipped 0 / Errors 0' with correct testids. Profile title dropdown 'Dr.' saved, persists across page reload (trigger text 'Dr.'). Event cancellation UI flow could NOT be exercised via Playwright because the Admin Events list Edit button has NO data-testid (only the New-event and Delete buttons do) — so the test couldn't reliably open the existing-event edit dialog to flip the cancelled toggle. Backend behavior is already proven via pytest so the feature works; only the test affordance is missing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Admin → Events list", "issue": "The per-row 'Edit' button (Admin.jsx line 118) has no data-testid — frontend automation cannot deterministically open the edit dialog to toggle event-cancelled-toggle. Suggest data-testid={`edit-event-${e.id}`}.", "selector": "button:has-text('Edit')", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration27_features.py",
+    "/app/test_reports/pytest/iter27.xml"
+  ],
+  "action_items": [
+    "Add data-testid={`edit-event-${e.id}`} to the per-event-row Edit button trigger in /app/frontend/src/pages/Admin.jsx (~line 118) so the cancelled-toggle flow is testable end-to-end via Playwright.",
+    "(Low) Pre-existing React warning 'changing an uncontrolled input to be controlled' still fires on /profile — likely a Profile form field initialised undefined (default-empty-string fix). Not introduced by this iteration."
+  ],
+  "critical_code_review_comments": [
+    "server.py update_event() correctly stamps cancelled_at on first flip-on and clears it (plus the cancellation_note) on flip-off — verified.",
+    "server.py rsvp guest-edit handler order is: rsvp-exists check (404) BEFORE cancelled check (400). This is fine because once cancelled there is still a path for an existing-RSVP member to hit the 400, but a never-RSVPed member hits the 404 first. Behaviour matches the prompt ('guest list is locked' returned for those who had RSVPed before cancel).",
+    "admin_bulk_import_members: good (a) UTF-8 BOM stripping (utf-8-sig), (b) 5MB cap, (c) duplicate-by-email guard, (d) per-row error capture, (e) dry-run path is non-destructive — confirmed via the GET /members re-query in the pytest. Minor: chapter resolution is case-insensitive only on chapter NAME; if two chapters share a case-insensitive name, the second wins silently. Not a real-world bug.",
+    "_normalize_title: alias map covers Mr/Mrs/Ms/Miss/Dr/Prof/Rev/Hon/Mx with/without trailing dot — verified ('mr' -> 'Mr.').",
+    "EventDialog (Admin.jsx): the per-row Edit button uses a generic <Button> with no data-testid — testability gap (see frontend issue above).",
+    "BulkImportMembersDialog.jsx: all interactive controls have data-testid and dry-run is checked by default — good. Result-tile text 'Would create 2 / Skipped 0 / Errors 0' is rendered as expected for valid input."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration27_features.py (new, 17 pytest cases)"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "2/3 features visually confirmed (bulk-import dialog + profile title persistence). Event cancellation UI blocked by missing edit-button testid — backend already 100%."},
+  "test_credentials": "admin@clubhaven.app/Admin123!, member@clubhaven.app/Member123! — both work. Login endpoint expects {email, password} (not email_or_username) despite the UI label 'Email or username'; backend accepts either as the value.",
+  "seed_data_creation": "All test data is cleaned up by the suite: the test event is deleted in test_cleanup_event; the 2 imported users (test_iter27_a@example.com, test_iter27_b@example.com) are deleted in test_cleanup_created_users; the admin-created title member (test_iter27_title@example.com) is deleted in a finally block; member@clubhaven.app's title is cleared back to empty at the end of test_member_self_update_title. DB ends clean.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable regression: /app/backend/tests/test_iteration27_features.py (17 tests, ~3.5s wall). Login uses {email, password} body (NOT email_or_username). EventIn requires start_at as an ISO datetime — date/start_time/end_time fields from older iterations no longer work. Guest-edit (PUT /events/{id}/rsvp/guests) returns 404 if you haven't RSVPed yet, so to test the 'cancelled — guest list is locked' branch you must RSVP first, THEN cancel, THEN call guest-edit.",
+  "rca of the issue": "No backend bugs. Frontend testability gap: per-row 'Edit' button in Admin Events list lacks a data-testid, preventing deterministic Playwright access to the EventDialog edit form (where the event-cancelled-toggle lives). Repro: navigate to /admin → Events tab → only buttons with testids are new-event-btn and delete-event-{id}; the Edit button between them is anonymous. Mitigation: add data-testid={`edit-event-${e.id}`} to the trigger Button on Admin.jsx line 118."
+}

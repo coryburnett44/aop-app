@@ -67,12 +67,20 @@ export default function Events() {
                                 </div>
                             </div>
                             <div className="py-1">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                     <span className="text-[10px] uppercase tracking-wider font-semibold text-accent-foreground bg-accent/40 rounded-full px-2 py-0.5">
                                         {e.category}
                                     </span>
+                                    {e.cancelled && (
+                                        <span
+                                            className="text-[10px] uppercase tracking-wider font-bold text-white bg-red-600 rounded-full px-2 py-0.5"
+                                            data-testid={`event-card-cancelled-${e.id}`}
+                                        >
+                                            ● Cancelled
+                                        </span>
+                                    )}
                                 </div>
-                                <h3 className="font-heading font-semibold text-xl mt-2 leading-snug">{e.title}</h3>
+                                <h3 className={`font-heading font-semibold text-xl mt-2 leading-snug ${e.cancelled ? "line-through opacity-60" : ""}`}>{e.title}</h3>
                                 <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{e.description}</p>
                                 <div className="mt-3 flex items-center gap-5 text-sm text-muted-foreground">
                                     <span className="inline-flex items-center gap-1.5"><MapPin className="h-4 w-4" /> {e.location || "TBA"}</span>

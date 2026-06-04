@@ -93,7 +93,28 @@ export default function EventDetail() {
                     </div>
                     <h1 className="font-heading text-2xl sm:text-4xl lg:text-5xl font-bold tracking-tight drop-shadow">{event.title}</h1>
                 </div>
+                {event.cancelled && (
+                    <div
+                        className="absolute top-4 left-4 sm:top-6 sm:left-6 inline-flex items-center gap-2 rounded-full bg-red-600 text-white px-4 py-1.5 text-xs sm:text-sm font-bold uppercase tracking-wider shadow-lg ring-2 ring-white/30"
+                        data-testid="event-cancelled-banner"
+                    >
+                        ● Cancelled
+                    </div>
+                )}
             </div>
+
+            {event.cancelled && (
+                <div
+                    className="mt-6 rounded-2xl border-2 border-red-300 bg-red-50 p-5 text-red-900"
+                    data-testid="event-cancelled-notice"
+                >
+                    <div className="font-heading font-bold text-lg">This event has been cancelled.</div>
+                    {event.cancellation_note && (
+                        <div className="text-sm mt-1 text-red-800">{event.cancellation_note}</div>
+                    )}
+                    <div className="text-xs text-red-700 mt-2 opacity-80">RSVPs are closed. The event remains on the calendar for reference.</div>
+                </div>
+            )}
 
             <div className="grid lg:grid-cols-[1fr_300px] gap-10 mt-8">
                 <div>
@@ -124,10 +145,10 @@ export default function EventDetail() {
                             )}
                         </div>
                     </div>
-                    {!hasRsvped && allowsTickets && (
+                    {!hasRsvped && allowsTickets && !event.cancelled && (
                         <MemberTicketPicker onRsvp={(tt) => rsvpWithGuests([], tt)} disabled={loading} />
                     )}
-                    {!hasRsvped && !allowsTickets && (
+                    {!hasRsvped && !allowsTickets && !event.cancelled && (
                         <Button
                             onClick={toggleRsvp}
                             disabled={loading}
@@ -135,6 +156,15 @@ export default function EventDetail() {
                             data-testid="rsvp-btn"
                         >
                             {loading ? "Updating…" : "RSVP"}
+                        </Button>
+                    )}
+                    {event.cancelled && !hasRsvped && (
+                        <Button
+                            disabled
+                            className="w-full rounded-full py-6 bg-muted text-muted-foreground cursor-not-allowed"
+                            data-testid="rsvp-btn-cancelled"
+                        >
+                            RSVPs closed — cancelled
                         </Button>
                     )}
                     {hasRsvped && (
@@ -147,7 +177,7 @@ export default function EventDetail() {
                             {loading ? "Updating…" : `You're going (${(myRsvp?.ticket_type || "general").replace("_", " ")}) — cancel`}
                         </Button>
                     )}
-                    {hasRsvped && (
+                    {hasRsvped && !event.cancelled && (
                         <GuestManager guests={myGuests} onSave={updateGuests} disabled={loading} allowsTickets={allowsTickets} />
                     )}
                     {rsvps.length > 0 && (

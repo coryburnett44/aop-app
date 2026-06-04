@@ -52,8 +52,12 @@ class LoginIn(BaseModel):
     password: str
 
 
+TITLE_CHOICES = Literal["Mr.", "Mrs.", "Ms.", "Miss", "Dr.", "Prof.", "Rev.", "Hon.", "Mx."]
+
+
 class ProfileUpdateIn(BaseModel):
     name: Optional[str] = None
+    title: Optional[str] = None
     first_name: Optional[str] = None
     middle_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -138,6 +142,7 @@ class ChangePasswordIn(BaseModel):
 class AdminCreateMemberIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
+    title: str = ""
     first_name: str = ""
     middle_name: str = ""
     last_name: str = ""
@@ -165,6 +170,7 @@ class AdminCreateMemberIn(BaseModel):
 class AdminUpdateMemberIn(BaseModel):
     email: Optional[EmailStr] = None
     name: Optional[str] = None
+    title: Optional[str] = None
     first_name: Optional[str] = None
     middle_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -216,6 +222,8 @@ class EventIn(BaseModel):
     price: float = 0.0
     parent_event_id: Optional[str] = None
     allows_ticket_types: bool = False
+    cancelled: bool = False
+    cancellation_note: str = ""
 
 
 class EventUpdateIn(BaseModel):
@@ -230,6 +238,8 @@ class EventUpdateIn(BaseModel):
     price: Optional[float] = None
     parent_event_id: Optional[str] = None
     allows_ticket_types: Optional[bool] = None
+    cancelled: Optional[bool] = None
+    cancellation_note: Optional[str] = None
 
 
 TicketType = Literal["vip", "all_access", "general", "guest", "speaker", "volunteer"]
