@@ -694,14 +694,32 @@ function GearPageEditor({ page, onSaved, onClose }) {
                 )}
                 <div>
                     <Label>Banner image</Label>
-                    <div className="flex items-center gap-2 mt-1.5">
-                        <Input value={form.hero_image} onChange={(e) => setForm({ ...form, hero_image: e.target.value })} className="rounded-xl flex-1" placeholder="https://… or upload below" data-testid="gear-page-hero-url" />
+                    <div className="flex items-center gap-3 mt-1.5" data-testid="gear-page-hero-block">
+                        {form.hero_image ? (
+                            <img src={form.hero_image} alt="" className="h-16 w-24 object-cover rounded-lg border border-slate-200" />
+                        ) : (
+                            <div className="h-16 w-24 rounded-lg border-2 border-dashed border-slate-300 grid place-items-center text-[10px] text-slate-400">
+                                No image
+                            </div>
+                        )}
                         <label className="cursor-pointer">
                             <Button asChild variant="outline" size="sm" className="rounded-full" type="button">
-                                <span><UploadIcon className="h-3.5 w-3.5 mr-1" />Upload</span>
+                                <span data-testid="gear-page-hero-upload"><UploadIcon className="h-3.5 w-3.5 mr-1" />{form.hero_image ? "Replace" : "Upload"}</span>
                             </Button>
                             <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadImage(e.target.files?.[0])} />
                         </label>
+                        {form.hero_image && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                type="button"
+                                onClick={() => setForm({ ...form, hero_image: "" })}
+                                className="text-xs text-destructive"
+                                data-testid="gear-page-hero-remove"
+                            >
+                                Remove
+                            </Button>
+                        )}
                     </div>
                 </div>
                 <div>

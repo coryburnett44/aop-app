@@ -1963,8 +1963,8 @@ function GearDialog({ item, onSaved, trigger }) {
             const payload = {
                 ...form,
                 price: Number(form.price) || 0,
-                sizes: form.sizes.split(",").map((s) => s.trim()).filter(Boolean),
-                colors: form.colors.split(",").map((s) => s.trim()).filter(Boolean),
+                sizes: typeof form.sizes === "string" ? form.sizes.split(",").map((s) => s.trim()).filter(Boolean) : (form.sizes || []),
+                colors: typeof form.colors === "string" ? form.colors.split(",").map((s) => s.trim()).filter(Boolean) : (form.colors || []),
             };
             if (item) await api.put(`/gear/${item.id}`, payload);
             else await api.post("/gear", payload);
@@ -1980,6 +1980,40 @@ function GearDialog({ item, onSaved, trigger }) {
                 <DialogHeader><DialogTitle className="font-heading text-2xl">{item ? "Edit gear" : "New gear item"}</DialogTitle></DialogHeader>
                 <div className="space-y-3 mt-2">
                     <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-xl mt-1.5" data-testid="gear-name-input" /></div>
+                    {/* Iter 38: External-link mode + Rich HTML title also available in the
+                        Admin → Gear tab editor (mirrors the public Gear.jsx editor). */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3" data-testid="gear-admin-external-block">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="h-4 w-4"
+                                checked={!!form.is_external_link}
+                                onChange={(e) => setForm({ ...form, is_external_link: e.target.checked })}
+                                data-testid="gear-admin-is-external"
+                            />
+                            <span className="text-sm font-semibold">External link mode</span>
+                        </label>
+                        {form.is_external_link && (
+                            <Input
+                                value={form.external_url || ""}
+                                onChange={(e) => setForm({ ...form, external_url: e.target.value })}
+                                placeholder="https://example.com/our-store"
+                                className="rounded-xl mt-2"
+                                data-testid="gear-admin-external-url"
+                            />
+                        )}
+                    </div>
+                    <div>
+                        <Label>HTML / Rich title <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                        <Textarea
+                            rows={2}
+                            value={form.name_html || ""}
+                            onChange={(e) => setForm({ ...form, name_html: e.target.value })}
+                            className="rounded-xl mt-1.5 font-mono text-xs"
+                            placeholder='<strong style="color:#C8102E">Visit our Store</strong>'
+                            data-testid="gear-admin-name-html"
+                        />
+                    </div>
                     <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     <div className="grid grid-cols-3 gap-3">
                         <div><Label>Price ($)</Label><Input type="number" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="rounded-xl mt-1.5" /></div>
@@ -2007,7 +2041,7 @@ function GearDialog({ item, onSaved, trigger }) {
                                     No image
                                 </div>
                             )}
-                            <label className="rounded-full border px-3 py-1.5 text-xs cursor-pointer hover:bg-slate-50 inline-flex items-center gap-1.5" data-testid="event-cover-upload">
+                            <label className="rounded-full border px-3 py-1.5 text-xs cursor-pointer hover:bg-slate-50 inline-flex items-center gap-1.5" data-testid="gear-admin-cover-upload">
                                 {form.cover_image ? "Replace" : "Upload"}
                                 <input
                                     type="file"
@@ -2036,7 +2070,7 @@ function GearDialog({ item, onSaved, trigger }) {
                                     type="button"
                                     onClick={() => setForm({ ...form, cover_image: "" })}
                                     className="text-xs text-destructive"
-                                    data-testid="event-cover-remove"
+                                    data-testid="gear-admin-cover-remove"
                                 >
                                     Remove
                                 </Button>
@@ -2057,7 +2091,7 @@ function GearDialog({ item, onSaved, trigger }) {
     );
 }
 function emptyGear() {
-    return { name: "", description: "", price: 0, sku: "", category: "apparel", cover_image: "", sizes: "", colors: "", in_stock: true };
+    return { name: "", name_html: "", description: "", price: 0, sku: "", category: "apparel", cover_image: "", sizes: "", colors: "", in_stock: true, is_external_link: false, external_url: "" };
 }
 
 /* -------- Causes Admin -------- */
