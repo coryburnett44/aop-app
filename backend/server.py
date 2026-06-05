@@ -361,128 +361,8 @@ from models import (  # noqa: E402
 
 
 # ---------- Public registration applications (admin-approval flow) ----------
-def application_out(a: dict) -> dict:
-    return {
-        "id": a["id"],
-        "first_name": a.get("first_name", ""),
-        "last_name": a.get("last_name", ""),
-        "name": (a.get("first_name", "") + " " + a.get("last_name", "")).strip(),
-        "email": a.get("email", ""),
-        "line_name": a.get("line_name", ""),
-        "intake_line": a.get("intake_line", ""),
-        "intake_completed_at": a.get("intake_completed_at", ""),
-        "address": a.get("address", ""),
-        "city": a.get("city", ""),
-        "state": a.get("state", ""),
-        "zip_code": a.get("zip_code", ""),
-        "country": a.get("country", ""),
-        "status": a.get("status", "pending"),
-        "created_at": a.get("created_at"),
-        "reviewed_at": a.get("reviewed_at"),
-        "reviewed_by": a.get("reviewed_by"),
-        "review_note": a.get("review_note", ""),
-        "user_id": a.get("user_id"),
-    }
-
-
-@api.post("/auth/apply")
-async def submit_application(body: PublicApplicationIn):
-    """Public open-registration: candidate fills out the form. Goes into 'pending'.
-    Admin reviews. On approval, a user is created with an unset password and an email
-    is sent with a one-time link to set their password."""
-    email = body.email.lower().strip()
-    # Already a member?
-    existing_user = await db.users.find_one({"email": email})
-    if existing_user:
-        raise HTTPException(status_code=400, detail="An account already exists for this email")
-    # Already applied & pending?
-    existing_app = await db.applications.find_one({"email": email, "status": "pending"})
-    if existing_app:
-        raise HTTPException(status_code=400, detail="An application is already pending for this email — check back soon")
-    doc = {
-        "id": str(uuid.uuid4()),
-        "first_name": body.first_name.strip(),
-        "last_name": body.last_name.strip(),
-        "email": email,
-        "password_hash": hash_password(body.password),
-        "line_name": body.line_name.strip(),
-        "intake_line": body.intake_line.strip(),
-        "intake_completed_at": body.intake_completed_at.strip(),
-        "address": body.address.strip(),
-        "city": body.city.strip(),
-        "state": body.state.strip(),
-        "zip_code": body.zip_code.strip(),
-        "country": body.country.strip(),
-        "status": "pending",
-        "created_at": iso(now_utc()),
-    }
-    await db.applications.insert_one(doc)
-    # Notify all full admins so they can review immediately.
-    try:
-        asyncio.create_task(_send_application_admin_notification(doc))
-    except Exception as ex:
-        logger.warning(f"Failed to schedule admin notification: {ex}")
-    return {"ok": True, "application_id": doc["id"]}
-
-
-async def _send_application_admin_notification(application: dict) -> bool:
-    """Email every full admin when a new application is submitted."""
-    if not RESEND_API_KEY:
-        logger.info("Application notification skipped — no RESEND_API_KEY")
-        return False
-    cursor = db.users.find({"role": "admin"}, {"_id": 0, "email": 1, "name": 1, "admin_role": 1})
-    recipients = []
-    async for adm in cursor:
-        e = (adm.get("email") or "").strip()
-        if e and (adm.get("admin_role") or "full") in ("full", "membership_manager"):
-            recipients.append(e)
-    if not recipients:
-        logger.warning("No admin recipients for application notification")
-        return False
-    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-    import html as _h
-    name = _h.escape(f"{application.get('first_name', '')} {application.get('last_name', '')}".strip())
-    email = _h.escape(application.get("email", ""))
-    line = _h.escape(application.get("line_name", "") or "—")
-    chapter_state = _h.escape(application.get("state", "") or "—")
-    intake = _h.escape(application.get("intake_completed_at", "") or "—")
-    body = f"""
-    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:28px;background:#fff;color:#222">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:#C8102E;font-weight:700">New application</div>
-      <h1 style="color:#0A2463;margin:6px 0 14px;font-size:24px">{name} is requesting access</h1>
-      <div style="background:#f7f5f0;border-radius:14px;padding:18px;margin:18px 0;font-size:14px;line-height:1.7">
-        <div><strong>Email:</strong> {email}</div>
-        <div><strong>Line name:</strong> {line}</div>
-        <div><strong>State:</strong> {chapter_state}</div>
-        <div><strong>Intake completed:</strong> {intake}</div>
-      </div>
-      <p><a href="{frontend}/admin" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Open Admin → Members</a></p>
-      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">Review the pending application card to approve or reject. The applicant has already chosen their password — approving them grants immediate access.</p>
-    </div>
-    """
-    try:
-        await asyncio.to_thread(resend_sdk.Emails.send, {
-            "from": RESEND_FROM,
-            "to": recipients,
-            "subject": f"[AOP] New application: {name}",
-            "html": body,
-            "tags": [{"name": "type", "value": "application_admin_notify"}],
-        })
-        logger.info(f"Admin application notification sent to {len(recipients)} admins")
-        return True
-    except Exception as e:
-        logger.warning(f"Admin application notification failed: {e}")
-        return False
-
-
-@api.get("/admin/applications")
-async def list_applications(status_filter: Optional[str] = "pending", _: dict = Depends(admin_tab_dep("members"))):
-    q: dict = {}
-    if status_filter:
-        q["status"] = status_filter
-    cursor = db.applications.find(q, {"_id": 0}).sort("created_at", -1).limit(500)
-    items = await cursor.to_list(500)
-    return [application_out(a) for a in items]
+# /auth/apply, /admin/applications, /admin/applications/{id}/review and the 3
+# Resend email helpers are extracted to routes/applications.py.
 
 
 async def _send_set_password_email(email: str, name: str, token: str) -> bool:
@@ -496,161 +376,6 @@ async def _send_set_password_email(email: str, name: str, token: str) -> bool:
         logger.warning("[set-password-email] called before routes_auth_email_flows registered")
         return False
     return await fn(email, name, token)
-
-
-async def _send_approval_email(email: str, name: str) -> tuple[bool, str]:
-    """Sent when an admin approves an application. The applicant already chose
-    their password during apply, so we just welcome them and tell them to log in.
-    Returns (ok, detail) — detail is a human-readable failure reason when ok=False."""
-    if not RESEND_API_KEY:
-        return False, "Resend API key not configured on the server (RESEND_API_KEY)."
-    if not email:
-        return False, "Applicant has no email address on file."
-    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-    import html as _h
-    safe_name = _h.escape(name or "")
-    safe_email = _h.escape(email)
-    body = f"""
-    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
-      <h1 style="color:#C8102E;margin:0 0 12px;font-size:28px">Welcome to Alpha Omega Phi, {safe_name}!</h1>
-      <p style="line-height:1.6">We are honored to welcome you to <strong>Alpha Omega Phi Military Fraternity &amp; Sorority, Inc.</strong> Your membership application has been <strong>approved</strong> and your member portal is now active.</p>
-      <p style="line-height:1.6">You can sign in right away using the email and password you chose when you applied.</p>
-      <div style="background:#f7f5f0;border-radius:14px;padding:20px;margin:20px 0">
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#666;margin-bottom:6px">Your Sign-In</div>
-        <div style="font-size:14px;margin:4px 0"><strong>Email:</strong> {safe_email}</div>
-        <div style="font-size:14px;margin:4px 0"><strong>Password:</strong> The one you chose when applying.</div>
-      </div>
-      <p><a href="{frontend}/login" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Sign in to the portal</a></p>
-      <p style="line-height:1.6;margin-top:24px">Once you log in you can update your profile, RSVP to events, log volunteer hours, view chapter forms, and connect with other Trendsetters in the members-only chat.</p>
-      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">Forgot your password? Reach out to your chapter Governor for help.</p>
-    </div>
-    """
-    try:
-        await asyncio.to_thread(resend_sdk.Emails.send, {
-            "from": RESEND_FROM,
-            "to": [email],
-            "subject": "Welcome to Alpha Omega Phi",
-            "html": body,
-            "tags": [{"name": "type", "value": "application_approved"}],
-        })
-        logger.info(f"Welcome (approval) email sent to {email} from {RESEND_FROM}")
-        return True, "sent"
-    except Exception as e:
-        msg = str(e)
-        logger.warning(f"Welcome (approval) email FAILED for {email} (from={RESEND_FROM}): {msg}")
-        return False, msg
-
-
-async def _send_rejection_email(email: str, name: str, note: str) -> bool:
-    if not RESEND_API_KEY or not email:
-        return False
-    import html as _h
-    safe_name = _h.escape(name or "")
-    safe_note = _h.escape(note or "")
-    body = f"""
-    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
-      <h2 style="margin:0 0 12px">Alpha Omega Phi — application update</h2>
-      <p style="line-height:1.6">Hi {safe_name}, thank you for applying to Alpha Omega Phi Military Fraternity &amp; Sorority. Unfortunately your application was not approved at this time.</p>
-      {f'<blockquote style="border-left:3px solid #C8102E;padding:6px 12px;margin:16px 0;background:#f7f5f0;border-radius:4px">{safe_note}</blockquote>' if safe_note else ''}
-      <p style="font-size:12px;color:#888;margin-top:24px">If you believe this was in error, please reach out to your chapter Governor.</p>
-    </div>
-    """
-    try:
-        await asyncio.to_thread(resend_sdk.Emails.send, {
-            "from": RESEND_FROM,
-            "to": [email],
-            "subject": "Alpha Omega Phi — application update",
-            "html": body,
-            "tags": [{"name": "type", "value": "application_rejected"}],
-        })
-        return True
-    except Exception as e:
-        logger.warning(f"Rejection email failed for {email}: {e}")
-        return False
-
-
-@api.post("/admin/applications/{app_id}/review")
-async def review_application(app_id: str, body: ApplicationReviewIn, admin: dict = Depends(admin_tab_dep("members"))):
-    app_doc = await db.applications.find_one({"id": app_id})
-    if not app_doc:
-        raise HTTPException(status_code=404, detail="Application not found")
-    if app_doc.get("status") != "pending":
-        raise HTTPException(status_code=400, detail=f"Application is already {app_doc.get('status')}")
-    if body.action == "approve":
-        # Use the password the applicant chose when applying.
-        applicant_password_hash = app_doc.get("password_hash")
-        if not applicant_password_hash:
-            # Backwards-compat for legacy pending apps with no password — fall back to token flow.
-            applicant_password_hash = hash_password(str(uuid.uuid4()) + str(uuid.uuid4()))
-        composed_name = (app_doc.get("first_name", "") + " " + app_doc.get("last_name", "")).strip() or app_doc["email"].split("@")[0]
-        uid = str(uuid.uuid4())
-        created = now_utc()
-        user_doc = {
-            "id": uid,
-            "email": app_doc["email"],
-            "username": "",
-            "password_hash": applicant_password_hash,
-            "name": composed_name,
-            "first_name": app_doc.get("first_name", ""),
-            "middle_name": "",
-            "last_name": app_doc.get("last_name", ""),
-            "line_name": app_doc.get("line_name", ""),
-            "intake_line": app_doc.get("intake_line", ""),
-            "intake_completed_at": app_doc.get("intake_completed_at", ""),
-            "phone": "",
-            "address": app_doc.get("address", ""),
-            "city": app_doc.get("city", ""),
-            "state": app_doc.get("state", ""),
-            "zip_code": app_doc.get("zip_code", ""),
-            "country": app_doc.get("country", ""),
-            "birthdate": "",
-            "branch_of_service": "",
-            "role": "member",
-            "bio": "",
-            "interests": [],
-            "avatar_url": "",
-            "membership_tier": "standard",
-            "tier_id": None,
-            "chapter_id": None,
-            "status_override": None,
-            "admin_role": None,
-            "join_date": iso(created),
-            "membership_expires_at": iso(created + timedelta(days=365)),
-            "email_verified": True,
-            "pending_set_password": False,
-            "created_at": iso(created),
-        }
-        await db.users.insert_one(user_doc)
-        await db.applications.update_one(
-            {"id": app_id},
-            {"$set": {
-                "status": "approved",
-                "reviewed_at": iso(now_utc()),
-                "reviewed_by": admin.get("name", "Admin"),
-                "review_note": body.note or "",
-                "user_id": uid,
-            }},
-        )
-        email_ok, email_detail = await _send_approval_email(app_doc["email"], composed_name)
-        return {
-            "ok": True,
-            "user_id": uid,
-            "welcome_email_sent": email_ok,
-            "welcome_email_detail": email_detail if not email_ok else "Welcome email sent.",
-        }
-    # Reject
-    await db.applications.update_one(
-        {"id": app_id},
-        {"$set": {
-            "status": "rejected",
-            "reviewed_at": iso(now_utc()),
-            "reviewed_by": admin.get("name", "Admin"),
-            "review_note": body.note or "",
-        }},
-    )
-    name = (app_doc.get("first_name", "") + " " + app_doc.get("last_name", "")).strip()
-    await _send_rejection_email(app_doc["email"], name, body.note or "")
-    return {"ok": True}
 
 
 # ---------- Profile / Members ----------
@@ -1710,6 +1435,62 @@ async def admin_resend_set_password(user_id: str, admin: dict = Depends(admin_ta
     return {"ok": True, "sent": bool(sent), "email": user["email"]}
 
 
+@api.post("/admin/members/bulk-resend-set-password")
+async def admin_bulk_resend_set_password(admin: dict = Depends(admin_tab_dep("members"))):
+    """Send a fresh set-password email to EVERY user currently flagged
+    pending_set_password=true. Used during onboarding waves where dozens of
+    bulk-imported members haven't completed onboarding. For each user:
+      1. Invalidate any older unused tokens (no double-active links).
+      2. Mint a new 7-day token.
+      3. Send the welcome / set-password email.
+    Returns a summary { ok, total, sent, failed, skipped_no_email, members:[…] }.
+    """
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=503, detail="Email service not configured on the server (RESEND_API_KEY missing).")
+    cursor = db.users.find({"pending_set_password": True}, {"_id": 0})
+    pending = await cursor.to_list(500)
+    now = now_utc()
+    summary = {"ok": True, "total": len(pending), "sent": 0, "failed": 0, "skipped_no_email": 0, "members": []}
+    for user in pending:
+        email = (user.get("email") or "").strip()
+        uid = user.get("id")
+        if not email:
+            summary["skipped_no_email"] += 1
+            summary["members"].append({"id": uid, "name": user.get("name", ""), "email": "", "sent": False, "skipped": True})
+            continue
+        token = secrets.token_urlsafe(32)
+        expires_at = now + timedelta(days=7)
+        try:
+            await db.password_set_tokens.update_many(
+                {"user_id": uid, "used": False},
+                {"$set": {"used": True, "used_at": iso(now), "invalidated_by": "bulk-resend"}},
+            )
+            await db.password_set_tokens.insert_one({
+                "token": token,
+                "user_id": uid,
+                "expires_at": iso(expires_at),
+                "expires_at_dt": expires_at,
+                "used": False,
+                "created_at": iso(now),
+            })
+            name = user.get("name") or user.get("first_name") or email
+            sent = await _send_set_password_email(email, name, token)
+            if sent:
+                summary["sent"] += 1
+            else:
+                summary["failed"] += 1
+            summary["members"].append({"id": uid, "name": user.get("name", ""), "email": email, "sent": bool(sent)})
+        except Exception as ex:
+            summary["failed"] += 1
+            summary["members"].append({"id": uid, "name": user.get("name", ""), "email": email, "sent": False, "error": str(ex)})
+            logger.warning(f"[bulk-resend-setpw] failed for {email}: {ex}")
+    logger.info(
+        f"[bulk-resend-setpw] admin={admin.get('email')} total={summary['total']} "
+        f"sent={summary['sent']} failed={summary['failed']} skipped_no_email={summary['skipped_no_email']}"
+    )
+    return summary
+
+
 @api.put("/members/{user_id}")
 async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, admin: dict = Depends(admin_tab_dep("members"))):
     existing = await db.users.find_one({"id": user_id})
@@ -2010,87 +1791,8 @@ def hours_out(h: dict) -> dict:
         "created_at": h.get("created_at"),
     }
 
-@api.post("/hours")
-async def log_hours(body: HoursLogIn, user: dict = Depends(get_current_user)):
-    activity_text = body.activity or body.description or ""
-    doc = {
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "user_name": user.get("name", ""),
-        "hours": body.hours,
-        "description": activity_text,
-        "activity": activity_text,
-        "event_type": body.event_type,
-        "agency_name": body.agency_name,
-        "host_name": body.host_name,
-        "host_email": body.host_email,
-        "host_phone": body.host_phone,
-        "date": iso(body.date),
-        "event_id": body.event_id,
-        "status": "pending",
-        "created_at": iso(now_utc()),
-    }
-    await db.volunteer_hours.insert_one(doc)
-    return hours_out(doc)
-
-@api.get("/hours")
-async def list_hours(status_filter: Optional[str] = None, admin: dict = Depends(require_admin)):
-    query = {}
-    if status_filter:
-        query["status"] = status_filter
-    if is_chapter_scoped(admin):
-        ids = await chapter_scope_user_ids(admin)
-        query["user_id"] = {"$in": ids or []}
-    cursor = db.volunteer_hours.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
-    items = await cursor.to_list(500)
-    return [hours_out(h) for h in items]
-
-@api.put("/hours/{hours_id}/review")
-async def review_hours(hours_id: str, body: HoursReviewIn, admin: dict = Depends(admin_tab_dep("hours"))):
-    """Admin reviews a member's volunteer-hours submission.
-
-    Admin can:
-      - Flip status: pending → approved | rejected (and any time after, re-flip).
-      - Optionally adjust the recorded hours value (e.g. submitter logged 5, only 4.5 worked).
-      - Optionally edit activity / agency / event_type along with approval.
-    Editing after approval is supported by passing the same status again with
-    a corrected hours value — this is how admins fix data after the fact.
-    """
-    existing = await db.volunteer_hours.find_one({"id": hours_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Hours entry not found")
-    update_doc: dict = {
-        "status": body.status,
-        "note": body.note or existing.get("note", ""),
-        "reviewed_by": admin["id"],
-        "reviewed_by_name": admin.get("name", "Admin"),
-        "reviewed_at": iso(now_utc()),
-    }
-    if body.hours is not None:
-        update_doc["hours"] = float(body.hours)
-        # Stamp the admin who adjusted the value so the audit trail is clear.
-        update_doc["hours_adjusted_by"] = admin["id"]
-        update_doc["hours_adjusted_by_name"] = admin.get("name", "Admin")
-        update_doc["hours_adjusted_at"] = iso(now_utc())
-    if body.activity:
-        update_doc["activity"] = body.activity
-    if body.agency_name:
-        update_doc["agency_name"] = body.agency_name
-    if body.event_type:
-        update_doc["event_type"] = body.event_type
-    await db.volunteer_hours.update_one({"id": hours_id}, {"$set": update_doc})
-    h = await db.volunteer_hours.find_one({"id": hours_id}, {"_id": 0})
-    return hours_out(h)
-
-@api.delete("/hours/{hours_id}")
-async def delete_hours(hours_id: str, user: dict = Depends(get_current_user)):
-    h = await db.volunteer_hours.find_one({"id": hours_id})
-    if not h:
-        raise HTTPException(status_code=404, detail="Not found")
-    if h["user_id"] != user["id"] and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Not allowed")
-    await db.volunteer_hours.delete_one({"id": hours_id})
-    return {"ok": True}
+# /hours, /hours/{id}/review, /me/hours, /me/hours/summary are registered via
+# routes/hours.py (see register call at bottom of file).
 
 # ---------- Photos ----------
 def photo_out(p: dict) -> dict:
@@ -4652,80 +4354,7 @@ async def leaderboard_community_service(
     }
 
 
-@api.get("/me/hours")
-async def my_hours(
-    user: dict = Depends(get_current_user),
-    year: Optional[int] = None,
-    quarter: Optional[int] = None,
-    month: Optional[int] = None,
-    status_filter: Optional[str] = None,
-):
-    q: dict = {"user_id": user["id"]}
-    if status_filter:
-        q["status"] = status_filter
-    period_from, period_to = _period_to_range(year, quarter, month)
-    if period_from:
-        q["date"] = {"$gte": period_from, "$lte": period_to}
-    cursor = db.volunteer_hours.find(q, {"_id": 0}).sort("date", -1)
-    items = await cursor.to_list(500)
-    return [hours_out(h) for h in items]
-
-
-@api.get("/me/hours/summary")
-async def my_hours_summary(
-    user: dict = Depends(get_current_user),
-    year: Optional[int] = None,
-):
-    """Per-member rollup: hours by month for the requested year (defaults to current).
-    Returns: { year, total_approved, total_pending, by_month: [{label, hours, count, approved_hours}], by_quarter: [...] }
-    """
-    from datetime import datetime as _dt
-    target_year = year or _dt.utcnow().year
-    period_from, period_to = _period_to_range(target_year, None, None)
-    items = await db.volunteer_hours.find({"user_id": user["id"], "date": {"$gte": period_from, "$lte": period_to}}, {"_id": 0}).to_list(2000)
-
-    by_month = [{"label": _dt(target_year, m, 1).strftime("%b"), "key": f"{target_year}-{m:02d}",
-                 "hours": 0.0, "approved_hours": 0.0, "count": 0} for m in range(1, 13)]
-    by_quarter = [{"label": f"Q{q}", "key": f"{target_year}-Q{q}", "hours": 0.0, "approved_hours": 0.0, "count": 0} for q in range(1, 5)]
-
-    total_approved = 0.0
-    total_pending = 0.0
-    for h in items:
-        ds = (h.get("date") or "")[:10]
-        try:
-            dt = _dt.fromisoformat(ds.replace("Z", ""))
-        except Exception:
-            continue
-        hrs = h.get("hours", 0) or 0
-        is_approved = h.get("status") == "approved"
-        is_pending = h.get("status") == "pending"
-        if is_approved:
-            total_approved += hrs
-        if is_pending:
-            total_pending += hrs
-        m_idx = dt.month - 1
-        by_month[m_idx]["hours"] += hrs
-        by_month[m_idx]["count"] += 1
-        if is_approved:
-            by_month[m_idx]["approved_hours"] += hrs
-        q_idx = (dt.month - 1) // 3
-        by_quarter[q_idx]["hours"] += hrs
-        by_quarter[q_idx]["count"] += 1
-        if is_approved:
-            by_quarter[q_idx]["approved_hours"] += hrs
-
-    # round
-    for row in by_month + by_quarter:
-        row["hours"] = round(row["hours"], 2)
-        row["approved_hours"] = round(row["approved_hours"], 2)
-
-    return {
-        "year": target_year,
-        "total_approved": round(total_approved, 2),
-        "total_pending": round(total_pending, 2),
-        "by_month": by_month,
-        "by_quarter": by_quarter,
-    }
+# /me/hours and /me/hours/summary are extracted to routes/hours.py.
 
 @api.get("/reports/donations")
 async def report_donations(
@@ -7363,6 +6992,8 @@ from routes import auth as routes_auth  # noqa: E402
 from routes import auth_email_flows as routes_auth_email_flows  # noqa: E402
 from routes import events as routes_events  # noqa: E402
 from routes import members as routes_members  # noqa: E402
+from routes import applications as routes_applications  # noqa: E402
+from routes import hours as routes_hours  # noqa: E402
 
 routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
@@ -7419,6 +7050,31 @@ _send_set_password_email._impl = routes_auth_email_flows.register.send_set_passw
 
 routes_events.register(api, db=db, admin_tab_dep=admin_tab_dep, event_out=event_out, iso=iso, now_utc=now_utc)
 routes_members.register(api, db=db, admin_tab_dep=admin_tab_dep, public_user=public_user, iso=iso, now_utc=now_utc)
+routes_applications.register(
+    api,
+    db=db,
+    admin_tab_dep=admin_tab_dep,
+    iso=iso,
+    now_utc=now_utc,
+    hash_password=hash_password,
+    resend_sdk=resend_sdk,
+    resend_api_key=RESEND_API_KEY,
+    resend_from=RESEND_FROM,
+    logger=logger,
+)
+routes_hours.register(
+    api,
+    db=db,
+    admin_tab_dep=admin_tab_dep,
+    require_admin=require_admin,
+    get_current_user=get_current_user,
+    hours_out=hours_out,
+    is_chapter_scoped=is_chapter_scoped,
+    chapter_scope_user_ids=chapter_scope_user_ids,
+    period_to_range=_period_to_range,
+    iso=iso,
+    now_utc=now_utc,
+)
 
 
 # ---------- Mount ----------

@@ -742,6 +742,19 @@ function MembersAdmin() {
             else toast.warning("Token created but the email failed to send. Check Resend logs.");
         } catch (e) { toast.error(e.response?.data?.detail || "Failed to resend"); }
     }
+    async function bulkResendSetPassword() {
+        const count = members.filter((x) => x.pending_set_password).length;
+        if (!count) { toast.info("No members are pending password setup."); return; }
+        if (!confirm(`Send a fresh set-password email to all ${count} pending members? Each receives a new 7-day link and any older links are invalidated.`)) return;
+        try {
+            const { data } = await api.post("/admin/members/bulk-resend-set-password");
+            const failed = data?.failed || 0;
+            const skipped = data?.skipped_no_email || 0;
+            if (failed === 0 && skipped === 0) toast.success(`Sent ${data?.sent || 0} set-password emails.`);
+            else toast.warning(`Sent ${data?.sent || 0}, failed ${failed}, skipped (no email) ${skipped}.`);
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Bulk resend failed"); }
+    }
 
     const [pendingOnly, setPendingOnly] = useState(false);
     const pendingCount = members.filter((x) => x.pending_set_password).length;
@@ -758,15 +771,26 @@ function MembersAdmin() {
                 <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
                 <div className="flex items-center gap-2">
                     {pendingCount > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setPendingOnly((v) => !v)}
-                            className={`rounded-full px-3 py-1.5 text-xs font-semibold border transition ${pendingOnly ? "bg-amber-100 text-amber-900 border-amber-400" : "bg-white text-amber-800 border-amber-300 hover:bg-amber-50"}`}
-                            data-testid="filter-pending-setpw"
-                            title="Show only members who haven't completed /set-password"
-                        >
-                            {pendingOnly ? `Showing ${pendingCount} pending` : `${pendingCount} pending password setup`}
-                        </button>
+                        <>
+                            <button
+                                type="button"
+                                onClick={() => setPendingOnly((v) => !v)}
+                                className={`rounded-full px-3 py-1.5 text-xs font-semibold border transition ${pendingOnly ? "bg-amber-100 text-amber-900 border-amber-400" : "bg-white text-amber-800 border-amber-300 hover:bg-amber-50"}`}
+                                data-testid="filter-pending-setpw"
+                                title="Show only members who haven't completed /set-password"
+                            >
+                                {pendingOnly ? `Showing ${pendingCount} pending` : `${pendingCount} pending password setup`}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={bulkResendSetPassword}
+                                className="rounded-full px-3 py-1.5 text-xs font-semibold border border-amber-400 bg-amber-500 text-white hover:bg-amber-600 transition"
+                                data-testid="bulk-resend-setpw"
+                                title={`Send a fresh set-password email to all ${pendingCount} pending members`}
+                            >
+                                Resend to all {pendingCount}
+                            </button>
+                        </>
                     )}
                     <BulkImportMembersDialog chapters={chapters.filter(officialOnly)} onImported={load} />
                     <NewMemberDialog chapters={chapters} tiers={tiers} onSaved={load} />
