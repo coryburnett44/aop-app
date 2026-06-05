@@ -59,7 +59,16 @@ export default function Awards() {
                             <h3 className="font-heading font-bold text-xl mt-4 relative z-10">{a.name}</h3>
                             <p className="text-sm text-muted-foreground mt-2 leading-relaxed relative z-10">{a.description}</p>
                             <div className="mt-4 text-xs font-semibold text-muted-foreground relative z-10">
-                                Granted to {a.granted_count} member{a.granted_count !== 1 ? "s" : ""}
+                                {(() => {
+                                    // Iter 37: catalog now shows BOTH distinct recipients and total grants
+                                    // (because a single member can earn the same award multiple times).
+                                    const total = a.granted_count || 0;
+                                    const distinct = a.granted_distinct_count == null ? total : a.granted_distinct_count;
+                                    if (total === distinct) {
+                                        return `Granted to ${distinct} member${distinct !== 1 ? "s" : ""}`;
+                                    }
+                                    return `Granted ${total} times to ${distinct} member${distinct !== 1 ? "s" : ""}`;
+                                })()}
                             </div>
                         </div>
                     );
@@ -74,6 +83,14 @@ export default function Awards() {
                         {recent.map((g) => {
                             const Icon = ICON_MAP[g.award_icon] || Trophy;
                             const initials = (g.user_name || "M").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+                            // Iter 37: when a member earned the same award more than once, surface the
+                            // ordinal ("2nd Award") so it's clear this is a repeat grant. The backend
+                            // sets both `ordinal` (this grant's order) and `award_count` (total grants
+                            // of this award to this same member).
+                            const ord = g.ordinal || 0;
+                            const totalForMember = g.award_count || 0;
+                            const ordinalLabel = ord === 1 ? "1st Award" : ord === 2 ? "2nd Award" : ord === 3 ? "3rd Award" : ord ? `${ord}th Award` : "";
+                            const showOrdinalPill = ord && totalForMember > 1;
                             return (
                                 <div key={g.id} className="bg-card rounded-2xl border border-border p-5 flex items-center gap-4" data-testid={`grant-${g.id}`}>
                                     <div
@@ -83,7 +100,18 @@ export default function Awards() {
                                         <Icon className="h-6 w-6" />
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <div className="font-medium">{g.award_name}</div>
+                                        <div className="font-medium flex items-center gap-2 flex-wrap">
+                                            <span>{g.award_name}</span>
+                                            {showOrdinalPill && (
+                                                <span
+                                                    className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary"
+                                                    data-testid={`grant-ordinal-${g.id}`}
+                                                    title={`This member's ${ordinalLabel.toLowerCase()} of this honor`}
+                                                >
+                                                    {ordinalLabel}
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="text-xs text-muted-foreground">
                                             {g.granted_at && format(parseISO(g.granted_at), "MMM d, yyyy")}
                                             {g.reason && ` · ${g.reason}`}

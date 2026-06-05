@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 37 — Reports refactor + Awards multi-grant UI fully verified. Backend: 29/29 pytest cases PASS covering all 7 extracted /reports/* endpoints (members, rsvps, hours w/ status filter, hours/summary w/ all 6 group_by values [member|chapter|overall|month|quarter|year], donations, personnel-brief JSON, personnel-brief PDF), the /me/personnel-brief* shim delegation (member-self download bytes match admin download), regression on personnel-brief payload shape (member, chapter, tier, awards, awards_grouped, awards_count, awards_distinct_count, hours, approved_hours, pending_hours, events, events_count, checkins, rsvps, transactions, total_paid, generated_at all present), /api/awards now returns both granted_count + granted_distinct_count (distinct <= total invariant), and permission gating (member → 403 on all 5 admin reports endpoints + admin personnel-brief endpoint + admin personnel-brief PDF; unauth → 401/403). Frontend: live UI verified on /awards while logged in as admin — 'Life Membership Ribbon' catalog card displays exactly 'Granted 3 times to 1 member' (multi-grant format), other 15 catalog cards display 'Granted to 0 members' (single-grant format). 3 ordinal pills rendered for the 3 Life Membership grants ('1st Award', '2nd Award', '3rd Award') with data-testid='grant-ordinal-{id}' and the exact spec class string 'text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary'. PDF size is 4.8KB w/ valid %PDF magic.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration37_reports_refactor.py",
+    "/app/test_reports/pytest/iter37_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Refactor is clean: routes/reports.py (707 lines) exposes 7 endpoints and 2 helpers (personnel_brief_data, personnel_brief_pdf_response) via register(...) DI. Cross-cutting helpers (public_user, hours_out, tier_out, chapter_out, is_chapter_scoped, chapter_scope_user_ids, period_to_range, get_object, iso, now_utc, logger) are injected — no circular imports.",
+    "Back-compat shim pattern is correct: server.py keeps thin _personnel_brief_data / _personnel_brief_pdf_response wrappers whose ._impl pointers get wired post-registration. /me/personnel-brief* (member-self) and /reports/personnel-brief/{id}* (admin) both delegate to the same fn — member→admin byte parity confirmed by test_me_brief_matches_admin_brief.",
+    "Permission gating intact via admin_tab_dep('reports'): member account hits 403 on all 5 admin reports endpoints + admin personnel-brief + admin personnel-brief PDF (parametrized over 5 paths).",
+    "hours/summary shape correctly varies per group_by: member→{user_id, user_name, chapter_id, chapter_name, hours, count}; chapter→{chapter_id, chapter_name, hours, count, member_count}; overall→{label, hours, count}; month/quarter/year→{period_label, period_key, hours, count}. Totals envelope {approved_hours, pending_hours, rejected_hours, approved_count, pending_count, rejected_count} preserved.",
+    "/api/awards returns both granted_count (total grants from count_documents) and granted_distinct_count (len of distinct user_ids). Invariant distinct <= total holds across all 16 catalog entries in seeded env.",
+    "/members/{id}/awards rows carry ordinal + award_count enriched per grant — this is what powers the Awards page Recent recipients ordinal pill (verified live: 3 pills rendered '1st/2nd/3rd Award' for Riley Chen's Life Membership grants).",
+    "Awards.jsx catalog text logic is correct: when total==distinct → 'Granted to N member(s)'; when total>distinct → 'Granted N times to M member(s)'. Verified live: 'Granted 3 times to 1 member' renders exactly.",
+    "Awards.jsx pill is gated by `ord && totalForMember > 1` so single-award grants don't get a pill. Style class matches Profile.jsx Awards tab spec ('text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary').",
+    "Minor (no action needed): in personnel_brief_data, `grants` are first sorted by (award_name, granted_at asc) for ordinal calc, then re-sorted by granted_at desc for the flat awards[] array. awards_grouped retains chronological grants[] order inside each group. Behavior verified consistent with iter36 PDF §8."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration37_reports_refactor.py (NEW — 29 pytest cases)"
+  ],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "100% (Awards catalog multi-grant text + 3 ordinal pills verified live with correct data-testids and spec class)"},
+  "test_credentials": "admin@clubhaven.app / Admin123! and member@clubhaven.app / Member123! both working. Member account resolves to Riley Chen with 3 grants of 'Life Membership Ribbon' from prior iterations.",
+  "seed_data_creation": "None. Used existing seed data (Life Membership Ribbon x3 grants on Riley Chen from iter35/36). No cleanup required.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run `REACT_APP_BACKEND_URL=<url> pytest /app/backend/tests/test_iteration37_reports_refactor.py -v` for regression. This file covers all 7 routes/reports.py endpoints + /me shim parity + /api/awards granted_count/granted_distinct_count + /members/{id}/awards ordinal/award_count + 7 permission gates. PDF size assertion uses >2000 bytes (observed ~4800). Awards public page renders ordinal pills using /members/{id}/awards data — not a dedicated /grants endpoint.",
+  "rca of the issue": "N/A — feature/refactor iteration, all pass."
+}
