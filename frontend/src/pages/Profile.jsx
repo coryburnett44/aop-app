@@ -242,7 +242,7 @@ export default function Profile() {
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
-                <StatCard icon={<Trophy className="h-4 w-4" />} label="Awards" value={awards.length} testid="stat-awards" />
+                <StatCard icon={<Trophy className="h-4 w-4" />} label="Awards" value={new Set(awards.map((g) => g.award_id || g.award_name)).size} testid="stat-awards" />
                 <StatCard icon={<Clock className="h-4 w-4" />} label="Approved hrs" value={approvedHours.toFixed(1)} testid="stat-hours" />
                 <StatCard icon={<Calendar className="h-4 w-4" />} label="Events" value={events.length} testid="stat-events" />
                 <StatCard icon={<DollarSign className="h-4 w-4" />} label="Paid" value={`$${totalPaid.toFixed(0)}`} testid="stat-paid" />
@@ -255,7 +255,7 @@ export default function Profile() {
                     <TabsTrigger value="notifications" className="rounded-full data-[state=active]:bg-background" data-testid="tab-notifications">Notifications</TabsTrigger>
                     <TabsTrigger value="activity" className="rounded-full data-[state=active]:bg-background" data-testid="tab-activity">Activity ({activity.length})</TabsTrigger>
                     <TabsTrigger value="transactions" className="rounded-full data-[state=active]:bg-background" data-testid="tab-transactions">Transactions ({transactions.length})</TabsTrigger>
-                    <TabsTrigger value="awards" className="rounded-full data-[state=active]:bg-background" data-testid="tab-awards">Awards ({awards.length})</TabsTrigger>
+                    <TabsTrigger value="awards" className="rounded-full data-[state=active]:bg-background" data-testid="tab-awards">Awards ({new Set(awards.map((g) => g.award_id || g.award_name)).size})</TabsTrigger>
                     <TabsTrigger value="hours" className="rounded-full data-[state=active]:bg-background" data-testid="tab-hours">Hours ({hoursEntries.length})</TabsTrigger>
                     <TabsTrigger value="events" className="rounded-full data-[state=active]:bg-background" data-testid="tab-events">Events ({events.length})</TabsTrigger>
                 </TabsList>
@@ -458,25 +458,58 @@ export default function Profile() {
                 </TabsContent>
 
                 <TabsContent value="awards" className="mt-6">
-                    {awards.length === 0 ? <div className="text-muted-foreground">No awards yet.</div> : (
-                        <div className="grid sm:grid-cols-2 gap-4">
-                            {awards.map((g) => {
-                                const Icon = ICON_MAP[g.award_icon] || Trophy;
-                                return (
-                                    <div key={g.id} className="bg-card rounded-2xl border border-border p-5 flex items-center gap-4">
-                                        <div className="w-14 h-14 rounded-2xl grid place-items-center" style={{ backgroundColor: `${g.award_color}33`, color: g.award_color }}>
-                                            <Icon className="h-7 w-7" />
+                    {(() => {
+                        // Iter 36: render ONE card per distinct award, with an ordinal
+                        // label ("2nd Award", "3rd Award") + total count when the
+                        // member has earned the same award more than once.
+                        const ordinalLabel = (n) => n === 1 ? "1st Award" : n === 2 ? "2nd Award" : n === 3 ? "3rd Award" : `${n}th Award`;
+                        const byAward = new Map();
+                        for (const g of [...awards].sort((a, b) => (a.granted_at || "").localeCompare(b.granted_at || ""))) {
+                            const aid = g.award_id || g.award_name;
+                            const cur = byAward.get(aid) || { ...g, count: 0, grants: [], last_granted_at: g.granted_at, reasons: [] };
+                            cur.count += 1;
+                            cur.last_granted_at = g.granted_at || cur.last_granted_at;
+                            cur.grants.push(g);
+                            if (g.reason) cur.reasons.push(g.reason);
+                            byAward.set(aid, cur);
+                        }
+                        const grouped = Array.from(byAward.values()).sort((a, b) => (b.last_granted_at || "").localeCompare(a.last_granted_at || ""));
+                        if (grouped.length === 0) return <div className="text-muted-foreground">No awards yet.</div>;
+                        return (
+                            <div className="grid sm:grid-cols-2 gap-4" data-testid="awards-grid">
+                                {grouped.map((row) => {
+                                    const Icon = ICON_MAP[row.award_icon] || Trophy;
+                                    const ord = ordinalLabel(row.count);
+                                    return (
+                                        <div key={row.award_id || row.award_name} className="bg-card rounded-2xl border border-border p-5 flex items-center gap-4" data-testid={`award-card-${row.award_id || row.award_name}`}>
+                                            <div className="w-14 h-14 rounded-2xl grid place-items-center" style={{ backgroundColor: `${row.award_color}33`, color: row.award_color }}>
+                                                <Icon className="h-7 w-7" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <div className="font-heading font-semibold">{row.award_name}</div>
+                                                    <span
+                                                        className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary"
+                                                        title={row.count > 1 ? `Earned ${row.count} times` : "Earned once"}
+                                                        data-testid={`award-ordinal-${row.award_id || row.award_name}`}
+                                                    >
+                                                        {row.count > 1 ? `${ord} · × ${row.count}` : ord}
+                                                    </span>
+                                                </div>
+                                                <div className="text-xs text-muted-foreground">
+                                                    {row.count > 1 ? "Latest " : ""}
+                                                    {row.last_granted_at && format(parseISO(row.last_granted_at), "MMM d, yyyy")}
+                                                </div>
+                                                {row.reasons.length > 0 && (
+                                                    <div className="text-xs italic mt-1 truncate" title={row.reasons.join(" • ")}>{row.reasons[row.reasons.length - 1]}</div>
+                                                )}
+                                            </div>
                                         </div>
-                                        <div>
-                                            <div className="font-heading font-semibold">{g.award_name}</div>
-                                            <div className="text-xs text-muted-foreground">{g.granted_at && format(parseISO(g.granted_at), "MMM d, yyyy")}</div>
-                                            {g.reason && <div className="text-xs italic mt-1">{g.reason}</div>}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
+                                    );
+                                })}
+                            </div>
+                        );
+                    })()}
                 </TabsContent>
 
                 <TabsContent value="hours" className="mt-6">

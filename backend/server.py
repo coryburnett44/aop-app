@@ -1726,9 +1726,10 @@ async def grant_award(award_id: str, body: AwardGrantIn, admin: dict = Depends(a
     user = await db.users.find_one({"id": body.user_id}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    existing = await db.award_grants.find_one({"award_id": award_id, "user_id": body.user_id})
-    if existing:
-        raise HTTPException(status_code=400, detail="User already has this award")
+    # Multiple grants of the same award to the same member are allowed (Iter 36).
+    # Each grant gets an ordinal so the UI can render "2nd Award", "3rd Award", etc.
+    prior_count = await db.award_grants.count_documents({"award_id": award_id, "user_id": body.user_id})
+    ordinal = prior_count + 1  # this grant becomes the (prior_count+1)-th
     doc = {
         "id": str(uuid.uuid4()),
         "award_id": award_id,
@@ -1741,6 +1742,7 @@ async def grant_award(award_id: str, body: AwardGrantIn, admin: dict = Depends(a
         "granted_by": admin["id"],
         "granted_by_name": admin.get("name", "Admin"),
         "granted_at": body.granted_at or iso(now_utc()),
+        "ordinal": ordinal,
     }
     await db.award_grants.insert_one(doc)
     out = dict(doc)
@@ -1756,13 +1758,48 @@ async def revoke_award(grant_id: str, _: dict = Depends(admin_tab_dep("awards"))
 
 @api.get("/members/{user_id}/awards")
 async def member_awards(user_id: str):
-    cursor = db.award_grants.find({"user_id": user_id}, {"_id": 0}).sort("granted_at", -1)
-    return await cursor.to_list(100)
+    """Returns every award grant for the user, with each entry carrying its
+    ordinal (1st, 2nd, 3rd Award) and an `award_count` total for the same award.
+
+    The UI typically renders awards grouped — one row per distinct award, with
+    a "× N" or "(2nd Award)" label — but the raw grants list is returned so
+    callers can decide their own grouping.
+    """
+    cursor = db.award_grants.find({"user_id": user_id}, {"_id": 0}).sort([("award_name", 1), ("granted_at", 1)])
+    grants = await cursor.to_list(500)
+    # Backfill the ordinal field for older grants that don't have it stored.
+    counts: dict = {}
+    for g in grants:
+        aid = g["award_id"]
+        counts[aid] = counts.get(aid, 0) + 1
+        if not g.get("ordinal"):
+            g["ordinal"] = counts[aid]
+    # Add award_count (total grants of this same award to this user) so the UI
+    # can render "× 3" without re-counting on the client.
+    totals = {aid: total for aid, total in counts.items()}
+    for g in grants:
+        g["award_count"] = totals.get(g["award_id"], 1)
+    # Sort newest first for display
+    grants.sort(key=lambda x: x.get("granted_at", ""), reverse=True)
+    return grants
 
 @api.get("/me/awards")
 async def my_awards(user: dict = Depends(get_current_user)):
-    cursor = db.award_grants.find({"user_id": user["id"]}, {"_id": 0}).sort("granted_at", -1)
-    return await cursor.to_list(100)
+    """Same shape as /members/{id}/awards — each grant carries `ordinal` (the
+    1st/2nd/3rd grant of that award to this member) and `award_count` (total
+    grants of that award to this member)."""
+    cursor = db.award_grants.find({"user_id": user["id"]}, {"_id": 0}).sort([("award_name", 1), ("granted_at", 1)])
+    grants = await cursor.to_list(500)
+    counts: dict = {}
+    for g in grants:
+        aid = g["award_id"]
+        counts[aid] = counts.get(aid, 0) + 1
+        if not g.get("ordinal"):
+            g["ordinal"] = counts[aid]
+    for g in grants:
+        g["award_count"] = counts.get(g["award_id"], 1)
+    grants.sort(key=lambda x: x.get("granted_at", ""), reverse=True)
+    return grants
 
 # ---------- Volunteer Hours ----------
 def hours_out(h: dict) -> dict:
@@ -2294,9 +2331,9 @@ async def upload_documents_bulk(
     files: List[UploadFile] = File(...),
     category: str = Form("general"),
     folder_id: str = Form(""),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(admin_tab_dep("documents")),
 ):
-    """Multi-file upload — returns the doc rows that succeeded + the names that failed."""
+    """Multi-file upload (admin-only — restricted to documents-tab admins). Returns the doc rows that succeeded + the names that failed."""
     if len(files) == 0:
         raise HTTPException(status_code=400, detail="Pick at least one file.")
     if len(files) > 50:
@@ -2348,8 +2385,10 @@ async def upload_document(
     category: str = Form("general"),
     description: str = Form(""),
     folder_id: str = Form(""),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(admin_tab_dep("documents")),
 ):
+    """Single-file upload (admin-only — restricted to documents-tab admins).
+    Members can VIEW the Docs & Forms page but cannot upload (Iter 36 policy)."""
     ext = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "bin").lower()
     if ext not in DOC_EXT and ext not in IMAGE_EXT:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
@@ -2654,7 +2693,14 @@ async def startup():
     await db.chapters.create_index("id", unique=True)
     await db.tiers.create_index("id", unique=True)
     await db.awards.create_index("id", unique=True)
-    await db.award_grants.create_index([("award_id", 1), ("user_id", 1)], unique=True)
+    # Multiple grants of the same award per member are allowed since Iter 36 — drop
+    # the legacy unique index on (award_id, user_id) if it exists, then create the
+    # non-unique index for lookup performance.
+    try:
+        await db.award_grants.drop_index("award_id_1_user_id_1")
+    except Exception:
+        pass
+    await db.award_grants.create_index([("award_id", 1), ("user_id", 1)])
     await db.volunteer_hours.create_index("user_id")
     await db.volunteer_hours.create_index("status")
     await db.photos.create_index("id", unique=True)
@@ -4407,7 +4453,41 @@ async def _personnel_brief_data(user_id: str) -> dict:
         tdoc = await db.tiers.find_one({"id": u["tier_id"]}, {"_id": 0})
         tier = tier_out(tdoc) if tdoc else None
 
-    grants = await db.award_grants.find({"user_id": user_id}, {"_id": 0}).sort("granted_at", -1).to_list(200)
+    # Sort oldest-first so the first occurrence of each award becomes #1.
+    grants = await db.award_grants.find({"user_id": user_id}, {"_id": 0}).sort([("award_name", 1), ("granted_at", 1)]).to_list(200)
+    # Assign ordinal (1st, 2nd, 3rd grant of this award) + group into one row
+    # per distinct award for the "accounting" view (each award listed once with
+    # the number of times it was earned).
+    counts: dict = {}
+    grouped_by_id: dict = {}
+    for g in grants:
+        aid = g["award_id"]
+        counts[aid] = counts.get(aid, 0) + 1
+        if not g.get("ordinal"):
+            g["ordinal"] = counts[aid]
+        if aid not in grouped_by_id:
+            grouped_by_id[aid] = {
+                "award_id": aid,
+                "award_name": g.get("award_name"),
+                "award_icon": g.get("award_icon"),
+                "award_color": g.get("award_color"),
+                "first_granted_at": g.get("granted_at"),
+                "last_granted_at": g.get("granted_at"),
+                "count": 1,
+                "grants": [g],
+            }
+        else:
+            grouped_by_id[aid]["count"] += 1
+            grouped_by_id[aid]["last_granted_at"] = g.get("granted_at")
+            grouped_by_id[aid]["grants"].append(g)
+    for g in grants:
+        g["award_count"] = counts.get(g["award_id"], 1)
+    grants.sort(key=lambda x: x.get("granted_at", ""), reverse=True)
+    awards_grouped = sorted(
+        grouped_by_id.values(),
+        key=lambda x: (x.get("last_granted_at") or ""),
+        reverse=True,
+    )
     hours_items = await db.volunteer_hours.find({"user_id": user_id}, {"_id": 0}).sort("date", -1).to_list(500)
     hours_clean = [hours_out(h) for h in hours_items]
     approved_hours = sum(h["hours"] for h in hours_clean if h["status"] == "approved")
@@ -4429,7 +4509,9 @@ async def _personnel_brief_data(user_id: str) -> dict:
         "chapter": chapter,
         "tier": tier,
         "awards": grants,
+        "awards_grouped": awards_grouped,
         "awards_count": len(grants),
+        "awards_distinct_count": len(awards_grouped),
         "hours": hours_clean,
         "approved_hours": approved_hours,
         "pending_hours": pending_hours,
@@ -4718,24 +4800,39 @@ async def _personnel_brief_pdf_response(user_id: str):
         [2.0 * inch, 1.4 * inch, 0.7 * inch, 1.0 * inch, 1.0 * inch],
     ))
 
-    # ---------- §8 Awards (with ordinal first/second/third by award name) ----------
+    # ---------- §8 Awards (one row per distinct award + ordinal showing total times earned) ----------
     elements.append(Paragraph("§8  Awards", section))
-    awards = sorted(data.get("awards") or [], key=lambda g: g.get("granted_at") or "")
-    counts: dict = {}
+    # Iter 36: each award listed ONCE with its highest ordinal — e.g. an award
+    # earned 2 times shows as "Service Star — 2nd Award (× 2)". Backend returns
+    # awards_grouped (one entry per distinct award_id). Fall back to building
+    # the grouping locally from awards[] if the backend response is older.
+    grouped = data.get("awards_grouped")
+    if not grouped:
+        counts_local: dict = {}
+        last_seen: dict = {}
+        for g in sorted(data.get("awards") or [], key=lambda x: x.get("granted_at") or ""):
+            nm = g.get("award_name") or g.get("name") or "—"
+            counts_local[nm] = counts_local.get(nm, 0) + 1
+            last_seen[nm] = g.get("granted_at") or last_seen.get(nm, "")
+        grouped = [
+            {"award_name": nm, "count": cnt, "last_granted_at": last_seen.get(nm, "")}
+            for nm, cnt in counts_local.items()
+        ]
     aw_rows = []
-    for g in awards:
-        nm = g.get("award_name") or g.get("name") or "—"
-        counts[nm] = counts.get(nm, 0) + 1
-        ordinal = {1: "1st", 2: "2nd", 3: "3rd"}.get(counts[nm], f"{counts[nm]}th")
+    for row in sorted(grouped, key=lambda x: x.get("last_granted_at") or "", reverse=True):
+        nm = row.get("award_name") or "—"
+        cnt = int(row.get("count") or 1)
+        ordinal_label = {1: "1st Award", 2: "2nd Award", 3: "3rd Award"}.get(cnt, f"{cnt}th Award")
+        suffix = f" (× {cnt})" if cnt > 1 else ""
         aw_rows.append([
             nm,
-            ordinal + " award",
-            (g.get("granted_at") or "")[:10],
+            ordinal_label + suffix,
+            (row.get("last_granted_at") or "")[:10],
         ])
     elements.append(data_table(
-        ["Award", "Order", "Date Granted"],
+        ["Award", "Order", "Latest Date"],
         aw_rows,
-        [3.4 * inch, 1.6 * inch, 2.1 * inch],
+        [3.4 * inch, 1.8 * inch, 1.9 * inch],
     ))
 
     # ---------- §9 Events (current-year checked-in only) ----------

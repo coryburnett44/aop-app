@@ -617,16 +617,34 @@ function BriefBody({ b }) {
     const donations = (b.transactions || []).filter((t) => t.type === "donation").slice(0, 5);
     const hoursCY = (b.hours || []).filter((h) => (h.date || "").slice(0, 4) === String(currentYear));
 
-    // §8 Awards — ordinal label per repeated award name
-    const awardCounts = {};
-    const awardsOrdered = [...(b.awards || [])].sort((a, c) => (a.granted_at || "").localeCompare(c.granted_at || ""));
-    const awardsWithOrdinal = awardsOrdered.map((g) => {
-        const nm = g.award_name || g.name || "—";
-        awardCounts[nm] = (awardCounts[nm] || 0) + 1;
-        const n = awardCounts[nm];
-        const ord = n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`;
-        return { ...g, ord };
-    });
+    // §8 Awards — Iter 36: one row per distinct award with total count + ordinal.
+    // If backend supplied awards_grouped, use it directly; otherwise group locally.
+    let awardsGrouped = b.awards_grouped;
+    if (!awardsGrouped || awardsGrouped.length === 0) {
+        const localCounts = {};
+        const localLast = {};
+        for (const g of [...(b.awards || [])].sort((a, c) => (a.granted_at || "").localeCompare(c.granted_at || ""))) {
+            const nm = g.award_name || g.name || "—";
+            localCounts[nm] = (localCounts[nm] || 0) + 1;
+            localLast[nm] = g.granted_at || localLast[nm] || "";
+        }
+        awardsGrouped = Object.keys(localCounts).map((nm) => ({
+            award_name: nm,
+            count: localCounts[nm],
+            last_granted_at: localLast[nm],
+        }));
+    }
+    const awardsRows = [...awardsGrouped]
+        .sort((a, c) => (c.last_granted_at || "").localeCompare(a.last_granted_at || ""))
+        .map((row) => {
+            const n = row.count || 1;
+            const ord = n === 1 ? "1st Award" : n === 2 ? "2nd Award" : n === 3 ? "3rd Award" : `${n}th Award`;
+            return [
+                row.award_name || "—",
+                n > 1 ? `${ord} (× ${n})` : ord,
+                (row.last_granted_at || "").slice(0, 10),
+            ];
+        });
 
     // §9 Events — current-year check-ins only, dedup by event_id
     const checkinsCY = (b.checkins || []).filter((c) => (c.checked_in_at || "").slice(0, 4) === String(currentYear));
@@ -742,11 +760,7 @@ function BriefBody({ b }) {
             </BriefSection>
 
             <BriefSection num="8" title="Awards">
-                {awardsWithOrdinal.length === 0 ? <Empty /> : <TableLike headers={["Award", "Order", "Date Granted"]} rows={awardsWithOrdinal.map((g) => [
-                    g.award_name || "—",
-                    `${g.ord} award`,
-                    (g.granted_at || "").slice(0, 10),
-                ])} />}
+                {awardsRows.length === 0 ? <Empty /> : <TableLike headers={["Award", "Order", "Latest Date"]} rows={awardsRows} />}
             </BriefSection>
 
             <BriefSection num="9" title={`Events Attended (${currentYear} check-ins)`}>

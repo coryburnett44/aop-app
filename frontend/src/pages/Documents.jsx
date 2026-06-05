@@ -91,7 +91,7 @@ export default function Documents() {
                 </div>
                 <div className="flex gap-2 flex-wrap">
                     {isAdmin && <NewFolderDialog folders={folders} activeFolder={activeFolder} onCreated={loadFolders} />}
-                    {user && <UploadDocDialog folder={activeFolder} folders={folders} onDone={() => { load(); loadFolders(); }} />}
+                    {isAdmin && <UploadDocDialog folder={activeFolder} folders={folders} onDone={() => { load(); loadFolders(); }} />}
                 </div>
             </div>
 
