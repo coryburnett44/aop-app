@@ -2735,6 +2735,14 @@ async def seed_data():
     elif not verify_password(admin_password, existing["password_hash"]):
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
 
+    # Demo data is seeded ONCE per database. After it has run, the flag below
+    # prevents re-creating the demo member/sub-members even if the admin
+    # deleted them. Without this gate, every production deploy used to
+    # resurrect deleted demo members (Iter 35 fix).
+    demo_seed_marker = await db.site_settings.find_one({"key": "demo_seed_completed"})
+    if demo_seed_marker:
+        return
+
     # Demo member if empty
     demo_email = "member@clubhaven.app"
     if not await db.users.find_one({"email": demo_email}):
@@ -2941,6 +2949,14 @@ async def seed_data():
                 {"$and": [{"tier_id": {"$in": [None, ""]}}, {"role": "admin"}]},
                 {"$set": {"tier_id": lifetime_tier["id"], "membership_tier": lifetime_tier["name"]}},
             )
+
+    # Mark demo seed as completed so future restarts do NOT re-create deleted demo
+    # users / events / news. Admin permanently controls this collection from now on.
+    await db.site_settings.update_one(
+        {"key": "demo_seed_completed"},
+        {"$set": {"key": "demo_seed_completed", "value": True, "completed_at": iso(now_utc())}},
+        upsert=True,
+    )
 
 # ============================================================
 # PHASE B — Omega Chapter, Gear store, Donations, Event Calendar, Check-ins, Reports
@@ -4970,6 +4986,11 @@ async def _build_tax_letter_pdf(user: dict, year: int):
 
 # ---------- Seed Phase B sample data (idempotent) ----------
 async def seed_phase_b():
+    # Demo gear / causes are seeded ONCE per database. After admin deletes them,
+    # subsequent restarts must not resurrect them (Iter 35 fix).
+    demo_seed_marker = await db.site_settings.find_one({"key": "demo_seed_completed"})
+    if demo_seed_marker:
+        return
     if await db.gear.count_documents({}) == 0:
         sample_gear = [
             {"name": "AOP Trendsetter Polo", "description": "Embroidered crest polo in navy. Officer-grade combed cotton.",
@@ -6105,9 +6126,10 @@ AOP_TIERS = [
 AOP_TIER_NAMES = [t["name"] for t in AOP_TIERS]
 
 async def reconcile_tiers():
-    """Replace tiers with the canonical AOP list. Members on legacy tiers get
-    migrated to 'Regular Member' (the closest default)."""
-    # First make sure canonical tiers exist (so we have a default to migrate to)
+    """Ensure the canonical AOP tiers exist with up-to-date defaults. Admin-
+    added custom tiers (e.g. 'Junior Member') are PRESERVED — we never delete
+    non-canonical tiers anymore (Iter 35 fix: previous behavior wiped admin
+    tiers on every production deploy)."""
     for spec in AOP_TIERS:
         existing = await db.tiers.find_one({"name": spec["name"]})
         if existing:
@@ -6115,15 +6137,6 @@ async def reconcile_tiers():
         else:
             doc = {**spec, "id": str(uuid.uuid4()), "created_at": iso(now_utc())}
             await db.tiers.insert_one(doc)
-    default_tier = await db.tiers.find_one({"name": "Regular Member"})
-    default_id = default_tier["id"] if default_tier else None
-    # Now remove legacy tiers — migrate any members first
-    legacy = await db.tiers.find({"name": {"$nin": AOP_TIER_NAMES}}, {"_id": 0}).to_list(200)
-    for t in legacy:
-        if default_id:
-            await db.users.update_many({"tier_id": t["id"]}, {"$set": {"tier_id": default_id}})
-        await db.tiers.delete_one({"id": t["id"]})
-        logger.info(f"Removed legacy tier and migrated members: {t['name']}")
     # Backfill: ensure existing members on lifetime tiers have is_lifetime_member=true and no expiration.
     lifetime_tiers = await db.tiers.find({"is_lifetime": True}, {"_id": 0, "id": 1}).to_list(20)
     lifetime_tier_ids = [t["id"] for t in lifetime_tiers]
@@ -6181,13 +6194,10 @@ AOP_AWARDS = [
 AOP_AWARD_NAMES = [a["name"] for a in AOP_AWARDS]
 
 async def reconcile_awards():
-    """Reconcile AOP-specific Ribbons/Awards: insert missing, refresh on existing.
-    Legacy awards (and their grants) are deleted — these were demo seed data."""
-    legacy = await db.awards.find({"name": {"$nin": AOP_AWARD_NAMES}}, {"_id": 0}).to_list(200)
-    for a in legacy:
-        await db.award_grants.delete_many({"award_id": a["id"]})
-        await db.awards.delete_one({"id": a["id"]})
-        logger.info(f"Removed legacy award and grants: {a['name']}")
+    """Ensure the canonical AOP-specific Ribbons/Awards exist with up-to-date
+    descriptions. Admin-added custom awards (and their grants) are PRESERVED —
+    we never delete non-canonical awards anymore (Iter 35 fix: previous behavior
+    wiped admin-added awards + their grants on every production deploy)."""
     for spec in AOP_AWARDS:
         existing = await db.awards.find_one({"name": spec["name"]})
         if existing:
@@ -6286,38 +6296,10 @@ async def seed_anniversary_subevents():
             await db.events.insert_one(doc)
             logger.info(f"Seeded sub-event: {spec['title']} ({sub_start.date()})")
 
-    # Remove any other anniversary-tagged events that aren't in our canonical list
-    stale = db.events.find(
-        {
-            "$and": [
-                {"$or": [
-                    {"parent_event_id": parent["id"]},
-                    {"category": "anniversary"},
-                    {"title": {"$in": list(ANNIVERSARY_LEGACY_TITLES)}},
-                ]},
-                {"title": {"$nin": list(ANNIVERSARY_ALLOWED_TITLES)}},
-            ]
-        },
-        {"_id": 0, "id": 1, "title": 1},
-    )
-    async for e in stale:
-        await db.events.delete_one({"id": e["id"]})
-        await db.rsvps.delete_many({"event_id": e["id"]})
-        await db.checkins.delete_many({"event_id": e["id"]})
-        logger.info(f"Removed stale anniversary event: {e.get('title')}")
-
-    # Wipe ALL non-anniversary events on startup so the events page is clean.
-    # The Anniversary tree (parent + its 5 sub-events) is the only canonical set
-    # right now per the chapter. Admins re-seed via the UI when they add real events.
-    allowed_ids = {parent["id"]}
-    async for sub in db.events.find({"parent_event_id": parent["id"]}, {"_id": 0, "id": 1}):
-        allowed_ids.add(sub["id"])
-    other = db.events.find({"id": {"$nin": list(allowed_ids)}}, {"_id": 0, "id": 1, "title": 1})
-    async for e in other:
-        await db.events.delete_one({"id": e["id"]})
-        await db.rsvps.delete_many({"event_id": e["id"]})
-        await db.checkins.delete_many({"event_id": e["id"]})
-        logger.info(f"Removed legacy event: {e.get('title')}")
+    # NOTE: This function used to also DELETE any "stale anniversary event" and
+    # WIPE all non-anniversary events from the events collection on every startup.
+    # That destroyed admin-created events on every production deploy and has been
+    # removed (Iter 35). Admin can delete unwanted events from the UI.
 
 
 # ---------- Email Signatures (personal + org-wide) ----------

@@ -132,6 +132,15 @@ def register(
 
         # Success — clear any prior failed-attempt counter for this identifier.
         await db.login_attempts.delete_one({"identifier": identifier})
+        # If this user was flagged pending_set_password (bulk-imported and asked
+        # to use a /set-password welcome link) but they ended up setting their
+        # password via /reset-password or via an admin manually overriding it,
+        # they would otherwise stay flagged forever. A successful login proves
+        # they can authenticate — clear the flag so the Admin → Members
+        # 'Pending password setup' badge accurately reflects current state.
+        if user.get("pending_set_password"):
+            await db.users.update_one({"id": user["id"]}, {"$set": {"pending_set_password": False}})
+            user["pending_set_password"] = False
         tv = int(user.get("token_version", 0) or 0)
         at = create_access_token(user["id"], user["email"], user.get("role", "member"), tv)
         rt = create_refresh_token(user["id"], tv)

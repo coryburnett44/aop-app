@@ -839,7 +839,7 @@ function MembersAdmin() {
                                             <SelectValue placeholder={chapterName(m.chapter_id)} />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                                            {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                                         </SelectContent>
                                     </Select>
                                 </td>
@@ -987,7 +987,7 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
                             <Label>Chapter</Label>
                             <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
                                 <SelectTrigger className="rounded-xl mt-1.5" data-testid="nm-chapter"><SelectValue placeholder="—" /></SelectTrigger>
-                                <SelectContent>{chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                                <SelectContent>{chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                             </Select>
                         </div>
                         <div>
@@ -1265,7 +1265,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                             <Label>Chapter</Label>
                             <Select value={form.chapter_id || ""} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
                                 <SelectTrigger className="rounded-xl mt-1.5" data-testid="em-chapter"><SelectValue placeholder="—" /></SelectTrigger>
-                                <SelectContent>{chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                                <SelectContent>{chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                             </Select>
                         </div>
                         <div>
@@ -2349,7 +2349,7 @@ function ComposeBlast() {
                             <Label>Chapter</Label>
                             <Select value={chapter_id} onValueChange={setChapterId}>
                                 <SelectTrigger className="rounded-xl mt-1.5"><SelectValue placeholder="Pick" /></SelectTrigger>
-                                <SelectContent>{chapters.filter(officialOnly).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                                <SelectContent>{chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                             </Select>
                         </div>
                     )}
