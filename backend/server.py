@@ -161,6 +161,7 @@ def public_user(u: dict) -> dict:
         "within_grace": within_grace,
         "email_verified": u.get("email_verified", False),
         "trust_zeffy": bool(u.get("trust_zeffy")),
+        "pending_set_password": bool(u.get("pending_set_password")),
         "created_at": u.get("created_at"),
         # Social media handles (members manage on profile)
         "facebook_url": u.get("facebook_url", ""),
@@ -485,32 +486,16 @@ async def list_applications(status_filter: Optional[str] = "pending", _: dict = 
 
 
 async def _send_set_password_email(email: str, name: str, token: str) -> bool:
-    if not RESEND_API_KEY or not email:
+    """Thin pass-through to routes/auth_email_flows.py — the real template lives
+    there. We keep this name so the bulk-import + apply-approval code paths in
+    server.py don't need to be touched. The function pointer is set after the
+    `routes_auth_email_flows.register(...)` call at the bottom of this file."""
+    fn = getattr(_send_set_password_email, "_impl", None)
+    if fn is None:
+        # Module wasn't registered yet (should not happen in production startup).
+        logger.warning("[set-password-email] called before routes_auth_email_flows registered")
         return False
-    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-    set_link = f"{frontend}/set-password?token={token}"
-    import html as _h
-    safe_name = _h.escape(name or "")
-    body = f"""
-    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
-      <h1 style="color:#C8102E;margin:0 0 12px;font-size:28px">Welcome to Alpha Omega Phi, {safe_name}.</h1>
-      <p style="line-height:1.6">Your membership application has been <strong>approved</strong>. To finish setting up your account, choose a password using the link below. This link is valid for 7 days and can only be used once.</p>
-      <p><a href="{set_link}" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Set my password</a></p>
-      <p style="font-size:12px;color:#888;margin-top:24px;line-height:1.6">If the button doesn't work, paste this link into your browser:<br><span style="color:#444">{set_link}</span></p>
-    </div>
-    """
-    try:
-        await asyncio.to_thread(resend_sdk.Emails.send, {
-            "from": RESEND_FROM,
-            "to": [email],
-            "subject": "Alpha Omega Phi — your application was approved, set your password",
-            "html": body,
-            "tags": [{"name": "type", "value": "set_password"}],
-        })
-        return True
-    except Exception as e:
-        logger.warning(f"Set-password email failed for {email}: {e}")
-        return False
+    return await fn(email, name, token)
 
 
 async def _send_approval_email(email: str, name: str) -> tuple[bool, str]:
@@ -668,174 +653,9 @@ async def review_application(app_id: str, body: ApplicationReviewIn, admin: dict
     return {"ok": True}
 
 
-@api.post("/auth/set-password")
-async def set_password_from_token(body: SetPasswordIn):
-    """One-time-token password set after approval. Marks the user as no longer pending."""
-    t = await db.password_set_tokens.find_one({"token": body.token, "used": False})
-    if not t:
-        raise HTTPException(status_code=400, detail="Invalid or already-used token")
-    if t.get("expires_at") and t["expires_at"] < iso(now_utc()):
-        raise HTTPException(status_code=400, detail="Token has expired")
-    await db.users.update_one(
-        {"id": t["user_id"]},
-        {"$set": {"password_hash": hash_password(body.new_password), "pending_set_password": False}},
-    )
-    await db.password_set_tokens.update_one({"token": body.token}, {"$set": {"used": True, "used_at": iso(now_utc())}})
-    user = await db.users.find_one({"id": t["user_id"]}, {"_id": 0, "password_hash": 0})
-    return {"ok": True, "email": user.get("email") if user else None}
-
-
-async def _send_password_reset_email(email: str, name: str, token: str) -> bool:
-    if not RESEND_API_KEY or not email:
-        return False
-    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-    link = f"{frontend}/reset-password?token={token}"
-    import html as _h
-    safe_name = _h.escape(name or "")
-    body = f"""
-    <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
-      <h1 style="color:#C8102E;margin:0 0 12px;font-size:26px">Reset your password</h1>
-      <p style="line-height:1.6">Hi {safe_name}, we received a request to reset your Alpha Omega Phi member portal password. This link is valid for <strong>1 hour</strong> and can only be used once.</p>
-      <p><a href="{link}" style="background:#C8102E;color:#fff;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:600">Reset my password</a></p>
-      <p style="font-size:12px;color:#888;margin-top:18px;line-height:1.6">If the button doesn't work, paste this URL into your browser:<br><span style="color:#444">{link}</span></p>
-      <p style="font-size:12px;color:#888;margin-top:18px;line-height:1.6">If you didn't request this, you can safely ignore this email — your existing password still works.</p>
-    </div>
-    """
-    try:
-        await asyncio.to_thread(resend_sdk.Emails.send, {
-            "from": RESEND_FROM,
-            "to": [email],
-            "subject": "Reset your Alpha Omega Phi password",
-            "html": body,
-            "tags": [{"name": "type", "value": "password_reset"}],
-        })
-        return True
-    except Exception as e:
-        logger.warning(f"Password reset email failed for {email}: {e}")
-        return False
-
-
-@api.post("/auth/forgot-password")
-async def forgot_password(body: ForgotPasswordIn):
-    """Request a password reset link. Always returns ok=true to prevent
-    enumeration (the email lookup result isn't leaked back to the caller)."""
-    email = body.email.lower().strip()
-    user = await db.users.find_one({"email": email})
-    if user:
-        token = secrets.token_urlsafe(32)
-        expires_dt = now_utc() + timedelta(hours=1)
-        await db.password_reset_tokens.insert_one({
-            "token": token,
-            "user_id": user["id"],
-            "expires_at": iso(expires_dt),
-            "expires_at_dt": expires_dt,  # BSON Date for TTL index
-            "used": False,
-            "created_at": iso(now_utc()),
-        })
-        await _send_password_reset_email(email, user.get("name", ""), token)
-    return {"ok": True}
-
-
-@api.post("/auth/reset-password")
-async def reset_password(body: ResetPasswordIn):
-    t = await db.password_reset_tokens.find_one({"token": body.token, "used": False})
-    if not t:
-        raise HTTPException(status_code=400, detail="Invalid or already-used reset link.")
-    if t.get("expires_at") and t["expires_at"] < iso(now_utc()):
-        raise HTTPException(status_code=400, detail="This reset link has expired. Request a new one.")
-    await db.users.update_one(
-        {"id": t["user_id"]},
-        {"$set": {"password_hash": hash_password(body.new_password)}, "$inc": {"token_version": 1}},
-    )
-    await db.password_reset_tokens.update_one({"token": body.token}, {"$set": {"used": True, "used_at": iso(now_utc())}})
-    return {"ok": True}
-
-
 # ---------- Profile / Members ----------
-@api.get("/members")
-async def list_members(q: Optional[str] = None, city: Optional[str] = None):
-    query = {}
-    if q:
-        query["$or"] = [
-            {"name": {"$regex": q, "$options": "i"}},
-            {"bio": {"$regex": q, "$options": "i"}},
-            {"interests": {"$regex": q, "$options": "i"}},
-        ]
-    if city:
-        query["city"] = {"$regex": city, "$options": "i"}
-    cursor = db.users.find(query, {"_id": 0, "password_hash": 0}).sort("created_at", -1).limit(200)
-    users = await cursor.to_list(200)
-    return [public_user(u) for u in users]
-
-@api.get("/members/{member_id}")
-async def get_member(member_id: str):
-    u = await db.users.find_one({"id": member_id}, {"_id": 0, "password_hash": 0})
-    if not u:
-        raise HTTPException(status_code=404, detail="Member not found")
-    return public_user(u)
-
-@api.get("/members-new")
-async def new_members(days: int = 30, limit: int = 8):
-    """Members who joined in the last N days."""
-    cutoff = iso(now_utc() - timedelta(days=days))
-    cursor = db.users.find(
-        {"created_at": {"$gte": cutoff}},
-        {"_id": 0, "password_hash": 0},
-    ).sort("created_at", -1).limit(limit)
-    items = await cursor.to_list(limit)
-    return [public_user(u) for u in items]
-
-@api.get("/members-birthdays")
-async def upcoming_birthdays(days: int = 30, limit: int = 25):
-    """Members with birthdays in the next N days (ignoring year)."""
-    today = now_utc().date()
-    out = []
-    cursor = db.users.find(
-        {"birthdate": {"$nin": [None, ""]}},
-        {"_id": 0, "password_hash": 0},
-    )
-    async for u in cursor:
-        bd_str = u.get("birthdate") or ""
-        try:
-            # Accept YYYY-MM-DD or full ISO
-            bd = datetime.fromisoformat(bd_str.replace("Z", "+00:00")).date() if "T" in bd_str else datetime.strptime(bd_str[:10], "%Y-%m-%d").date()
-        except Exception:
-            continue
-        # Compute next anniversary on/after today
-        try:
-            this_year = bd.replace(year=today.year)
-        except ValueError:  # Feb 29
-            this_year = bd.replace(year=today.year, day=28)
-        next_bd = this_year if this_year >= today else (
-            bd.replace(year=today.year + 1) if bd.month != 2 or bd.day != 29 else bd.replace(year=today.year + 1, day=28)
-        )
-        delta = (next_bd - today).days
-        if 0 <= delta <= days:
-            entry = public_user(u)
-            entry["next_birthday"] = next_bd.isoformat()
-            entry["days_until_birthday"] = delta
-            entry["age_turning"] = next_bd.year - bd.year
-            out.append(entry)
-    out.sort(key=lambda x: x["days_until_birthday"])
-    return out[:limit]
-
-@api.put("/members/{user_id}/status")
-async def set_member_status(user_id: str, body: StatusOverrideIn, _: dict = Depends(admin_tab_dep("members"))):
-    updates: dict = {}
-    if body.status is not None:
-        updates["status_override"] = body.status
-    if body.deceased_at is not None:
-        updates["deceased_at"] = body.deceased_at
-    elif body.status == "deceased":
-        updates["deceased_at"] = iso(now_utc())
-    elif body.status and body.status != "deceased":
-        updates["deceased_at"] = None
-    if updates:
-        await db.users.update_one({"id": user_id}, {"$set": updates})
-    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
-    if not u:
-        raise HTTPException(status_code=404, detail="Member not found")
-    return public_user(u)
+# /members, /members/{id}, /members-new, /members-birthdays, /members/{id}/status
+# are registered via routes/members.py (see register call at bottom of file).
 
 @api.put("/members/me")
 async def update_me(body: ProfileUpdateIn, user: dict = Depends(get_current_user)):
@@ -867,14 +687,6 @@ async def update_me(body: ProfileUpdateIn, user: dict = Depends(get_current_user
         await db.users.update_one({"id": user["id"]}, {"$set": updates})
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
     return public_user(u)
-
-@api.post("/auth/change-password")
-async def change_password(body: ChangePasswordIn, user: dict = Depends(get_current_user)):
-    full = await db.users.find_one({"id": user["id"]})
-    if not full or not verify_password(body.current_password, full["password_hash"]):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-    await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
-    return {"ok": True}
 
 @api.post("/members/me/renew")
 async def renew_membership(user: dict = Depends(get_current_user)):
@@ -972,70 +784,6 @@ def event_out(e: dict) -> dict:
         "payment_amount": float(e.get("payment_amount") or 0.0),
         "created_at": e.get("created_at"),
     }
-
-@api.get("/events")
-async def list_events(upcoming: bool = False, include_sub_events: bool = False):
-    query = {}
-    if upcoming:
-        query["start_at"] = {"$gte": iso(now_utc())}
-    # By default the main /events grid hides sub-events — members reach them
-    # by clicking into the parent (umbrella) event. Set include_sub_events=true
-    # to flatten the tree (used by Admin/Calendar).
-    if not include_sub_events:
-        query["parent_event_id"] = {"$in": [None, ""]}
-    cursor = db.events.find(query, {"_id": 0}).sort("start_at", 1).limit(200)
-    events = await cursor.to_list(200)
-    return [event_out(e) for e in events]
-
-@api.get("/events/{event_id}")
-async def get_event(event_id: str):
-    e = await db.events.find_one({"id": event_id}, {"_id": 0})
-    if not e:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event_out(e)
-
-@api.post("/events")
-async def create_event(body: EventIn, _: dict = Depends(admin_tab_dep("events"))):
-    eid = str(uuid.uuid4())
-    doc = body.model_dump()
-    doc["start_at"] = iso(doc["start_at"]) if doc.get("start_at") else None
-    doc["end_at"] = iso(doc["end_at"]) if doc.get("end_at") else None
-    doc.update({"id": eid, "rsvp_count": 0, "created_at": iso(now_utc())})
-    await db.events.insert_one(doc)
-    return event_out(doc)
-
-@api.put("/events/{event_id}")
-async def update_event(event_id: str, body: EventUpdateIn, _: dict = Depends(admin_tab_dep("events"))):
-    existing = await db.events.find_one({"id": event_id}, {"_id": 0})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Event not found")
-    updates = {}
-    for k, v in body.model_dump().items():
-        if v is None:
-            continue
-        if k in ("start_at", "end_at") and isinstance(v, datetime):
-            updates[k] = iso(v)
-        else:
-            updates[k] = v
-    # Stamp cancelled_at the first time cancelled flips on; clear it on revert.
-    if "cancelled" in updates:
-        if updates["cancelled"] and not existing.get("cancelled"):
-            updates["cancelled_at"] = iso(now_utc())
-        elif not updates["cancelled"]:
-            updates["cancelled_at"] = None
-            updates["cancellation_note"] = updates.get("cancellation_note", "") or ""
-    if updates:
-        await db.events.update_one({"id": event_id}, {"$set": updates})
-    e = await db.events.find_one({"id": event_id}, {"_id": 0})
-    if not e:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event_out(e)
-
-@api.delete("/events/{event_id}")
-async def delete_event(event_id: str, _: dict = Depends(admin_tab_dep("events"))):
-    await db.events.delete_one({"id": event_id})
-    await db.rsvps.delete_many({"event_id": event_id})
-    return {"ok": True}
 
 async def _create_rsvp_and_email_ticket(
     user: dict,
@@ -1306,19 +1054,6 @@ async def update_rsvp_guests(event_id: str, body: EventRsvpIn, user: dict = Depe
     except Exception as ex:
         logger.warning(f"Failed to schedule re-send ticket email: {ex}")
     return {"ok": True, "guests": len(new_guests)}
-
-@api.get("/events/{event_id}/sub-events")
-async def list_sub_events(event_id: str):
-    """List child events under a parent event (e.g. 10-Year anniversary umbrella)."""
-    cursor = db.events.find({"parent_event_id": event_id}, {"_id": 0}).sort("start_at", 1).limit(100)
-    items = await cursor.to_list(100)
-    return [event_out(e) for e in items]
-
-@api.get("/events/{event_id}/rsvps")
-async def list_rsvps(event_id: str):
-    cursor = db.rsvps.find({"event_id": event_id}, {"_id": 0}).limit(500)
-    items = await cursor.to_list(500)
-    return items
 
 @api.get("/me/events")
 async def my_events(user: dict = Depends(get_current_user)):
@@ -1936,6 +1671,43 @@ async def admin_bulk_import_template(_: dict = Depends(admin_tab_dep("members"))
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=aop-bulk-import-template.csv"},
     )
+
+
+@api.post("/admin/members/{user_id}/resend-set-password")
+async def admin_resend_set_password(user_id: str, admin: dict = Depends(admin_tab_dep("members"))):
+    """Generate a fresh 7-day set-password token for the given user and email them
+    a new link. Used when the original bulk-import welcome email was missed or
+    the token expired before the member completed onboarding."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if not user.get("email"):
+        raise HTTPException(status_code=400, detail="Member has no email on file")
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=503, detail="Email service not configured on the server (RESEND_API_KEY missing).")
+    now = now_utc()
+    token = secrets.token_urlsafe(32)
+    expires_at = now + timedelta(days=7)
+    # Invalidate any older, still-active tokens for this user so the new one is
+    # the only valid link.
+    await db.password_set_tokens.update_many(
+        {"user_id": user_id, "used": False},
+        {"$set": {"used": True, "used_at": iso(now), "invalidated_by": "resend"}},
+    )
+    await db.password_set_tokens.insert_one({
+        "token": token,
+        "user_id": user_id,
+        "expires_at": iso(expires_at),
+        "expires_at_dt": expires_at,
+        "used": False,
+        "created_at": iso(now),
+    })
+    # Keep pending_set_password=True until the member actually completes the flow.
+    await db.users.update_one({"id": user_id}, {"$set": {"pending_set_password": True}})
+    name = user.get("name") or user.get("first_name") or user.get("email")
+    sent = await _send_set_password_email(user["email"], name, token)
+    logger.info(f"[resend-set-password] admin={admin.get('email')} user={user.get('email')} sent={sent}")
+    return {"ok": True, "sent": bool(sent), "email": user["email"]}
 
 
 @api.put("/members/{user_id}")
@@ -7588,6 +7360,9 @@ from routes import chapters as routes_chapters  # noqa: E402
 from routes import tiers as routes_tiers  # noqa: E402
 from routes import payments as routes_payments  # noqa: E402
 from routes import auth as routes_auth  # noqa: E402
+from routes import auth_email_flows as routes_auth_email_flows  # noqa: E402
+from routes import events as routes_events  # noqa: E402
+from routes import members as routes_members  # noqa: E402
 
 routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
@@ -7624,6 +7399,26 @@ routes_auth.register(
 
 # Patch the back-compat _ensure_site_settings shim to delegate to the route module
 _ensure_site_settings = routes_site_settings.register.ensure
+
+routes_auth_email_flows.register(
+    api,
+    db=db,
+    iso=iso,
+    now_utc=now_utc,
+    hash_password=hash_password,
+    verify_password=verify_password,
+    get_current_user=get_current_user,
+    resend_sdk=resend_sdk,
+    resend_api_key=RESEND_API_KEY,
+    resend_from=RESEND_FROM,
+    logger=logger,
+)
+# Wire the back-compat _send_set_password_email shim to the extracted helper so
+# bulk-import + apply-approval + resend-link paths keep working.
+_send_set_password_email._impl = routes_auth_email_flows.register.send_set_password_email
+
+routes_events.register(api, db=db, admin_tab_dep=admin_tab_dep, event_out=event_out, iso=iso, now_utc=now_utc)
+routes_members.register(api, db=db, admin_tab_dep=admin_tab_dep, public_user=public_user, iso=iso, now_utc=now_utc)
 
 
 # ---------- Mount ----------

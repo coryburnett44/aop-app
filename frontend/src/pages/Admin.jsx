@@ -734,6 +734,18 @@ function MembersAdmin() {
             load();
         } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
     }
+    async function resendSetPassword(m) {
+        if (!confirm(`Send a fresh set-password email to ${m.email}? This invalidates any prior link.`)) return;
+        try {
+            const { data } = await api.post(`/admin/members/${m.id}/resend-set-password`);
+            if (data?.sent) toast.success(`Set-password email sent to ${m.email}`);
+            else toast.warning("Token created but the email failed to send. Check Resend logs.");
+        } catch (e) { toast.error(e.response?.data?.detail || "Failed to resend"); }
+    }
+
+    const [pendingOnly, setPendingOnly] = useState(false);
+    const pendingCount = members.filter((x) => x.pending_set_password).length;
+    const visibleMembers = pendingOnly ? members.filter((x) => x.pending_set_password) : members;
 
     const chapterName = (id) => chapters.find((c) => c.id === id)?.name || "—";
     const tierName = (id) => tiers.find((t) => t.id === id)?.name || "—";
@@ -745,6 +757,17 @@ function MembersAdmin() {
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
                 <div className="flex items-center gap-2">
+                    {pendingCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setPendingOnly((v) => !v)}
+                            className={`rounded-full px-3 py-1.5 text-xs font-semibold border transition ${pendingOnly ? "bg-amber-100 text-amber-900 border-amber-400" : "bg-white text-amber-800 border-amber-300 hover:bg-amber-50"}`}
+                            data-testid="filter-pending-setpw"
+                            title="Show only members who haven't completed /set-password"
+                        >
+                            {pendingOnly ? `Showing ${pendingCount} pending` : `${pendingCount} pending password setup`}
+                        </button>
+                    )}
                     <BulkImportMembersDialog chapters={chapters.filter(officialOnly)} onImported={load} />
                     <NewMemberDialog chapters={chapters} tiers={tiers} onSaved={load} />
                 </div>
@@ -763,10 +786,22 @@ function MembersAdmin() {
                         </tr>
                     </thead>
                     <tbody>
-                        {members.map((m) => (
+                        {visibleMembers.map((m) => (
                             <tr key={m.id} className="border-t border-border hover:bg-muted/30" data-testid={`admin-member-${m.id}`}>
                                 <td className="px-4 py-3">
-                                    <div className="font-medium">{m.name}{m.line_name && <span className="text-xs ml-2 text-primary font-bold">"{m.line_name}"</span>}</div>
+                                    <div className="font-medium">
+                                        {m.name}
+                                        {m.line_name && <span className="text-xs ml-2 text-primary font-bold">"{m.line_name}"</span>}
+                                        {m.pending_set_password && (
+                                            <span
+                                                className="ml-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-amber-100 text-amber-800 border border-amber-300"
+                                                title="This member hasn't completed the /set-password step from the welcome email yet."
+                                                data-testid={`pending-setpw-${m.id}`}
+                                            >
+                                                Pending password setup
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="text-xs text-muted-foreground">{m.email}</div>
                                 </td>
                                 <td className="px-4 py-3">
@@ -811,6 +846,17 @@ function MembersAdmin() {
                                     <MemberCardDialog member={m} chapters={chapters} tiers={tiers} />
                                     {!m.is_lifetime_member && (
                                         <Button size="sm" variant="outline" className="rounded-full h-7 text-xs mx-1" onClick={() => extendMembership(m, 365)} data-testid={`extend-${m.id}`}>+1yr</Button>
+                                    )}
+                                    {m.pending_set_password && (
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="rounded-full h-7 text-xs mx-1 border-amber-400 text-amber-800 hover:bg-amber-50"
+                                            onClick={() => resendSetPassword(m)}
+                                            data-testid={`resend-setpw-${m.id}`}
+                                        >
+                                            Resend link
+                                        </Button>
                                     )}
                                     <EditMemberDialog member={m} chapters={chapters} tiers={tiers} isFullAdmin={isFullAdmin} onSaved={load} />
                                     <Button size="sm" variant="outline" className="rounded-full h-7 text-xs ml-1" onClick={() => toggleRole(m)} data-testid={`toggle-role-${m.id}`}>
