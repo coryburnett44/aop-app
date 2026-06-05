@@ -16,6 +16,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AF — Iteration 36: Multi-grant same award + lock down document uploads (2026-06-05)
+- **Multiple grants per award per member** — `POST /api/awards/{award_id}/grant` no longer 400s on duplicate `(award_id, user_id)`. Each new grant gets an `ordinal` field (1, 2, 3, ...). The legacy unique compound index `award_id_1_user_id_1` is dropped on startup and replaced with a non-unique index for lookup performance.
+- **/me/awards + /members/{id}/awards** now return each grant with `ordinal` and `award_count` (total grants of this award to this user). Backfilled at read-time for older grants without a stored ordinal.
+- **Personnel Brief data** now includes `awards_grouped` (one entry per distinct award_id with `{award_name, count, first_granted_at, last_granted_at, grants[]}`) + `awards_distinct_count` alongside the existing flat `awards` + `awards_count`.
+- **Personnel Brief PDF §8** renders ONE row per distinct award using the grouped data — e.g. "Service Star | 2nd Award (× 2) | 2026-04-01". Header changed from "Date Granted" → "Latest Date".
+- **Profile Awards tab** now renders ONE card per distinct award with an ordinal pill badge like "3rd Award · × 3". Awards stat card + tab label show the DISTINCT count (Set of `award_id || award_name`), not the raw grant count.
+- **Admin floating Personnel Brief §8** matches the same grouped rendering using `awards_grouped` from the backend.
+- **Document uploads admin-only** — `POST /api/documents` and `POST /api/documents/bulk` now require `admin_tab_dep("documents")` (members get 403). Frontend Docs & Forms page no longer renders the Upload button for non-admins (line 94 of Documents.jsx: `isAdmin && <UploadDocDialog />` instead of `user && <UploadDocDialog />`). Folder creation was already admin-only.
+- **Verification**: 10/10 pytest cases + live UI checks for member 403 on docs upload, Profile shows 1 grouped card with "3rd Award · × 3" badge for a member with 3 grants, admin floating brief renders the grouped row.
+
+
+
 ### Phase AE — Iteration 35: P0 production data-loss fix + chapter dropdown + auto-clear pending flag (2026-06-05)
 
 #### 🚨 P0 ROOT CAUSE — Production data loss
