@@ -150,10 +150,21 @@ function GearCard({ item, isAdmin, onOpen, onEdit, onChanged }) {
             onChanged?.();
         } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
     }
+    // Iter 38: external-link items become a banner that opens external_url in a
+    // new tab. They keep the same card footprint as regular gear so the page
+    // layout stays uniform.
+    const isExternal = item.is_external_link && item.external_url;
+    function openItem() {
+        if (isExternal) {
+            window.open(item.external_url, "_blank", "noopener,noreferrer");
+        } else {
+            onOpen();
+        }
+    }
     return (
         <div className="relative group">
             <button
-                onClick={onOpen}
+                onClick={openItem}
                 className="text-left bg-white rounded-2xl overflow-hidden border-2 border-transparent hover:-translate-y-1 hover:shadow-warm-lg transition-all w-full"
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = RED; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; }}
@@ -164,15 +175,33 @@ function GearCard({ item, isAdmin, onOpen, onEdit, onChanged }) {
                 </div>
                 <div className="p-5">
                     <div className="flex items-start justify-between gap-3">
-                        <h3 className="font-heading font-bold text-lg leading-snug" style={{ color: NAVY }}>{item.name}</h3>
-                        <div className="font-heading font-black text-xl shrink-0" style={{ color: RED }}>${item.price.toFixed(0)}</div>
+                        {item.name_html ? (
+                            <h3
+                                className="font-heading font-bold text-lg leading-snug gear-title-rich"
+                                style={{ color: NAVY }}
+                                dangerouslySetInnerHTML={{ __html: item.name_html }}
+                            />
+                        ) : (
+                            <h3 className="font-heading font-bold text-lg leading-snug" style={{ color: NAVY }}>{item.name}</h3>
+                        )}
+                        {isExternal ? (
+                            <span
+                                className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider rounded-full px-2.5 py-1 shrink-0"
+                                style={{ background: `${RED}15`, color: RED }}
+                                title={`Opens ${item.external_url}`}
+                            >
+                                Visit
+                            </span>
+                        ) : (
+                            <div className="font-heading font-black text-xl shrink-0" style={{ color: RED }}>${item.price.toFixed(0)}</div>
+                        )}
                     </div>
-                    {item.sizes?.length > 0 && (
+                    {!isExternal && item.sizes?.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1">
                             {item.sizes.map((s) => <Badge key={s} variant="outline" className="text-xs">{s}</Badge>)}
                         </div>
                     )}
-                    {item.colors?.length > 0 && (
+                    {!isExternal && item.colors?.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
                             {item.colors.slice(0, 6).map((c) => (
                                 <span key={c} className="h-4 w-4 rounded-full border border-slate-300" style={{ backgroundColor: swatchFor(c) }} title={c} />
@@ -180,7 +209,7 @@ function GearCard({ item, isAdmin, onOpen, onEdit, onChanged }) {
                             {item.colors.length > 6 && <span className="text-[10px] text-slate-500">+{item.colors.length - 6}</span>}
                         </div>
                     )}
-                    {!item.in_stock && <div className="mt-3 text-xs uppercase tracking-wider font-bold text-amber-700">Sold out</div>}
+                    {!isExternal && !item.in_stock && <div className="mt-3 text-xs uppercase tracking-wider font-bold text-amber-700">Sold out</div>}
                 </div>
             </button>
             {isAdmin && (
@@ -302,8 +331,9 @@ function GearCheckout({ item, user, onClose }) {
 function GearEditor({ item, onSaved, onClose }) {
     const isEdit = !!item;
     const [form, setForm] = useState({
-        name: "", description: "", price: 0, sku: "", category: "apparel", in_stock: true,
+        name: "", name_html: "", description: "", price: 0, sku: "", category: "apparel", in_stock: true,
         sizes: [], colors: [], cover_image: "", images: [], color_images: [],
+        is_external_link: false, external_url: "",
     });
     const [busy, setBusy] = useState(false);
     const [colorInput, setColorInput] = useState("");
@@ -312,15 +342,19 @@ function GearEditor({ item, onSaved, onClose }) {
     useEffect(() => {
         if (item) {
             setForm({
-                name: item.name || "", description: item.description || "",
+                name: item.name || "",
+                name_html: item.name_html || "",
+                description: item.description || "",
                 price: item.price || 0, sku: item.sku || "",
                 category: item.category || "apparel", in_stock: item.in_stock !== false,
                 sizes: item.sizes || [], colors: item.colors || [],
                 cover_image: item.cover_image || "", images: item.images || [],
                 color_images: (item.color_images || []).map((ci) => ({ ...ci })),
+                is_external_link: !!item.is_external_link,
+                external_url: item.external_url || "",
             });
         } else {
-            setForm({ name: "", description: "", price: 0, sku: "", category: "apparel", in_stock: true, sizes: [], colors: [], cover_image: "", images: [], color_images: [] });
+            setForm({ name: "", name_html: "", description: "", price: 0, sku: "", category: "apparel", in_stock: true, sizes: [], colors: [], cover_image: "", images: [], color_images: [], is_external_link: false, external_url: "" });
         }
     }, [item]);
 
@@ -378,12 +412,24 @@ function GearEditor({ item, onSaved, onClose }) {
 
     async function save() {
         if (!form.name.trim()) { toast.error("Item name is required"); return; }
-        if (!form.price || form.price <= 0) { toast.error("Price must be greater than zero"); return; }
+        // External-link items don't take payments — skip the price check.
+        if (!form.is_external_link && (!form.price || form.price <= 0)) {
+            toast.error("Price must be greater than zero (or enable External link mode)");
+            return;
+        }
+        if (form.is_external_link && !form.external_url.trim()) {
+            toast.error("External URL is required when External link mode is on");
+            return;
+        }
         setBusy(true);
         try {
             // Filter out color_images for colors that no longer exist
             const validColorImages = form.color_images.filter((ci) => form.colors.includes(ci.color));
-            const payload = { ...form, price: Number(form.price), color_images: validColorImages };
+            const payload = {
+                ...form,
+                price: Number(form.price) || 0,
+                color_images: validColorImages,
+            };
             if (isEdit) {
                 await api.put(`/gear/${item.id}`, payload);
                 toast.success("Item updated");
@@ -400,16 +446,69 @@ function GearEditor({ item, onSaved, onClose }) {
         <div data-testid="gear-editor">
             <DialogHeader><DialogTitle className="font-heading text-2xl">{isEdit ? `Edit ${form.name || "item"}` : "Add gear item"}</DialogTitle></DialogHeader>
             <div className="space-y-5 mt-3">
+                {/* Iter 38: External-link mode — when on, the card opens a URL in a new tab
+                    instead of opening the checkout dialog. Useful for linking out to a Shopify
+                    store, fundraising portal, partner gear shop, etc. */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3" data-testid="gear-editor-external-block">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={!!form.is_external_link}
+                            onChange={(e) => setForm({ ...form, is_external_link: e.target.checked })}
+                            data-testid="gear-editor-is-external"
+                        />
+                        <span className="text-sm font-semibold">External link mode (opens a URL instead of checkout)</span>
+                    </label>
+                    {form.is_external_link && (
+                        <div className="mt-2">
+                            <Label>External URL</Label>
+                            <Input
+                                value={form.external_url}
+                                onChange={(e) => setForm({ ...form, external_url: e.target.value })}
+                                placeholder="https://example.com/our-store"
+                                className="rounded-xl mt-1.5"
+                                data-testid="gear-editor-external-url"
+                            />
+                            <div className="text-xs text-muted-foreground mt-1">When checked, members clicking this card open the URL in a new tab. Price/sizes/colors are hidden on the card.</div>
+                        </div>
+                    )}
+                </div>
+
                 <div className="grid sm:grid-cols-2 gap-3">
                     <div>
                         <Label>Name *</Label>
                         <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="rounded-xl mt-1.5" placeholder="Crest Polo" data-testid="gear-editor-name" />
                     </div>
                     <div>
-                        <Label>Price (USD) *</Label>
-                        <Input type="number" step="0.01" min="0" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="rounded-xl mt-1.5" data-testid="gear-editor-price" />
+                        <Label>{form.is_external_link ? "Price (ignored for external-link items)" : "Price (USD) *"}</Label>
+                        <Input
+                            type="number" step="0.01" min="0"
+                            value={form.price}
+                            onChange={(e) => setForm({ ...form, price: e.target.value })}
+                            disabled={!!form.is_external_link}
+                            className="rounded-xl mt-1.5"
+                            data-testid="gear-editor-price"
+                        />
                     </div>
                 </div>
+
+                {/* Iter 38: Optional rich-text / HTML title override. When provided, the gear
+                    card renders this HTML instead of the plain `name`. Allows admins to use
+                    bold/italic/colored titles for promo banner items. */}
+                <div>
+                    <Label>HTML / Rich title <span className="text-xs text-muted-foreground font-normal">(optional — overrides Name on the card)</span></Label>
+                    <Textarea
+                        rows={2}
+                        value={form.name_html}
+                        onChange={(e) => setForm({ ...form, name_html: e.target.value })}
+                        className="rounded-xl mt-1.5 font-mono text-xs"
+                        placeholder='<span style="color:#C8102E">Visit our</span> <strong>Store</strong>'
+                        data-testid="gear-editor-name-html"
+                    />
+                    <div className="text-xs text-muted-foreground mt-1">Supported tags: &lt;b&gt;, &lt;strong&gt;, &lt;i&gt;, &lt;em&gt;, &lt;span&gt;, &lt;br&gt;, &lt;u&gt;. Inline styles like color/background allowed.</div>
+                </div>
+
                 <div className="grid sm:grid-cols-2 gap-3">
                     <div>
                         <Label>Category</Label>

@@ -199,19 +199,55 @@ export default function EventDetail() {
                 </aside>
             </div>
 
-            {subs.length > 0 && <SubEventsPanel subs={subs} />}
+            {/* Iter 38: Sub-events panel now ALWAYS renders for parent events (no parent_event_id)
+                so admins can add sub-events from any main event, not just the anniversary tree.
+                Members only see it when at least one sub-event exists. */}
+            {(subs.length > 0 || (user?.role === "admin" && !event.parent_event_id)) && (
+                <SubEventsPanel
+                    subs={subs}
+                    parentEvent={event}
+                    isAdmin={user?.role === "admin"}
+                    onChange={load}
+                />
+            )}
 
             {user?.role === "admin" && <CheckInPanel eventId={id} eventTitle={event.title} allowsTickets={event.allows_ticket_types} />}
         </div>
     );
 }
 
-function SubEventsPanel({ subs }) {
+function SubEventsPanel({ subs, parentEvent, isAdmin = false, onChange }) {
+    const [creating, setCreating] = useState(false);
     return (
         <section className="mt-10 bg-card rounded-3xl border border-border p-6 shadow-warm" data-testid="sub-events-panel">
-            <h2 className="font-heading text-2xl font-bold mb-1">Anniversary schedule</h2>
-            <p className="text-sm text-muted-foreground mb-5">RSVP separately for each sub-event. Bring guests too — admins assign ticket types at the door.</p>
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="flex items-start justify-between gap-3 mb-1">
+                <div>
+                    <h2 className="font-heading text-2xl font-bold">Sub-events</h2>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        RSVP separately for each sub-event. Bring guests too — admins assign ticket types at the door.
+                    </p>
+                </div>
+                {isAdmin && (
+                    <button
+                        type="button"
+                        onClick={() => setCreating((v) => !v)}
+                        className="rounded-full px-3 py-1.5 text-xs font-bold uppercase tracking-wider border-2 border-primary text-primary hover:bg-primary hover:text-white transition-colors shrink-0"
+                        data-testid="sub-event-toggle-create"
+                    >
+                        {creating ? "Close" : "+ Create sub-event"}
+                    </button>
+                )}
+            </div>
+            {creating && (
+                <SubEventCreateForm
+                    parentEvent={parentEvent}
+                    onCreated={() => { setCreating(false); onChange?.(); }}
+                />
+            )}
+            <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                {subs.length === 0 && !creating && (
+                    <div className="col-span-full text-sm text-muted-foreground italic">No sub-events yet.{isAdmin ? " Use the + button above to add one." : ""}</div>
+                )}
                 {subs.map((s) => (
                     <Link
                         key={s.id}
@@ -234,6 +270,88 @@ function SubEventsPanel({ subs }) {
         </section>
     );
 }
+
+function SubEventCreateForm({ parentEvent, onCreated }) {
+    // Default sub-event start = parent event start (admin can edit).
+    const [title, setTitle] = useState("");
+    const [category, setCategory] = useState("general");
+    const [startAt, setStartAt] = useState(parentEvent?.start_at ? parentEvent.start_at.slice(0, 16) : "");
+    const [endAt, setEndAt] = useState("");
+    const [location, setLocation] = useState(parentEvent?.location || "");
+    const [allowsTicketTypes, setAllowsTicketTypes] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+    async function submit(e) {
+        e.preventDefault();
+        if (!title.trim()) { toast.error("Title is required"); return; }
+        if (!startAt) { toast.error("Start time is required"); return; }
+        setBusy(true);
+        try {
+            await api.post("/events", {
+                title: title.trim(),
+                description: "",
+                location: location.trim(),
+                start_at: new Date(startAt).toISOString(),
+                end_at: endAt ? new Date(endAt).toISOString() : null,
+                category: category.trim() || "general",
+                capacity: 0,
+                cover_image: "",
+                parent_event_id: parentEvent.id,
+                allows_ticket_types: !!allowsTicketTypes,
+            });
+            toast.success("Sub-event created");
+            setTitle(""); setEndAt("");
+            onCreated?.();
+        } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+        setBusy(false);
+    }
+
+    return (
+        <form onSubmit={submit} className="rounded-2xl border-2 border-dashed border-primary/40 bg-primary/[0.04] p-4 mt-3 space-y-3" data-testid="sub-event-create-form">
+            <div className="grid sm:grid-cols-[2fr_1fr] gap-3">
+                <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Title</label>
+                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Welcome reception" className="mt-1 w-full rounded-xl border border-border px-3 py-2 text-sm" data-testid="sub-event-title" />
+                </div>
+                <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category</label>
+                    <input type="text" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="general / workshop / mixer" className="mt-1 w-full rounded-xl border border-border px-3 py-2 text-sm" data-testid="sub-event-category" />
+                </div>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Starts</label>
+                    <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="mt-1 w-full rounded-xl border border-border px-3 py-2 text-sm" data-testid="sub-event-start" />
+                </div>
+                <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Ends <span className="font-normal normal-case">(optional)</span></label>
+                    <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} className="mt-1 w-full rounded-xl border border-border px-3 py-2 text-sm" data-testid="sub-event-end" />
+                </div>
+            </div>
+            <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Location</label>
+                <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className="mt-1 w-full rounded-xl border border-border px-3 py-2 text-sm" data-testid="sub-event-location" />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+                <input
+                    type="checkbox"
+                    checked={allowsTicketTypes}
+                    onChange={(e) => setAllowsTicketTypes(e.target.checked)}
+                    className="h-4 w-4"
+                    data-testid="sub-event-allows-tickets"
+                />
+                Allow ticket types (VIP / All Access / General Admission)
+            </label>
+            <div className="flex items-center gap-2 pt-1">
+                <button type="submit" disabled={busy} className="rounded-full bg-primary text-white px-5 py-2 text-sm font-bold hover:bg-primary/90 disabled:opacity-50" data-testid="sub-event-submit">
+                    {busy ? "Creating…" : "Create sub-event"}
+                </button>
+            </div>
+        </form>
+    );
+}
+
+function _SubEventsPanelLegacy_REMOVED() { return null; }
 
 function MemberTicketPicker({ event, onRsvp, disabled }) {
     // Use the admin-selected subset of ticket types if present; otherwise fall back

@@ -3596,6 +3596,7 @@ class GearColorImage(BaseModel):
 
 class GearItemIn(BaseModel):
     name: str
+    name_html: str = ""  # Iter 38: optional rich-HTML version of the title (admin Quill output); when set, frontend renders this instead of `name`.
     description: str = ""
     price: float = 0.0
     sizes: List[str] = []
@@ -3606,9 +3607,12 @@ class GearItemIn(BaseModel):
     category: str = "apparel"
     in_stock: bool = True
     sku: str = ""
+    is_external_link: bool = False  # Iter 38: when True, the gear card becomes a clickable banner that opens external_url in a new tab.
+    external_url: str = ""
 
 class GearItemUpdateIn(BaseModel):
     name: Optional[str] = None
+    name_html: Optional[str] = None
     description: Optional[str] = None
     price: Optional[float] = None
     sizes: Optional[List[str]] = None
@@ -3619,11 +3623,14 @@ class GearItemUpdateIn(BaseModel):
     category: Optional[str] = None
     in_stock: Optional[bool] = None
     sku: Optional[str] = None
+    is_external_link: Optional[bool] = None
+    external_url: Optional[str] = None
 
 def gear_out(g: dict) -> dict:
     return {
         "id": g["id"],
         "name": g["name"],
+        "name_html": g.get("name_html", ""),
         "description": g.get("description", ""),
         "price": g.get("price", 0.0),
         "sizes": g.get("sizes", []),
@@ -3634,6 +3641,8 @@ def gear_out(g: dict) -> dict:
         "category": g.get("category", "apparel"),
         "in_stock": g.get("in_stock", True),
         "sku": g.get("sku", ""),
+        "is_external_link": bool(g.get("is_external_link", False)),
+        "external_url": g.get("external_url", ""),
         "created_at": g.get("created_at"),
     }
 

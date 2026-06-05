@@ -185,8 +185,6 @@ export default function Profile() {
                         {user.membership_tier && <span className="text-xs bg-accent/40 rounded-full px-2.5 py-0.5 font-semibold uppercase tracking-wider">{user.membership_tier}</span>}
                     </div>
                 </div>
-                <DownloadMyBriefButton />
-                <DownloadTaxLetterButton />
             </div>
 
             <div className="rounded-2xl bg-gradient-to-br from-primary/15 via-secondary/25 to-accent/40 p-6 border border-border mb-8" data-testid="membership-card">
@@ -260,6 +258,13 @@ export default function Profile() {
                     <TabsTrigger value="events" className="rounded-full data-[state=active]:bg-background" data-testid="tab-events">Events ({events.length})</TabsTrigger>
                 </TabsList>
 
+                {/* Iter 38: Download buttons live UNDER the tabs row so the profile header
+                    stays compact on mobile. */}
+                <div className="flex flex-wrap items-center gap-2 mt-4 mb-2" data-testid="profile-download-row">
+                    <DownloadMyBriefButton />
+                    <DownloadTaxLetterButton />
+                </div>
+
                 <TabsContent value="profile" className="mt-6">
                     <form onSubmit={save} className="bg-card rounded-2xl p-6 border border-border shadow-warm space-y-5" data-testid="profile-form">
                         <div className="grid sm:grid-cols-[120px_1fr_1fr_1fr] gap-4">
@@ -321,7 +326,55 @@ export default function Profile() {
                                 </SelectContent>
                             </Select>
                         </div>
-                        <div><Label>Avatar URL</Label><Input value={form.avatar_url} onChange={(e) => setForm({ ...form, avatar_url: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-avatar" /></div>
+                        {/* Iter 38: Avatar URL field replaced with upload-only.
+                            Calls /api/members/me/avatar which stores in object storage and
+                            sets avatar_url on the user. */}
+                        <div>
+                            <Label>Profile photo</Label>
+                            <div className="flex items-center gap-3 mt-1.5">
+                                {form.avatar_url ? (
+                                    <img src={form.avatar_url} alt="" className="h-16 w-16 rounded-full object-cover border border-border" />
+                                ) : (
+                                    <div className="h-16 w-16 rounded-full border-2 border-dashed border-border grid place-items-center text-[10px] text-muted-foreground">
+                                        No photo
+                                    </div>
+                                )}
+                                <label className="rounded-full border px-4 py-2 text-xs cursor-pointer hover:bg-slate-50 inline-flex items-center gap-1.5" data-testid="profile-avatar-upload">
+                                    {form.avatar_url ? "Replace photo" : "Upload photo"}
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={async (e) => {
+                                            const f = e.target.files?.[0];
+                                            if (!f) return;
+                                            const fd = new FormData();
+                                            fd.append("file", f);
+                                            try {
+                                                const { data } = await api.post("/members/me/avatar", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                                                setForm({ ...form, avatar_url: data.avatar_url });
+                                                toast.success("Photo uploaded");
+                                            } catch (err) {
+                                                toast.error(err.response?.data?.detail || "Upload failed");
+                                            }
+                                            e.target.value = "";
+                                        }}
+                                    />
+                                </label>
+                                {form.avatar_url && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        type="button"
+                                        onClick={() => setForm({ ...form, avatar_url: "" })}
+                                        className="text-xs text-destructive"
+                                        data-testid="profile-avatar-remove"
+                                    >
+                                        Remove
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
                         <div><Label>Interests (comma separated)</Label><Input value={form.interests} onChange={(e) => setForm({ ...form, interests: e.target.value })} className="rounded-xl mt-1.5" data-testid="profile-interests" /></div>
                         <div className="border-t border-border pt-5 mt-2">
                             <div className="flex items-center gap-2 mb-3">

@@ -1,0 +1,54 @@
+{
+  "summary": "Iter 38 full backend + frontend verification. Backend pytest: 5/5 PASS on new tests (gear external-link fields stored & echoed by GET/POST/PUT, defaults for regular items, sub-event creation under arbitrary parent appears in /events/{parent}/sub-events and /events?include_sub_events=true, member denied event create, /api/email/upload-image returns /api/files/<path>). Frontend live UI verified as admin and member: F1 hero-cta-anniversary visible at / (root) for logged-in users, navigates to /anniversary, no Countdown banner present on home root; F2a New GearEditor on /gear (admin inline) renders gear-editor-is-external + gear-editor-external-url + gear-editor-name-html, Price input disabled with label 'Price (ignored for external-link items)' when external is checked; F2b external-link gear card renders correctly with 'Visit' pill in place of price and HTML title 'Visit our Shopify Store' (Visit pill found, card same height as siblings); F3 admin sees sub-event-toggle-create + sub-event-create-form on event detail for an arbitrary (non-anniversary) parent event; F4a code-verified (col-card-upload-{idx}, col-card-remove-{idx}, image-block-upload, image-block-remove all present in PageBuilder.jsx); F4b live UI: profile-avatar-upload visible on /profile, em-avatar-upload visible in Admin → Members → Edit; F5 profile-download-row contains both 'Download my brief' + 'Tax letter' buttons, header no longer carries 'Download my brief'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Admin.jsx GearAdmin (legacy)",
+        "issue": "/admin → Gear tab still renders the OLD inline gear editor (Admin.jsx ~L1976). It lacks the new External-link checkbox, External URL field, HTML/Rich title textarea, and price gating. Admins editing gear via the Admin console (the most obvious admin path) WILL NOT see Iter-38 fields. The new GearEditor only lives on /gear's inline 'Add item'/'Edit' admin flow (Gear.jsx).",
+        "selector": "/admin → tab 'Gear' → 'Edit' on any item",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Admin.jsx GearItemEditor (cover image)",
+        "issue": "Cover image uploader in the legacy Admin Gear editor uses data-testid='event-cover-upload' (Admin.jsx line 2010) — DUPLICATES the event editor's cover-upload testid (Admin.jsx line 210 + 2010 share the same testid). Causes selector ambiguity in automated tests.",
+        "selector": "data-testid='event-cover-upload'",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Gear.jsx GearPageEditor (Edit page banner dialog)",
+        "issue": "Banner image field still exposes a URL <Input> (placeholder 'https://... or upload below') alongside the Upload button. F4 spec says remove image URL inputs throughout the site (upload-only). Inconsistent with PageBuilder + Avatar + Cover-image which are now upload-only.",
+        "selector": "Dialog 'Edit Gear page' → Banner image input",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration38_iter38.py",
+    "/app/test_reports/pytest/iter38_results.xml"
+  ],
+  "action_items": [
+    "Either retire Admin.jsx GearAdmin's local editor and redirect /admin Gear tab to use the new GearEditor from Gear.jsx, OR update the local editor to include the same Iter-38 fields (External-link checkbox, External URL input, HTML/Rich title textarea, and disable Price when external is on).",
+    "Rename data-testid='event-cover-upload' inside Admin.jsx GearItemEditor (line ~2010) to e.g. 'gear-admin-cover-upload' to avoid clashing with the EventEditor's cover-upload testid.",
+    "Remove the URL <Input> from GearPageEditor 'Banner image' so admins can only upload (parity with PageBuilder image block + member avatar + event cover)."
+  ],
+  "critical_code_review_comments": [
+    "Backend: gear_out + GearItemIn/UpdateIn correctly extend with name_html / is_external_link / external_url with sensible defaults; PUT honors partial updates only when value!=None.",
+    "Backend: /events listing excludes sub-events by default (parent_event_id $in [None, ''']) and exposes them via /events/{id}/sub-events + ?include_sub_events=true — confirmed via test.",
+    "Frontend Gear.jsx: GearCard correctly gates external rendering (is_external_link && external_url) and uses window.open(url, '_blank', 'noopener,noreferrer') so the Visit pill click is safe. dangerouslySetInnerHTML inside h3 is constrained to admin-supplied HTML and the placeholder text suggests inline tags — acceptable since only admins can write it.",
+    "Frontend Profile.jsx: profile-download-row sits directly after TabsList (line 263) — verified live (header contains no Download brief / Tax letter).",
+    "Frontend Admin.jsx duplication: Two separate gear editors exist (Admin.jsx GearItemEditor + Gear.jsx GearEditor). DRY violation + Iter-38 only updated Gear.jsx — Admin.jsx Gear tab is stale.",
+    "Frontend Admin.jsx event-cover-upload testid collision (lines 210 and 2010 both use same testid for different uploaders).",
+    "PageBuilder.jsx column card upload + image block upload correctly POST to /api/email/upload-image and store the returned URL — testids col-card-upload-{idx} + image-block-upload + col-card-remove-{idx} + image-block-remove present and unique."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration38_iter38.py (NEW)"],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "F1/F2a/F2b/F3/F4a/F4b/F5 all primary flows verified; 3 secondary issues found (legacy Admin Gear editor stale + testid duplicate + GearPageEditor URL input not removed)"},
+  "test_credentials": "admin@clubhaven.app/Admin123! and member@clubhaven.app/Member123! both working.",
+  "seed_data_creation": "Tests create+delete TEST_-prefixed gear items and a TEST_-prefixed sub-event; cleanup is inline (delete after assertions).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-38 features all work on the /gear admin inline flow; the discrepancy is that /admin → Gear tab uses an older editor (Admin.jsx ~L1907-L2080) which was NOT updated with the new fields. If main agent fixes this by either swapping to GearEditor from Gear.jsx or porting the 3 new fields, re-run /app/backend/tests/test_iteration38_iter38.py (already idempotent) and re-check both /admin → Gear → Edit AND /gear → admin Add item. The backend already supports the fields, so only the frontend GearItemEditor needs updating. Also rename the duplicate event-cover-upload testid (Admin.jsx ~L2010).",
+  "rca of the issue": "Two parallel gear editor components exist (Admin.jsx GearItemEditor — old, and Gear.jsx GearEditor — new with Iter-38 fields). Iter-38 only updated the newer component, so the legacy editor accessible via /admin → Gear is missing the new fields, and the gear cover-image upload reuses event-cover-upload testid causing selector collisions in tests."
+}

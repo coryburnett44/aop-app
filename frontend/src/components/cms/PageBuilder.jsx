@@ -106,11 +106,24 @@ function BlockEditor({ block, onChange, onRemove }) {
         case "image":
             return (
                 <div className="space-y-2">
-                    <div className="flex gap-2">
-                        <Input value={p.url || ""} onChange={(e) => set("url", e.target.value)} placeholder="Image URL or /api/files/…" className="rounded-xl flex-1" />
-                        <label className="rounded-xl border px-3 py-2 text-xs cursor-pointer hover:bg-slate-50">
-                            Upload<input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                    <div className="flex gap-2 items-center">
+                        {p.url ? (
+                            <img src={p.url.startsWith("/api/") ? p.url : p.url} alt="" className="h-16 w-16 object-cover rounded-lg border border-slate-200" />
+                        ) : (
+                            <div className="h-16 w-16 rounded-lg border-2 border-dashed border-slate-300 grid place-items-center text-[10px] text-slate-400">
+                                No image
+                            </div>
+                        )}
+                        <label className="rounded-xl border px-3 py-2 text-xs cursor-pointer hover:bg-slate-50 inline-flex items-center gap-1.5" data-testid="image-block-upload">
+                            <ImageIcon className="h-3.5 w-3.5" />
+                            {p.url ? "Replace image" : "Upload image"}
+                            <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                         </label>
+                        {p.url && (
+                            <Button variant="ghost" size="sm" onClick={() => set("url", "")} className="text-xs text-destructive" data-testid="image-block-remove">
+                                Remove
+                            </Button>
+                        )}
                     </div>
                     <Input value={p.alt || ""} onChange={(e) => set("alt", e.target.value)} placeholder="Alt text (accessibility)" className="rounded-xl" />
                     <Input value={p.caption || ""} onChange={(e) => set("caption", e.target.value)} placeholder="Caption (optional)" className="rounded-xl" />
@@ -168,16 +181,48 @@ function BlockEditor({ block, onChange, onRemove }) {
                             <option value={4}>4</option>
                         </select>
                     </div>
-                    {items.map((it, idx) => (
-                        <div key={idx} className="border border-slate-200 rounded-xl p-3 space-y-2 bg-slate-50">
-                            <div className="flex gap-2 items-center">
-                                <Input value={it.title || ""} onChange={(e) => setItem(idx, "title", e.target.value)} placeholder={`Card ${idx + 1} title`} className="rounded-xl" />
-                                <Button variant="ghost" size="icon" onClick={() => removeItem(idx)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                    {items.map((it, idx) => {
+                        async function uploadCardImage(e) {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                                const url = await uploadAndGetUrl(f);
+                                setItem(idx, "image", url);
+                                toast.success("Image uploaded");
+                            } catch (err) {
+                                toast.error(err.response?.data?.detail || "Upload failed");
+                            }
+                        }
+                        return (
+                            <div key={idx} className="border border-slate-200 rounded-xl p-3 space-y-2 bg-slate-50">
+                                <div className="flex gap-2 items-center">
+                                    <Input value={it.title || ""} onChange={(e) => setItem(idx, "title", e.target.value)} placeholder={`Card ${idx + 1} title`} className="rounded-xl" />
+                                    <Button variant="ghost" size="icon" onClick={() => removeItem(idx)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                                </div>
+                                <Textarea rows={2} value={it.body || ""} onChange={(e) => setItem(idx, "body", e.target.value)} placeholder="Card body" className="rounded-xl text-sm" />
+                                {/* Iter 38: image URL replaced with an upload-only flow. */}
+                                <div className="flex gap-2 items-center">
+                                    {it.image ? (
+                                        <img src={it.image} alt="" className="h-12 w-12 object-cover rounded-lg border border-slate-200" />
+                                    ) : (
+                                        <div className="h-12 w-12 rounded-lg border-2 border-dashed border-slate-300 grid place-items-center text-[10px] text-slate-400">
+                                            No image
+                                        </div>
+                                    )}
+                                    <label className="rounded-xl border px-3 py-1.5 text-xs cursor-pointer hover:bg-white inline-flex items-center gap-1.5" data-testid={`col-card-upload-${idx}`}>
+                                        <ImageIcon className="h-3.5 w-3.5" />
+                                        {it.image ? "Replace" : "Upload image"}
+                                        <input type="file" accept="image/*" onChange={uploadCardImage} className="hidden" />
+                                    </label>
+                                    {it.image && (
+                                        <Button variant="ghost" size="sm" onClick={() => setItem(idx, "image", "")} className="text-xs text-destructive" data-testid={`col-card-remove-${idx}`}>
+                                            Remove
+                                        </Button>
+                                    )}
+                                </div>
                             </div>
-                            <Textarea rows={2} value={it.body || ""} onChange={(e) => setItem(idx, "body", e.target.value)} placeholder="Card body" className="rounded-xl text-sm" />
-                            <Input value={it.image || ""} onChange={(e) => setItem(idx, "image", e.target.value)} placeholder="Image URL (optional)" className="rounded-xl text-sm" />
-                        </div>
-                    ))}
+                        );
+                    })}
                     <Button variant="outline" size="sm" onClick={addItem} className="rounded-full"><Plus className="h-3 w-3 mr-1" />Add card</Button>
                 </div>
             );

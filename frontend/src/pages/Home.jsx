@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { useSiteSettings } from "../context/SiteSettingsContext";
 import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogIn, Cake, UserPlus } from "lucide-react";
 import { format, parseISO } from "date-fns";
-import Countdown from "../components/Countdown";
+// Countdown import removed — anniversary banner now lives only on /anniversary (Iter 38).
 import CommunityServiceLeaderboard from "../components/CommunityServiceLeaderboard";
 import { BlocksRenderer } from "../components/cms/BlockRenderer";
 
@@ -126,6 +126,14 @@ export default function Home() {
                                         See events
                                     </Link>
                                 )}
+                                <Link
+                                    to="/anniversary"
+                                    className="inline-flex items-center gap-2 rounded-full px-6 py-3 font-bold border-2 transition-colors hover:-translate-y-0.5"
+                                    style={{ borderColor: RED, color: RED, backgroundColor: "#fff" }}
+                                    data-testid="hero-cta-anniversary"
+                                >
+                                    10-Year Anniversary <ArrowRight className="h-4 w-4" />
+                                </Link>
                             </div>
                         </div>
 
@@ -147,8 +155,10 @@ export default function Home() {
                 </section>
             )}
 
-            {/* 10-Year Anniversary Countdown */}
-            {showSection("countdown") && <Countdown />}
+            {/* 10-Year Anniversary Countdown — removed from the top of the home page (Iter 38).
+                A compact 10-Year Anniversary button now lives in the hero CTA row next to
+                "Go to my profile" / "See events". The full Countdown banner is still
+                available on /anniversary itself. */}
 
             {/* Pillars */}
             {showSection("pillars") && (

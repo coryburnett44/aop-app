@@ -1257,7 +1257,57 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                         </div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
-                        <div><Label>Avatar URL</Label><Input value={form.avatar_url || ""} onChange={(e) => setForm({ ...form, avatar_url: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        {/* Iter 38: admin replaces Avatar URL with upload. The endpoint
+                            /members/me/avatar only works for self — for arbitrary users we
+                            use the generic /email/upload-image route which returns a URL,
+                            then we save it to form.avatar_url and the regular PUT /members
+                            persists it. */}
+                        <div>
+                            <Label>Profile photo</Label>
+                            <div className="flex items-center gap-3 mt-1.5">
+                                {form.avatar_url ? (
+                                    <img src={form.avatar_url} alt="" className="h-14 w-14 rounded-full object-cover border border-border" />
+                                ) : (
+                                    <div className="h-14 w-14 rounded-full border-2 border-dashed border-border grid place-items-center text-[10px] text-muted-foreground">
+                                        No photo
+                                    </div>
+                                )}
+                                <label className="rounded-full border px-3 py-1.5 text-xs cursor-pointer hover:bg-slate-50 inline-flex items-center gap-1.5" data-testid="em-avatar-upload">
+                                    {form.avatar_url ? "Replace" : "Upload"}
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={async (e) => {
+                                            const f = e.target.files?.[0];
+                                            if (!f) return;
+                                            const fd = new FormData();
+                                            fd.append("file", f);
+                                            try {
+                                                const { data } = await api.post("/email/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                                                setForm({ ...form, avatar_url: data.url });
+                                                toast.success("Photo uploaded — Save to persist");
+                                            } catch (err) {
+                                                toast.error(err.response?.data?.detail || "Upload failed");
+                                            }
+                                            e.target.value = "";
+                                        }}
+                                    />
+                                </label>
+                                {form.avatar_url && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        type="button"
+                                        onClick={() => setForm({ ...form, avatar_url: "" })}
+                                        className="text-xs text-destructive"
+                                        data-testid="em-avatar-remove"
+                                    >
+                                        Remove
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
                         <div></div>
                     </div>
                     <div className="grid grid-cols-3 gap-3">
@@ -1946,7 +1996,53 @@ function GearDialog({ item, onSaved, trigger }) {
                             </Select>
                         </div>
                     </div>
-                    <div><Label>Cover image URL</Label><Input value={form.cover_image} onChange={(e) => setForm({ ...form, cover_image: e.target.value })} className="rounded-xl mt-1.5" placeholder="https://…" /></div>
+                    {/* Iter 38: cover image now upload-only. */}
+                    <div>
+                        <Label>Cover image</Label>
+                        <div className="flex items-center gap-3 mt-1.5">
+                            {form.cover_image ? (
+                                <img src={form.cover_image} alt="" className="h-16 w-24 object-cover rounded-lg border border-border" />
+                            ) : (
+                                <div className="h-16 w-24 rounded-lg border-2 border-dashed border-border grid place-items-center text-[10px] text-muted-foreground">
+                                    No image
+                                </div>
+                            )}
+                            <label className="rounded-full border px-3 py-1.5 text-xs cursor-pointer hover:bg-slate-50 inline-flex items-center gap-1.5" data-testid="event-cover-upload">
+                                {form.cover_image ? "Replace" : "Upload"}
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={async (e) => {
+                                        const f = e.target.files?.[0];
+                                        if (!f) return;
+                                        const fd = new FormData();
+                                        fd.append("file", f);
+                                        try {
+                                            const { data } = await api.post("/email/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                                            setForm({ ...form, cover_image: data.url });
+                                            toast.success("Image uploaded");
+                                        } catch (err) {
+                                            toast.error(err.response?.data?.detail || "Upload failed");
+                                        }
+                                        e.target.value = "";
+                                    }}
+                                />
+                            </label>
+                            {form.cover_image && (
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    type="button"
+                                    onClick={() => setForm({ ...form, cover_image: "" })}
+                                    className="text-xs text-destructive"
+                                    data-testid="event-cover-remove"
+                                >
+                                    Remove
+                                </Button>
+                            )}
+                        </div>
+                    </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div><Label>Sizes (comma)</Label><Input value={form.sizes} onChange={(e) => setForm({ ...form, sizes: e.target.value })} className="rounded-xl mt-1.5" placeholder="S, M, L, XL" /></div>
                         <div><Label>Colors (comma)</Label><Input value={form.colors} onChange={(e) => setForm({ ...form, colors: e.target.value })} className="rounded-xl mt-1.5" placeholder="Navy, Red, White" /></div>
