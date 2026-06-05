@@ -16,6 +16,30 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AG — Iteration 37: routes/reports.py + Awards admin page multi-grant UI (2026-06-05)
+
+#### routes/reports.py (NEW, 707 lines)
+The final large refactor block from server.py. Owns:
+- `GET /reports/members`, `GET /reports/rsvps`, `GET /reports/hours`, `GET /reports/hours/summary`, `GET /reports/donations`
+- `GET /reports/personnel-brief/{user_id}` (JSON) + `GET /reports/personnel-brief/{user_id}/pdf` (ReportLab PDF, ~373 lines of styled layout: §1-§10 sections + avatar normalization via PIL + http fetch with User-Agent for external avatars)
+- Two helpers exposed via register attrs: `personnel_brief_data` and `personnel_brief_pdf_response`
+
+server.py keeps the back-compat shims `_personnel_brief_data` and `_personnel_brief_pdf_response` whose `._impl` pointers get wired post-registration. This keeps the member-self `/me/personnel-brief` + `/me/personnel-brief/pdf` endpoints working without touching the auth surface. Verified: member-self download bytes are byte-identical to admin download.
+
+`_period_to_range` was re-added to server.py (it had been removed with the deletion block) — both `routes/hours.py` and `routes/reports.py` inject it via register kwargs.
+
+**server.py: 7183 → 6350 lines (-833 in iter37; cumulative -1304 since iter32 start, from 7654→6350).** Refactor program complete.
+
+#### Awards admin page (/awards) — multi-grant UI consistency
+- `GET /api/awards` now returns BOTH `granted_count` (total grants via `count_documents`) AND `granted_distinct_count` (unique recipients via `distinct('user_id')`).
+- Catalog card text: when `total == distinct` → "Granted to N member(s)"; when `total > distinct` → "Granted N times to M member(s)".
+- Recent recipients list: each grant row now shows an ordinal pill ("2nd Award", "3rd Award", etc.) when the same member earned the same award more than once (`g.ordinal && g.award_count > 1`). Style matches Profile.jsx Awards tab spec exactly. data-testid `grant-ordinal-{grant_id}`.
+
+#### Verification
+29/29 backend pytest cases + frontend live UI checks PASS. PDF size 4.8KB with valid `%PDF` magic. Member→admin byte parity on /me vs /reports brief. Permission gating preserved across all 5 admin reports endpoints (member→403).
+
+
+
 ### Phase AF — Iteration 36: Multi-grant same award + lock down document uploads (2026-06-05)
 - **Multiple grants per award per member** — `POST /api/awards/{award_id}/grant` no longer 400s on duplicate `(award_id, user_id)`. Each new grant gets an `ordinal` field (1, 2, 3, ...). The legacy unique compound index `award_id_1_user_id_1` is dropped on startup and replaced with a non-unique index for lookup performance.
 - **/me/awards + /members/{id}/awards** now return each grant with `ordinal` and `award_count` (total grants of this award to this user). Backfilled at read-time for older grants without a stored ordinal.
