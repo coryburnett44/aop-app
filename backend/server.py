@@ -129,6 +129,7 @@ def public_user(u: dict) -> dict:
         "intake_completed_at": u.get("intake_completed_at", ""),
         "role": u.get("role", "member"),
         "admin_role": u.get("admin_role", "full") if u.get("role") == "admin" else None,
+        "allowed_tabs": (u.get("allowed_tabs") or []) if u.get("role") == "admin" else [],
         "bio": u.get("bio", ""),
         "city": u.get("city", ""),
         "phone": u.get("phone", ""),
@@ -273,12 +274,30 @@ ADMIN_ROLE_TABS: dict[str, set[str]] = {
     "governor_manager": {"dashboard", "hours", "causes", "reports"},
 }
 
+# Canonical list of every admin-console tab key — used for admin_can validation and
+# for the UI checkbox grid that lets full admins grant custom per-admin access.
+ALL_ADMIN_TABS: set[str] = set(ADMIN_ROLE_TABS["full"])
+
 def admin_role_of(u: dict) -> str:
     return (u.get("admin_role") or "full") if u.get("role") == "admin" else ""
 
-def admin_can(user: dict, tab: str) -> bool:
+def effective_admin_tabs(user: dict) -> set[str]:
+    """Returns the set of admin-tab keys this user is allowed to access.
+
+    Precedence:
+      1. Custom per-user `allowed_tabs` list (set by full Admins) — takes priority.
+      2. Otherwise fall back to ADMIN_ROLE_TABS[admin_role] defaults.
+    """
+    if user.get("role") != "admin":
+        return set()
+    custom = user.get("allowed_tabs")
+    if isinstance(custom, list) and len(custom) > 0:
+        return {t for t in custom if t in ALL_ADMIN_TABS}
     role = admin_role_of(user)
-    return tab in ADMIN_ROLE_TABS.get(role, set())
+    return set(ADMIN_ROLE_TABS.get(role, set()))
+
+def admin_can(user: dict, tab: str) -> bool:
+    return tab in effective_admin_tabs(user)
 
 async def require_admin_tab(tab: str, user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") != "admin":
@@ -318,9 +337,12 @@ async def admin_permissions(user: dict = Depends(require_admin)):
     role = admin_role_of(user)
     return {
         "admin_role": role,
-        "tabs": sorted(ADMIN_ROLE_TABS.get(role, set())),
+        "tabs": sorted(effective_admin_tabs(user)),
         "chapter_scoped": role == "governor_manager",
         "scoped_chapter_id": user.get("chapter_id") if role == "governor_manager" else None,
+        "all_tabs": sorted(ALL_ADMIN_TABS),
+        "role_default_tabs": {k: sorted(v) for k, v in ADMIN_ROLE_TABS.items()},
+        "has_custom_tabs": isinstance(user.get("allowed_tabs"), list) and len(user.get("allowed_tabs") or []) > 0,
     }
 
 # ---------- Models (extracted to models.py) ----------
@@ -1602,6 +1624,7 @@ async def admin_create_member(body: AdminCreateMemberIn, _: dict = Depends(admin
         "chapter_id": body.chapter_id,
         "status_override": body.member_status,
         "admin_role": (body.admin_role or "full") if body.role == "admin" else None,
+        "allowed_tabs": [t for t in (body.allowed_tabs or []) if t in ALL_ADMIN_TABS] if body.role == "admin" else [],
         "join_date": join_iso,
         "membership_expires_at": exp_iso,
         "email_verified": True,
@@ -1920,19 +1943,32 @@ async def admin_update_member(user_id: str, body: AdminUpdateMemberIn, admin: di
     existing = await db.users.find_one({"id": user_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Member not found")
-    # Only full admins may change role / admin_role / tier / membership_expires_at
+    # Only full admins may change role / admin_role / tier / membership_expires_at / allowed_tabs
     expires_changing = body.membership_expires_at is not None and (
         iso(body.membership_expires_at) != (existing.get("membership_expires_at") or "")
+    )
+    tabs_changing = body.allowed_tabs is not None and (
+        list(body.allowed_tabs) != list(existing.get("allowed_tabs") or [])
     )
     if (
         (body.role is not None and body.role != existing.get("role"))
         or (body.admin_role is not None and body.admin_role != existing.get("admin_role"))
         or (body.tier_id is not None and body.tier_id != existing.get("tier_id"))
         or expires_changing
+        or tabs_changing
     ):
         if admin_role_of(admin) != "full":
-            raise HTTPException(status_code=403, detail="Only full Admins may change roles, tiers, or the membership expiration date.")
+            raise HTTPException(status_code=403, detail="Only full Admins may change roles, tiers, custom tab permissions, or the membership expiration date.")
+    # Sanitize allowed_tabs: only keep keys that are real admin tabs. An empty list
+    # is treated as "remove custom override" (fall back to admin_role defaults).
+    if body.allowed_tabs is not None:
+        body.allowed_tabs = sorted({t for t in body.allowed_tabs if t in ALL_ADMIN_TABS})
     updates = {k: v for k, v in body.model_dump().items() if v is not None and k not in ("new_password", "member_status")}
+    # If role is being downgraded to "member", clear all admin-specific fields so the
+    # user no longer carries leftover admin_role / allowed_tabs from a prior promotion.
+    if body.role == "member" and existing.get("role") == "admin":
+        updates["admin_role"] = None
+        updates["allowed_tabs"] = []
     # Status override (member_status maps to status_override; "active" with no expiry issues means clear override)
     if body.member_status is not None:
         updates["status_override"] = body.member_status

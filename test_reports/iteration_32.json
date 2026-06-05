@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 32 (set-password page, login-lockout fix, custom admin-tab permissions): ALL backend (6/6) and ALL frontend UI flows PASS. No issues found. Bug 1 (set-password page) renders heading, two password inputs, submit; bogus token correctly produces 'Invalid or already-used token' toast and stays on /set-password. Bug 2 (lockout) verified: 5 wrong attempts -> 401 each, 6th wrong -> 429 'Too many incorrect attempts. Try again in 15 minutes.', correct password Admin123! STILL returns 200 (lockout no longer blocks legitimate users), and the failed-attempt counter is reset after a successful login (subsequent wrong attempt returns 401 not 429). Feature 3 verified end-to-end: GET /api/admin/permissions returns admin_role/tabs/all_tabs(14)/role_default_tabs(4 roles)/has_custom_tabs/chapter_scoped/scoped_chapter_id; full admin PUT /api/members/{id} {allowed_tabs:['dashboard','hours','causes','reports','members']} grants 'members' tab to governor.tx, which then makes GET /api/admin/applications go 403->200; PUT with allowed_tabs:[] clears the override and the 403 returns; non-full admin (governor.tx) PUT with allowed_tabs gets 403; junk tab keys are sanitized away (not persisted). Regression: governor_manager with empty allowed_tabs still gets only [dashboard, hours, causes, reports] and has_custom_tabs=false. Frontend EditMemberDialog -> 'Custom tab permissions' card renders all 14 em-tab-perm-* checkboxes; em-tab-perm-dashboard is disabled+checked; toggling 'members' on then clicking em-tab-perms-reset clears the override and members returns to unchecked.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration32_setpw_lockout_tabs.py",
+    "/app/test_reports/pytest/iter32.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Bug 1 fix is correct: /set-password route in App.js no longer redirects to /login; SetPassword.jsx posts to /auth/set-password and on failure shows toast without navigating (verified live: bogus token returns 'Invalid or already-used token' toast, URL stays on /set-password?token=demo).",
+    "Bug 2 fix is correct: routes/auth.py /auth/login now verifies password BEFORE checking lockout, so correct credentials always succeed; on success db.login_attempts entry for the IP+identifier is deleted, resetting the counter. Verified live with admin@clubhaven.app — 5x 401, 6th 429, then correct password 200 even while 'locked'.",
+    "Feature 3 backend is correct and well-bounded: ALL_ADMIN_TABS has 14 entries; effective_admin_tabs() prefers custom allowed_tabs over role defaults; admin_update_member sanitizes allowed_tabs against ALL_ADMIN_TABS so junk values are filtered; non-full admins get 403 if they try to set allowed_tabs (verified via governor.tx self-edit).",
+    "Feature 3 frontend AdminTabPermissionsEditor renders correctly inside EditMemberDialog: 14 checkboxes via [data-testid='em-tab-perm-<tab>'], dashboard checkbox is disabled+checked (required), reset link em-tab-perms-reset appears only when a custom override is in effect (correct UX — nothing to reset on defaults). Toggle + reset round-trip verified.",
+    "Minor (low-priority polish, not blocking): the SetPassword.jsx error toast text is taken from backend response (e.g. 'Invalid or already-used token') — slightly different wording than the request's 'Could not set password' fallback, but acceptable because backend-provided error is more informative.",
+    "Minor (info): /admin/permissions correctly returns all_tabs as 14 sorted strings and role_default_tabs as a map keyed by all 4 admin sub-roles (full / membership_manager / operations_manager / governor_manager)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration32_setpw_lockout_tabs.py (new, 6 pytest cases — set-password bogus-token rejection, login lockout-bypass for correct password + counter reset, /admin/permissions response shape for full + governor admins, custom allowed_tabs grant/revoke/gating via /admin/applications, junk-tab sanitization)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (set-password page + EditMemberDialog tab-perms grid)"},
+  "test_credentials": "admin@clubhaven.app / Admin123! and governor.tx@clubhaven.app / Governor123! — both work.",
+  "seed_data_creation": "Tests temporarily set then clear allowed_tabs on governor.tx (cleanup at end of test_grant_revoke_and_gating restores empty allowed_tabs). Login lockout test increments db.login_attempts for IP+admin@clubhaven.app then a successful login clears it. No persistent state changes.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All three iter32 fixes are working end-to-end. /app/backend/tests/test_iteration32_setpw_lockout_tabs.py is the new regression suite (6 tests, ~5s). When testing future login flows note that the lockout DB key is IP+identifier so back-to-back wrong-attempt tests against admin@clubhaven.app will collide — use the existing test's cleanup pattern (do one successful login to reset, or use a fresh test user). The EditMemberDialog opens via a 'Edit' button on the Admin -> Members table row (search by email, then click the 4th button in the row which is labelled 'Edit'). The em-tab-perms-reset link only renders when a custom override is currently active.",
+  "rca of the issue": "N/A — all three fixes verified working as designed. No outstanding bugs."
+}

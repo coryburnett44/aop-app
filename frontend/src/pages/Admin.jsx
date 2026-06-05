@@ -945,6 +945,79 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
     );
 }
 
+/* -------- Admin tab permissions editor (full-Admin only) -------- */
+const ALL_ADMIN_TAB_KEYS = [
+    "dashboard", "members", "chapters", "tiers", "events", "hours", "awards",
+    "gear", "causes", "reports", "email", "news", "pages", "documents",
+];
+const ADMIN_ROLE_DEFAULT_TABS = {
+    full: new Set(ALL_ADMIN_TAB_KEYS),
+    membership_manager: new Set(["dashboard", "members", "chapters", "tiers", "events", "awards", "reports", "email"]),
+    operations_manager: new Set(["dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news", "documents"]),
+    governor_manager: new Set(["dashboard", "hours", "causes", "reports"]),
+};
+function AdminTabPermissionsEditor({ value = [], onChange, disabled = false, adminRole = "full" }) {
+    const hasCustom = Array.isArray(value) && value.length > 0;
+    const roleDefault = ADMIN_ROLE_DEFAULT_TABS[adminRole] || ADMIN_ROLE_DEFAULT_TABS.full;
+    const effective = hasCustom ? new Set(value) : roleDefault;
+    function toggle(tab, checked) {
+        if (disabled) return;
+        // First flip from role-default into a concrete custom set, then mutate.
+        const base = hasCustom ? new Set(value) : new Set(roleDefault);
+        if (checked) base.add(tab); else base.delete(tab);
+        // Always require dashboard so the admin can actually see /admin.
+        base.add("dashboard");
+        onChange(Array.from(base).sort());
+    }
+    function reset() { if (!disabled) onChange([]); }
+    return (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3" data-testid="em-tab-perms">
+            <div className="flex items-center justify-between gap-2 mb-2">
+                <div>
+                    <div className="text-sm font-semibold">Custom tab permissions</div>
+                    <div className="text-xs text-muted-foreground">
+                        {hasCustom
+                            ? "Custom — overrides the role default above."
+                            : "Following the role default. Check any box to start customizing."}
+                    </div>
+                </div>
+                {hasCustom && !disabled && (
+                    <button
+                        type="button"
+                        onClick={reset}
+                        className="text-xs text-primary hover:underline shrink-0"
+                        data-testid="em-tab-perms-reset"
+                    >
+                        Reset to role default
+                    </button>
+                )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {ALL_ADMIN_TAB_KEYS.map((tab) => {
+                    const checked = effective.has(tab);
+                    const isDashboard = tab === "dashboard";
+                    return (
+                        <label
+                            key={tab}
+                            className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 ${disabled ? "opacity-60 cursor-not-allowed" : "hover:bg-white cursor-pointer"}`}
+                            data-testid={`em-tab-perm-${tab}`}
+                        >
+                            <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded"
+                                checked={checked}
+                                disabled={disabled || isDashboard}
+                                onChange={(e) => toggle(tab, e.target.checked)}
+                            />
+                            <span className="capitalize">{tab}</span>
+                        </label>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved }) {
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({});
@@ -976,6 +1049,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                 tier_id: member.tier_id || "",
                 role: member.role,
                 admin_role: member.admin_role || "full",
+                allowed_tabs: Array.isArray(member.allowed_tabs) ? [...member.allowed_tabs] : [],
                 join_date: member.join_date ? member.join_date.slice(0, 10) : "",
                 membership_expires_at: member.membership_expires_at ? member.membership_expires_at.slice(0, 10) : "",
                 member_status: member.status_override || member.status || "active",
@@ -992,6 +1066,13 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
             if (!payload.new_password) delete payload.new_password;
             // Always send assignment_history even when empty so admins can clear all rows.
             payload.assignment_history = form.assignment_history || [];
+            // Always send allowed_tabs (even when empty) so admins can clear the custom override
+            // and revert the user back to their admin_role default permissions.
+            if (form.role === "admin") {
+                payload.allowed_tabs = form.allowed_tabs || [];
+            } else {
+                payload.allowed_tabs = [];
+            }
             // Convert join_date YYYY-MM-DD to ISO timestamp so backend recomputes membership_expires_at
             if (payload.join_date && payload.join_date.length === 10) {
                 payload.join_date = new Date(`${payload.join_date}T00:00:00Z`).toISOString();
@@ -1138,7 +1219,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                     {form.role === "admin" && (
                         <div>
                             <Label>Admin permissions</Label>
-                            <Select value={form.admin_role || "full"} onValueChange={(v) => setForm({ ...form, admin_role: v })}>
+                            <Select value={form.admin_role || "full"} onValueChange={(v) => setForm({ ...form, admin_role: v })} disabled={!isFullAdmin}>
                                 <SelectTrigger className="rounded-xl mt-1.5" data-testid="em-admin-role"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="full">Admin (full access)</SelectItem>
@@ -1152,6 +1233,12 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                                 Operations Manager: dashboard, members, chapters, events, hours, causes, reports, news.<br />
                                 Governor Manager: only their own chapter — dashboard, hours, causes, reports.
                             </div>
+                            <AdminTabPermissionsEditor
+                                value={form.allowed_tabs || []}
+                                onChange={(next) => setForm({ ...form, allowed_tabs: next })}
+                                disabled={!isFullAdmin}
+                                adminRole={form.admin_role || "full"}
+                            />
                         </div>
                     )}
                     <div><Label>Bio</Label><Textarea rows={3} value={form.bio || ""} onChange={(e) => setForm({ ...form, bio: e.target.value })} className="rounded-xl mt-1.5" /></div>

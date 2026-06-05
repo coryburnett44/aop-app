@@ -103,24 +103,34 @@ def register(
         xff = request.headers.get("x-forwarded-for", "")
         ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown")
         identifier = f"{ip}:{identifier_raw.lower()}"
-        attempt = await db.login_attempts.find_one({"identifier": identifier})
-        if attempt and attempt.get("count", 0) >= 5:
-            locked_until = attempt.get("locked_until")
-            from datetime import datetime as _dt
-            if locked_until and _dt.fromisoformat(locked_until) > now_utc():
-                raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+
+        # Look the user up FIRST and try the password. A correct password should
+        # always succeed even if previous wrong attempts triggered a soft lock
+        # (locking out legitimate users with the right credentials is bad UX).
         user = None
         if is_email_form:
             user = await db.users.find_one({"email": email})
         else:
             user = await db.users.find_one({"username": {"$regex": f"^{re.escape(username_lc)}$", "$options": "i"}})
-        if not user or not verify_password(body.password, user["password_hash"]):
+
+        password_ok = bool(user) and verify_password(body.password, user["password_hash"])
+
+        if not password_ok:
+            # Wrong creds — enforce the soft lock and increment.
+            attempt = await db.login_attempts.find_one({"identifier": identifier})
+            if attempt and attempt.get("count", 0) >= 5:
+                locked_until = attempt.get("locked_until")
+                from datetime import datetime as _dt
+                if locked_until and _dt.fromisoformat(locked_until) > now_utc():
+                    raise HTTPException(status_code=429, detail="Too many incorrect attempts. Try again in 15 minutes.")
             await db.login_attempts.update_one(
                 {"identifier": identifier},
                 {"$inc": {"count": 1}, "$set": {"locked_until": iso(now_utc() + timedelta(minutes=15))}},
                 upsert=True,
             )
             raise HTTPException(status_code=401, detail="Invalid email/username or password")
+
+        # Success — clear any prior failed-attempt counter for this identifier.
         await db.login_attempts.delete_one({"identifier": identifier})
         tv = int(user.get("token_version", 0) or 0)
         at = create_access_token(user["id"], user["email"], user.get("role", "member"), tv)

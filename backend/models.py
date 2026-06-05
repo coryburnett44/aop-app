@@ -212,6 +212,7 @@ class AdminCreateMemberIn(BaseModel):
     branch_of_service: str = ""
     role: Literal["member", "admin"] = "member"
     admin_role: Optional[Literal["full", "membership_manager", "operations_manager", "governor_manager"]] = None
+    allowed_tabs: Optional[List[str]] = None
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
     member_status: Optional[Literal["active", "inactive", "grace", "expired", "deceased"]] = None
@@ -246,6 +247,7 @@ class AdminUpdateMemberIn(BaseModel):
     avatar_url: Optional[str] = None
     role: Optional[Literal["member", "admin"]] = None
     admin_role: Optional[Literal["full", "membership_manager", "operations_manager", "governor_manager"]] = None
+    allowed_tabs: Optional[List[str]] = None
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
     membership_expires_at: Optional[datetime] = None
