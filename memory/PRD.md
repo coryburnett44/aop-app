@@ -16,6 +16,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AH — Iteration 38-39: 5 UI/Admin features (2026-06-05)
+1. **Home page CTA reorg** — Anniversary button moved next to "Go to my profile" + "See events" in the hero. Standalone Countdown banner removed from Home (still on /anniversary).
+2. **Gear external-link items** — `GearItemIn`/`UpdateIn` + `gear_out` gained `is_external_link: bool`, `external_url: str`, `name_html: str`. Public `/gear` GearCard now renders external-link items the same card size with a "Visit" red pill instead of price; clicking opens the URL in a new tab. Both editors (public Gear.jsx + Admin.jsx legacy) expose an "External link mode" checkbox, URL field, and HTML / Rich title textarea (uses `dangerouslySetInnerHTML` on render — limited tag set per UI hint).
+3. **Sub-events for any main event** — `SubEventsPanel` now ALWAYS renders for parent events (no `parent_event_id`) when viewer is an admin, and includes a `+ Create sub-event` button. Inline `SubEventCreateForm` posts to `/api/events` with `parent_event_id` set. Members continue to see the panel only when ≥1 sub-event exists.
+4. **Custom page Columns block + sitewide upload-only**: Columns block image URL Input replaced with file upload (`col-card-upload-{idx}` / `col-card-remove-{idx}`); standalone Image block URL Input also replaced with upload-only flow. Avatar URL / Cover image URL fields removed in: Profile (`profile-avatar-upload`), Admin → Edit Member (`em-avatar-upload`), Admin → Event editor's gear cover (`gear-admin-cover-upload` — testid was de-collided from the real event-cover-upload), Admin → Gear page banner (`gear-page-hero-upload`).
+5. **Profile download buttons under tabs** — `Download my brief` + `Tax letter` moved out of the header and into a `profile-download-row` directly under `TabsList`, freeing the mobile header.
+
+#### Verification
+Iter 38: 7/7 main features PASS in live UI (Playwright). Iter 39 retest: 3/3 medium/low follow-ups (gear-admin-editor fields, testid de-collision, gear page banner upload-only) PASS. No regressions to iter 38 flows.
+
+
+
 ### Phase AG — Iteration 37: routes/reports.py + Awards admin page multi-grant UI (2026-06-05)
 
 #### routes/reports.py (NEW, 707 lines)
