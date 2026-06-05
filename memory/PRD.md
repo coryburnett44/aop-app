@@ -16,6 +16,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AB — Iteration 32: Set-password page restored + Login-lockout bypass for correct creds + Custom admin-tab permissions (2026-06-05)
+- **Set-password page brought back** — `/app/frontend/src/pages/SetPassword.jsx` (mirrors ResetPassword.jsx). App.js route changed from `<Navigate to="/login">` to `<SetPassword />`. New bulk-imported members now land on the actual password-set form when clicking the email link, then redirect to /login. Backend `/auth/set-password` endpoint was already in place — just the frontend was the regression.
+- **Login lockout no longer blocks correct credentials** — `routes/auth.py /auth/login` now verifies the password FIRST. On success: counter cleared, user logged in (no more "Too many attempts" for legitimate users). On failure: existing 5-attempt soft-lock (15-min) still applies and increments. Error message clarified to "Too many incorrect attempts. Try again in 15 minutes."
+- **Custom per-admin tab permissions** — Full Admins can now grant any admin user a custom set of admin-console tabs that overrides their `admin_role` defaults.
+  - Backend: `user.allowed_tabs: List[str]` field (admin-only, persisted). `ALL_ADMIN_TABS` set + `effective_admin_tabs(user)` helper (custom list takes priority over `ADMIN_ROLE_TABS[role]`). `admin_can` reads through `effective_admin_tabs`.
+  - `GET /admin/permissions` returns `all_tabs` (14 canonical keys), `role_default_tabs` (per-role default), `has_custom_tabs` (bool).
+  - `PUT /api/members/{id}` accepts `allowed_tabs: List[str]`; sanitized against `ALL_ADMIN_TABS`; empty list clears the override. Gated to full admins (non-full → 403). Downgrading a user role→member auto-clears admin_role + allowed_tabs.
+  - Frontend: `AdminTabPermissionsEditor` component (in `Admin.jsx`) renders inside `EditMemberDialog` when role=admin. 14 checkboxes (3-col grid), data-testid `em-tab-perm-<tab>`, `em-tab-perms`, `em-tab-perms-reset`. Dashboard checkbox always required (disabled+checked). Reset link visible only when an override is currently set. Whole editor disabled for non-full admins.
+- **Test coverage**: 6/6 backend pytest in `/app/backend/tests/test_iteration32_setpw_lockout_tabs.py` + frontend Playwright UI verification of SetPassword page render + EditMemberDialog tab-perms grid + grant/revoke/gate end-to-end. No regressions.
+
+
+
 ### Foundation (pre-Phase A)
 - JWT cookie auth (login/logout/refresh/change-password). Admin and demo seed (idempotent).
 - Chapters CRUD, Tiers CRUD, Awards CRUD + grant/revoke, Volunteer Hours (member log + admin review).
