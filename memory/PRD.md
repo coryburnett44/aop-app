@@ -16,6 +16,30 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AE — Iteration 35: P0 production data-loss fix + chapter dropdown + auto-clear pending flag (2026-06-05)
+
+#### 🚨 P0 ROOT CAUSE — Production data loss
+The user reported that on production (aop-app.org) custom events, custom tiers ("Junior Member"), demo members they deleted, and a Book Bag Giveaway album's photos all kept disappearing after redeploys. **RCA**: three startup reconciliation functions used a destructive "delete anything not in canonical allowlist" pattern:
+- `reconcile_tiers()` called `db.tiers.delete_one()` for every tier whose name wasn't in `AOP_TIER_NAMES`
+- `seed_anniversary_subevents()` had a "Wipe ALL non-anniversary events on startup" block that deleted every event not in the 10-Year-Anniversary canonical tree, **cascading to db.rsvps + db.checkins** (which is also why album photos linked to those events were lost)
+- `reconcile_awards()` deleted any non-canonical award AND `db.award_grants.delete_many({award_id})`
+- `seed_data()` re-inserted 5 demo members (Riley Chen, Maya Patel, Jordan Reed, Sam Okafor, Harper Liu) whenever they were missing — so admin deletions reverted on every restart
+
+Every prod redeploy = startup = full wipe of admin-created content. **Fix**: all 4 destructive blocks removed; `seed_data` + `seed_phase_b` now gated by a one-time `site_settings.demo_seed_completed` marker so deleted demo data stays deleted forever (marker has been set in preview).
+
+#### Other fixes
+- **Edit Member chapter dropdown** now shows ALL chapters from `/api/chapters` (same as `/profile`), not just the Texas/Florida/Tri-South/DMV official subset. Fix applied to 4 admin dropdowns: EditMemberDialog (`em-chapter`), NewMemberDialog (`nm-chapter`), inline member-row (`member-{id}-chapter`), Email blast chapter segment. `BulkImportMembersDialog` intentionally still uses `officialOnly` (CSV import maps to canonical names).
+- **Auto-clear pending_set_password on successful login** — `routes/auth.py /auth/login` now flips `pending_set_password=False` after successful password verification. This unblocks members who reset their password via `/reset-password` (or had it changed manually by an admin) so they don't stay flagged forever.
+
+#### Verification
+12/12 backend curl checks across `/app/tests/test_iter35_data_persistence.sh` + `/app/tests/test_iter35_part2.sh` — including actual `sudo supervisorctl restart backend` cycle to simulate a production redeploy. Custom tier `Iter35_Junior_*`, custom event `Iter35_EventV2_*`, custom award `Iter35_Award_*`, and deleted demo Sam Okafor all survive the restart. F5 verified live in Playwright: 'National' chapter visible in `em-chapter` dropdown alongside DMV/Florida/Texas/Tri-South.
+
+#### Deferred
+- `routes/reports.py` extraction (5 reports + Personnel Brief PDF, ~500 lines) — deferred this session to focus on the data-loss emergency.
+- `/api/members?q=` search filters by name only, not email. Worth confirming with the user separately whether to extend.
+
+
+
 ### Phase AD — Iteration 34: Bulk resend set-password + routes/applications.py + routes/hours.py (2026-06-05)
 - **Bulk resend set-password** — New backend endpoint `POST /api/admin/members/bulk-resend-set-password` (admin-only, members tab). Iterates over every user flagged `pending_set_password=true`, invalidates older unused tokens (`used=true, invalidated_by='bulk-resend'`), mints fresh 7-day tokens, and sends the welcome email via Resend. Returns `{ok, total, sent, failed, skipped_no_email, members:[{id, name, email, sent, skipped?, error?}]}`. 503 when RESEND_API_KEY missing. Frontend: Admin → Members toolbar now renders both pills together when pending users exist — `filter-pending-setpw` (toggle pending-only view) and `bulk-resend-setpw` (solid amber "Resend to all N"). Helper `bulkResendSetPassword()` confirms via `window.confirm`, posts, distinguishes full-success vs partial via `toast.success`/`toast.warning`, refreshes list.
 - **routes/applications.py (NEW, 304 lines)** — `POST /auth/apply`, `GET /admin/applications`, `POST /admin/applications/{id}/review`, plus all 3 Resend email templates (admin notification, approval welcome, rejection) extracted. The approval flow correctly reuses the applicant's chosen password from the application doc — verified end-to-end via live login post-approval.
