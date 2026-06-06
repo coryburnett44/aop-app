@@ -55,6 +55,105 @@ const BLOCK_TEMPLATES = [
 
 function newId() { return `b_${Math.random().toString(36).slice(2, 10)}`; }
 
+/* Iter 40: a single column card inside a Columns block, drag-handleable via
+   the GripVertical button. Image fit + aspect ratio per card so admins can
+   choose how the uploaded photo sits inside the card. */
+function SortableColumnCard({ idx, item, blockId, onChange, onRemove }) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.node_id });
+    const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
+    async function uploadCardImage(e) {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        try {
+            const url = await uploadAndGetUrl(f);
+            onChange(idx, "image", url);
+            toast.success("Image uploaded");
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Upload failed");
+        }
+        e.target.value = "";
+    }
+    const fit = item.image_fit || "cover";
+    const aspect = item.image_aspect || "video";
+    const previewAspectClass = {
+        video: "aspect-video",   // 16:9
+        square: "aspect-square", // 1:1
+        tall: "aspect-[4/5]",
+        auto: "",
+    }[aspect] || "aspect-video";
+    return (
+        <div ref={setNodeRef} style={style} className="border border-slate-200 rounded-xl p-3 space-y-2 bg-slate-50" data-testid={`col-card-row-${blockId}-${idx}`}>
+            <div className="flex gap-2 items-center">
+                <button
+                    type="button"
+                    {...attributes}
+                    {...listeners}
+                    className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-700 shrink-0"
+                    title="Drag to reorder"
+                    data-testid={`col-card-drag-${blockId}-${idx}`}
+                >
+                    <GripVertical className="h-4 w-4" />
+                </button>
+                <Input value={item.title || ""} onChange={(e) => onChange(idx, "title", e.target.value)} placeholder={`Card ${idx + 1} title`} className="rounded-xl" data-testid={`col-card-title-${blockId}-${idx}`} />
+                <Button variant="ghost" size="icon" onClick={onRemove}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+            </div>
+            <Textarea rows={2} value={item.body || ""} onChange={(e) => onChange(idx, "body", e.target.value)} placeholder="Card body" className="rounded-xl text-sm" data-testid={`col-card-body-${blockId}-${idx}`} />
+            <div className="flex gap-2 items-center flex-wrap">
+                {item.image ? (
+                    <div className={`w-20 ${previewAspectClass || "h-14"} rounded-lg border border-slate-200 overflow-hidden bg-white`}>
+                        <img src={item.image} alt="" className={`w-full h-full object-${fit}`} />
+                    </div>
+                ) : (
+                    <div className={`w-20 ${previewAspectClass || "h-14"} rounded-lg border-2 border-dashed border-slate-300 grid place-items-center text-[10px] text-slate-400`}>
+                        No image
+                    </div>
+                )}
+                <label className="rounded-xl border px-3 py-1.5 text-xs cursor-pointer hover:bg-white inline-flex items-center gap-1.5" data-testid={`col-card-upload-${idx}`}>
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    {item.image ? "Replace" : "Upload image"}
+                    <input type="file" accept="image/*" onChange={uploadCardImage} className="hidden" />
+                </label>
+                {item.image && (
+                    <Button variant="ghost" size="sm" onClick={() => onChange(idx, "image", "")} className="text-xs text-destructive" data-testid={`col-card-remove-${idx}`}>
+                        Remove
+                    </Button>
+                )}
+            </div>
+            {item.image && (
+                <div className="flex gap-3 items-center flex-wrap pt-1">
+                    <label className="text-[11px] uppercase tracking-wider font-bold text-slate-500 inline-flex items-center gap-1.5">
+                        Fit
+                        <select
+                            value={fit}
+                            onChange={(e) => onChange(idx, "image_fit", e.target.value)}
+                            className="rounded-md border px-2 py-1 text-xs normal-case font-normal text-slate-700"
+                            data-testid={`col-card-fit-${blockId}-${idx}`}
+                        >
+                            <option value="cover">Cover (crop to fill)</option>
+                            <option value="contain">Contain (whole image)</option>
+                            <option value="fill">Fill (stretch)</option>
+                        </select>
+                    </label>
+                    <label className="text-[11px] uppercase tracking-wider font-bold text-slate-500 inline-flex items-center gap-1.5">
+                        Aspect
+                        <select
+                            value={aspect}
+                            onChange={(e) => onChange(idx, "image_aspect", e.target.value)}
+                            className="rounded-md border px-2 py-1 text-xs normal-case font-normal text-slate-700"
+                            data-testid={`col-card-aspect-${blockId}-${idx}`}
+                        >
+                            <option value="video">16:9 (default)</option>
+                            <option value="square">1:1 square</option>
+                            <option value="tall">4:5 portrait</option>
+                            <option value="auto">Auto (original)</option>
+                        </select>
+                    </label>
+                </div>
+            )}
+        </div>
+    );
+}
+
 function uploadAndGetUrl(file) {
     const fd = new FormData();
     fd.append("file", file);
@@ -65,6 +164,11 @@ function uploadAndGetUrl(file) {
 function BlockEditor({ block, onChange, onRemove }) {
     const p = block.props || {};
     const set = (k, v) => onChange({ ...block, props: { ...p, [k]: v } });
+    // Iter 40: sensors for dragging cards inside a Columns block.
+    const sensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    );
 
     async function handleImageUpload(e) {
         const f = e.target.files?.[0];
@@ -168,9 +272,26 @@ function BlockEditor({ block, onChange, onRemove }) {
             );
         case "columns": {
             const items = p.items || [];
-            const setItem = (idx, k, v) => set("items", items.map((it, i) => i === idx ? { ...it, [k]: v } : it));
-            const addItem = () => set("items", [...items, { title: "", body: "" }]);
-            const removeItem = (idx) => set("items", items.filter((_, i) => i !== idx));
+            // Iter 40: backfill node_id for legacy items so SortableContext can key them.
+            const ensureNodeId = (it, i) => it.node_id ? it : { ...it, node_id: `col-${block.id}-${i}-${Date.now()}` };
+            const itemsWithIds = items.map(ensureNodeId);
+            // If we backfilled, persist immediately so subsequent renders skip the work.
+            if (itemsWithIds.some((it, i) => it !== items[i])) {
+                queueMicrotask(() => set("items", itemsWithIds));
+            }
+            const setItem = (idx, k, v) => set("items", itemsWithIds.map((it, i) => i === idx ? { ...it, [k]: v } : it));
+            const addItem = () => set("items", [...itemsWithIds, { node_id: `col-${block.id}-${itemsWithIds.length}-${Date.now()}`, title: "", body: "", image_fit: "cover", image_aspect: "video" }]);
+            const removeItem = (idx) => set("items", itemsWithIds.filter((_, i) => i !== idx));
+
+            function onDragEnd(event) {
+                const { active, over } = event;
+                if (!over || active.id === over.id) return;
+                const oldIndex = itemsWithIds.findIndex((it) => it.node_id === active.id);
+                const newIndex = itemsWithIds.findIndex((it) => it.node_id === over.id);
+                if (oldIndex < 0 || newIndex < 0) return;
+                set("items", arrayMove(itemsWithIds, oldIndex, newIndex));
+            }
+
             return (
                 <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-2">
@@ -180,49 +301,22 @@ function BlockEditor({ block, onChange, onRemove }) {
                             <option value={3}>3</option>
                             <option value={4}>4</option>
                         </select>
+                        <span className="text-[11px] text-slate-500 ml-2">Drag cards to reorder</span>
                     </div>
-                    {items.map((it, idx) => {
-                        async function uploadCardImage(e) {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            try {
-                                const url = await uploadAndGetUrl(f);
-                                setItem(idx, "image", url);
-                                toast.success("Image uploaded");
-                            } catch (err) {
-                                toast.error(err.response?.data?.detail || "Upload failed");
-                            }
-                        }
-                        return (
-                            <div key={idx} className="border border-slate-200 rounded-xl p-3 space-y-2 bg-slate-50">
-                                <div className="flex gap-2 items-center">
-                                    <Input value={it.title || ""} onChange={(e) => setItem(idx, "title", e.target.value)} placeholder={`Card ${idx + 1} title`} className="rounded-xl" />
-                                    <Button variant="ghost" size="icon" onClick={() => removeItem(idx)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
-                                </div>
-                                <Textarea rows={2} value={it.body || ""} onChange={(e) => setItem(idx, "body", e.target.value)} placeholder="Card body" className="rounded-xl text-sm" />
-                                {/* Iter 38: image URL replaced with an upload-only flow. */}
-                                <div className="flex gap-2 items-center">
-                                    {it.image ? (
-                                        <img src={it.image} alt="" className="h-12 w-12 object-cover rounded-lg border border-slate-200" />
-                                    ) : (
-                                        <div className="h-12 w-12 rounded-lg border-2 border-dashed border-slate-300 grid place-items-center text-[10px] text-slate-400">
-                                            No image
-                                        </div>
-                                    )}
-                                    <label className="rounded-xl border px-3 py-1.5 text-xs cursor-pointer hover:bg-white inline-flex items-center gap-1.5" data-testid={`col-card-upload-${idx}`}>
-                                        <ImageIcon className="h-3.5 w-3.5" />
-                                        {it.image ? "Replace" : "Upload image"}
-                                        <input type="file" accept="image/*" onChange={uploadCardImage} className="hidden" />
-                                    </label>
-                                    {it.image && (
-                                        <Button variant="ghost" size="sm" onClick={() => setItem(idx, "image", "")} className="text-xs text-destructive" data-testid={`col-card-remove-${idx}`}>
-                                            Remove
-                                        </Button>
-                                    )}
-                                </div>
-                            </div>
-                        );
-                    })}
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                        <SortableContext items={itemsWithIds.map((it) => it.node_id)} strategy={verticalListSortingStrategy}>
+                            {itemsWithIds.map((it, idx) => (
+                                <SortableColumnCard
+                                    key={it.node_id}
+                                    idx={idx}
+                                    item={it}
+                                    blockId={block.id}
+                                    onChange={setItem}
+                                    onRemove={() => removeItem(idx)}
+                                />
+                            ))}
+                        </SortableContext>
+                    </DndContext>
                     <Button variant="outline" size="sm" onClick={addItem} className="rounded-full"><Plus className="h-3 w-3 mr-1" />Add card</Button>
                 </div>
             );
