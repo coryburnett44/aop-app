@@ -16,6 +16,30 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AJ — Iteration 41: Automated Annual Dues Reminders (2026-06-06)
+
+Added a system-managed automated email campaign that emails every active, non-lifetime member at four cadence points around their `membership_expires_at`:
+
+| Stage      | When                       | Email content |
+|------------|----------------------------|---------------|
+| `before_30`| 30 days before expiration  | Friendly heads-up |
+| `before_15`| 15 days before expiration  | Reminder |
+| `before_5` | 5 days before expiration   | Final notice |
+| `grace_1`  | 1 day AFTER expiration     | 15-day grace warning + $75.00 reactivation fee + contact the National office |
+
+**Implementation:**
+- New `kind="dues_reminders"` discriminator on `automated_emails` docs (default = `broadcast`).
+- `_send_dues_reminders()` dispatched from the existing `_automated_email_loop` (runs once a minute; campaign cron `0 9 * * *`).
+- Per-stage subject + HTML body baked into `_dues_reminder_email_html()` — admins don't edit bodies, only toggle the campaign and tweak the cron schedule.
+- Dedupe via `db.dues_reminders_sent` collection (unique index on `(user_id, expires_at, stage)`). When a member pays → `membership_expires_at` advances → new keys → next cycle's reminders fire on the new dates. Already-sent stages for the OLD date are never re-sent. **"If they paid, the emails stop."**
+- Excludes lifetime members (`is_lifetime_member=true`), inactive members (`status=inactive`), and accounts without email.
+- New `seed_builtin_dues_reminders()` runs at startup (idempotent).
+- Frontend `AutomatedEmailsAdmin.jsx`: special-cased dues campaigns to hide body editor / audience / sections and show a "System-managed campaign" info panel with the cadence breakdown.
+- Preview endpoint stacks all four stage subject lines + bodies so admins can review wording in one view.
+
+**Verification (iter41)**
+- Live sandbox: seeded 4 fake users at offsets +30/+15/+5/−1 → `_send_dues_reminders` sent exactly 4 emails, created 4 dedup rows, second run returned 0 (dedupe). Payment-extension scenario: 30-day reminder fires once, payment extends expiration by 365 days, re-run same day returns 0 sent. Admin UI Edit dialog hides body/audience/sections and disables subject as expected.
+
 ### Phase AI — Iteration 40: routes/rsvps.py extraction (2026-06-06)
 Continuing the server.py refactor: extracted RSVP creation, paid-event Zeffy approval, admin event-ticket approval, RSVP guest-list editing, `/me/events`, QR ticket emails, and check-in lookup/scan endpoints into a new `/app/backend/routes/rsvps.py` module (~480 lines).
 

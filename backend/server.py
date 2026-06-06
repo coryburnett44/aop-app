@@ -2263,6 +2263,11 @@ async def startup():
     # Automated emails
     await db.automated_emails.create_index("id", unique=True)
     await db.automated_emails.create_index([("is_active", 1), ("next_run_at", 1)])
+    # Dues-reminder dedupe: one row per (user, dues period end, stage).
+    # Pay → membership_expires_at moves → new keys → next cycle's reminders fire.
+    await db.dues_reminders_sent.create_index(
+        [("user_id", 1), ("expires_at", 1), ("stage", 1)], unique=True
+    )
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -2277,6 +2282,7 @@ async def startup():
     await seed_anniversary_subevents()
     await seed_default_photo_albums()
     await seed_builtin_automated_emails()
+    await seed_builtin_dues_reminders()
     await _ensure_site_settings()
     # Start background tasks
     asyncio.create_task(_chat_digest_loop())
@@ -5442,6 +5448,7 @@ def _automated_email_out(d: dict) -> dict:
         "cron_expression": d.get("cron_expression", "0 9 * * 1"),
         "is_active": bool(d.get("is_active", True)),
         "is_builtin": bool(d.get("is_builtin", False)),
+        "kind": d.get("kind", "broadcast"),
         "audience": d.get("audience", {"type": "all", "ids": []}),
         "sections": d.get("sections", {}),
         "last_run_at": d.get("last_run_at"),
@@ -5497,16 +5504,25 @@ async def update_automated_email(eid: str, body: AutomatedEmailIn, _: dict = Dep
     if not _croniter.is_valid(body.cron_expression):
         raise HTTPException(status_code=400, detail="Invalid cron expression.")
     next_run = _next_cron_run(body.cron_expression)
-    sets = {
-        "name": body.name.strip(),
-        "subject": body.subject.strip(),
-        "body_html": body.body_html,
-        "cron_expression": body.cron_expression,
-        "is_active": body.is_active,
-        "audience": body.audience.model_dump(),
-        "sections": body.sections or {},
-        "next_run_at": iso(next_run) if next_run else None,
-    }
+    # For system-managed campaigns (e.g. dues reminders), only allow the active
+    # toggle + cron expression to change. Everything else is driven by code.
+    if (e.get("kind") or "broadcast") == "dues_reminders":
+        sets = {
+            "is_active": body.is_active,
+            "cron_expression": body.cron_expression,
+            "next_run_at": iso(next_run) if next_run else None,
+        }
+    else:
+        sets = {
+            "name": body.name.strip(),
+            "subject": body.subject.strip(),
+            "body_html": body.body_html,
+            "cron_expression": body.cron_expression,
+            "is_active": body.is_active,
+            "audience": body.audience.model_dump(),
+            "sections": body.sections or {},
+            "next_run_at": iso(next_run) if next_run else None,
+        }
     await db.automated_emails.update_one({"id": eid}, {"$set": sets})
     fresh = await db.automated_emails.find_one({"id": eid}, {"_id": 0})
     return _automated_email_out(fresh)
@@ -5541,10 +5557,29 @@ async def run_automated_email_now(eid: str, admin: dict = Depends(admin_tab_dep(
 
 @api.post("/automated-emails/{eid}/preview")
 async def preview_automated_email(eid: str, admin: dict = Depends(admin_tab_dep("email"))):
-    """Render the email body for the calling admin (uses their merge data)."""
+    """Render the email body for the calling admin (uses their merge data).
+    For dues-reminder campaigns, returns all four stage templates stacked so
+    admins can review the wording for each cadence."""
     e = await db.automated_emails.find_one({"id": eid})
     if not e:
         raise HTTPException(status_code=404, detail="Automated email not found")
+    if (e.get("kind") or "broadcast") == "dues_reminders":
+        # Use a realistic preview date (today + 30) so the placeholder reads naturally.
+        preview_exp = iso(now_utc() + timedelta(days=30))
+        sample_name = admin.get("name") or "Member"
+        parts = []
+        for stage_def in DUES_REMINDER_STAGES:
+            subj, body = _dues_reminder_email_html(sample_name, stage_def["stage"], preview_exp)
+            parts.append(
+                f'<div style="background:#fff;border-bottom:6px solid #f0ebe1;padding:18px 22px;'
+                f'font-family:-apple-system,sans-serif">'
+                f'<div style="font-size:10px;text-transform:uppercase;letter-spacing:.18em;color:#C8102E;font-weight:800">'
+                f'Stage · {stage_def["label"]}</div>'
+                f'<div style="font-size:13px;color:#666;margin-top:4px"><strong>Subject:</strong> {subj}</div>'
+                f'</div>{body}'
+            )
+        return {"subject": "Annual Dues Reminders — preview of all four stages",
+                "body_html": "".join(parts)}
     rendered = await _render_automated_body(e, admin)
     subject = _render_subject(e["subject"], admin)
     return {"subject": subject, "body_html": rendered}
@@ -5657,7 +5692,11 @@ async def _render_automated_body(campaign: dict, user: dict) -> str:
 
 
 async def _send_automated_email(campaign: dict) -> int:
-    """Resolve audience, render per-recipient HTML, send via Resend. Returns count sent."""
+    """Resolve audience, render per-recipient HTML, send via Resend. Returns count sent.
+    Dispatches to the dues-reminder handler for system-managed campaigns where
+    the recipient set is driven by each member's `membership_expires_at`."""
+    if (campaign.get("kind") or "broadcast") == "dues_reminders":
+        return await _send_dues_reminders(campaign)
     if not RESEND_API_KEY:
         logger.info(f"Automated email '{campaign.get('name')}' skipped — no RESEND_API_KEY")
         return 0
@@ -5680,6 +5719,154 @@ async def _send_automated_email(campaign: dict) -> int:
         except Exception as e:
             logger.warning(f"Automated email send failed to {email}: {e}")
     return sent
+
+
+# ---------- Dues-reminder cadence (30d / 15d / 5d before, +1d grace) ----------
+# Each stage is dispatched once per dues period (keyed off the member's current
+# `membership_expires_at`). When the member pays, expires_at moves forward →
+# the previous stage rows no longer match the new expiration → the new cycle's
+# reminders fire when the calendar reaches the new dates. Already-sent stages
+# for the OLD expiration stay deduped.
+DUES_REMINDER_STAGES = [
+    {"offset_days": 30,  "stage": "before_30", "label": "30 days"},
+    {"offset_days": 15,  "stage": "before_15", "label": "15 days"},
+    {"offset_days": 5,   "stage": "before_5",  "label": "5 days"},
+    {"offset_days": -1,  "stage": "grace_1",   "label": "Grace period"},
+]
+DUES_GRACE_DAYS = 15
+DUES_REACTIVATION_FEE = 75.00
+
+
+def _dues_reminder_email_html(member_name: str, stage: str, expires_iso: str) -> tuple[str, str]:
+    """Return (subject, body_html) for a single stage. Templates are baked in
+    so admins don't need to maintain four bodies in the editor."""
+    first_name = (member_name or "Member").split(" ")[0]
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    exp_pretty = (expires_iso or "")[:10]
+    contact_line = (
+        '<p style="font-size:13px;color:#444;margin:14px 0 0">Questions about your renewal? '
+        'Reply to this email or contact the National office at '
+        '<a href="mailto:info@alphaomegaphi.org" style="color:#C8102E;font-weight:600">info@alphaomegaphi.org</a>.</p>'
+    )
+    pay_btn = (
+        f'<a href="{frontend}/profile" '
+        'style="display:inline-block;background:#C8102E;color:#fff;border-radius:999px;'
+        'padding:12px 22px;text-decoration:none;font-weight:700;font-size:14px;margin-top:14px">'
+        'Pay my annual dues →</a>'
+    )
+    if stage == "before_30":
+        subject = f"Your AOP dues renew in 30 days, {first_name}"
+        intro = (
+            f"<p style='font-size:15px;line-height:1.55;color:#333'>Hi {first_name}, this is a "
+            "friendly heads-up that your Alpha Omega Phi annual dues are due in "
+            f"<strong>30 days</strong> (on <strong>{exp_pretty}</strong>). Paying early keeps "
+            "your access uninterrupted and helps us plan the year's events.</p>"
+        )
+    elif stage == "before_15":
+        subject = f"Reminder: AOP dues due in 15 days, {first_name}"
+        intro = (
+            f"<p style='font-size:15px;line-height:1.55;color:#333'>Hi {first_name}, your annual "
+            f"dues are due in <strong>15 days</strong> (on <strong>{exp_pretty}</strong>). "
+            "Please take a moment to renew so we don't have to interrupt your access.</p>"
+        )
+    elif stage == "before_5":
+        subject = f"⏰ Final notice — AOP dues due in 5 days, {first_name}"
+        intro = (
+            f"<p style='font-size:15px;line-height:1.55;color:#333'>Hi {first_name}, this is your "
+            f"<strong>final reminder</strong>: AOP annual dues are due in <strong>5 days</strong> "
+            f"(on <strong>{exp_pretty}</strong>). Renew now to avoid a lapse in your membership.</p>"
+        )
+    else:  # grace_1
+        subject = f"Your AOP membership has lapsed — {DUES_GRACE_DAYS}-day grace period started"
+        intro = (
+            f"<p style='font-size:15px;line-height:1.55;color:#333'>Hi {first_name}, your AOP "
+            f"annual dues expired yesterday (on <strong>{exp_pretty}</strong>). You're now in a "
+            f"<strong>{DUES_GRACE_DAYS}-day grace period</strong>. If your dues aren't paid by the "
+            "end of this window, your account will be moved to <strong>inactive</strong> status "
+            f"and a <strong>${DUES_REACTIVATION_FEE:,.2f} reactivation fee</strong> will be added "
+            "on top of your annual dues.</p>"
+            "<p style='font-size:14px;line-height:1.55;color:#333;margin-top:12px'>"
+            "<strong>To reactivate after the grace period, you must contact the National office "
+            "directly to discuss your reactivation.</strong></p>"
+        )
+    body = f"""<div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f7f5f0">
+  <h1 style="color:#0A2463;margin:0 0 6px;font-size:24px">Alpha Omega Phi · Annual Dues</h1>
+  <div style="height:3px;background:#C8102E;width:54px;margin-bottom:18px"></div>
+  {intro}
+  <div style="text-align:center">{pay_btn}</div>
+  {contact_line}
+  <p style="font-size:11px;color:#999;margin-top:22px;border-top:1px solid #e7e5e0;padding-top:14px">
+    Alpha Omega Phi Military Fraternity &amp; Sorority, Inc. · 501(c)(3) nonprofit.<br/>
+    This is an automated reminder. Once your dues are paid, the next reminder won't fire until the following cycle.
+  </p>
+</div>"""
+    return subject, body
+
+
+async def _send_dues_reminders(campaign: dict) -> int:
+    """Daily cadence — send each member at most one reminder per stage per dues
+    cycle. Stages: 30d / 15d / 5d before expiration + 1d grace notice."""
+    if not RESEND_API_KEY:
+        logger.info(f"Dues reminders '{campaign.get('name')}' skipped — no RESEND_API_KEY")
+        return 0
+    today = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+    total_sent = 0
+    for stage_def in DUES_REMINDER_STAGES:
+        offset = stage_def["offset_days"]
+        stage = stage_def["stage"]
+        # Target ISO date for the membership_expires_at field: today + offset.
+        target_day = today + timedelta(days=offset)
+        day_start = iso(target_day)
+        day_end = iso(target_day + timedelta(days=1))
+        # Pull active members whose expiration lands on the target day.
+        cursor = db.users.find(
+            {
+                "membership_expires_at": {"$gte": day_start, "$lt": day_end},
+                "status": {"$ne": "inactive"},
+                "is_lifetime_member": {"$ne": True},
+                "email": {"$exists": True, "$ne": ""},
+            },
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "membership_expires_at": 1},
+        )
+        async for u in cursor:
+            email = (u.get("email") or "").strip()
+            if not email:
+                continue
+            expires = u.get("membership_expires_at") or ""
+            # Dedupe: one (user_id, expires_at, stage) row max via the unique index.
+            already = await db.dues_reminders_sent.find_one(
+                {"user_id": u["id"], "expires_at": expires, "stage": stage}, {"_id": 1}
+            )
+            if already:
+                continue
+            try:
+                subject, body_html = _dues_reminder_email_html(u.get("name", ""), stage, expires)
+                await asyncio.to_thread(resend_sdk.Emails.send, {
+                    "from": RESEND_FROM,
+                    "to": [email],
+                    "subject": subject,
+                    "html": body_html,
+                    "tags": [
+                        {"name": "type", "value": "dues_reminder"},
+                        {"name": "stage", "value": stage},
+                        {"name": "campaign_id", "value": campaign["id"]},
+                    ],
+                })
+                await db.dues_reminders_sent.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": u["id"],
+                    "user_name": u.get("name", ""),
+                    "user_email": email,
+                    "expires_at": expires,
+                    "stage": stage,
+                    "sent_at": iso(now_utc()),
+                })
+                total_sent += 1
+                logger.info(f"Dues reminder '{stage}' sent to {email} (exp {expires[:10]})")
+            except Exception as e:
+                # Could be a duplicate-key from the unique index → benign.
+                logger.warning(f"Dues reminder {stage} failed/skipped for {email}: {e}")
+    return total_sent
 
 
 async def _automated_email_loop():
@@ -5737,6 +5924,36 @@ async def seed_builtin_automated_emails():
     }
     await db.automated_emails.insert_one(doc)
     logger.info("Seeded built-in Weekly Digest campaign")
+
+
+async def seed_builtin_dues_reminders():
+    """Insert the built-in daily Dues Reminders campaign if missing.
+    Runs daily at 9am UTC. Body editor is hidden in the UI — per-stage
+    templates are baked into `_dues_reminder_email_html`."""
+    existing = await db.automated_emails.find_one({"id": "builtin_dues_reminders"})
+    if existing:
+        return
+    next_run = _next_cron_run("0 9 * * *")
+    doc = {
+        "id": "builtin_dues_reminders",
+        "name": "Annual Dues Reminders",
+        "subject": "Your AOP annual dues reminder",
+        "body_html": "",  # not used — per-stage templates live in _dues_reminder_email_html
+        "cron_expression": "0 9 * * *",
+        "is_active": True,
+        "is_builtin": True,
+        "kind": "dues_reminders",
+        "audience": {"type": "all", "ids": []},  # ignored — recipients are computed from expiration date
+        "sections": {},
+        "last_run_at": None,
+        "next_run_at": iso(next_run) if next_run else None,
+        "last_sent_count": 0,
+        "created_by": None,
+        "created_by_name": "System",
+        "created_at": iso(now_utc()),
+    }
+    await db.automated_emails.insert_one(doc)
+    logger.info("Seeded built-in Annual Dues Reminders campaign")
 
 
 # ---------- Register extracted route modules (must come before include_router) ----------

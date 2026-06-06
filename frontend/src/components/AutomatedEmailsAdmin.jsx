@@ -189,6 +189,8 @@ function CampaignEditor({ editing, onClose, onSaved }) {
         : form.audience.type === "status" ? [{ id: "active", name: "Active" }, { id: "inactive", name: "Inactive" }, { id: "pending", name: "Pending" }]
         : [];
 
+    const isDuesReminders = form.kind === "dues_reminders";
+
     return (
         <Dialog open={!!editing} onOpenChange={(o) => !o && onClose()}>
             <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto" data-testid="automated-email-editor">
@@ -196,6 +198,24 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                     <DialogTitle className="font-heading text-2xl">{form._new ? "New automated campaign" : `Edit "${form.name}"`}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-5 mt-2">
+                    {isDuesReminders && (
+                        <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 px-4 py-3 text-sm leading-relaxed" data-testid="dues-reminder-info">
+                            <div className="font-bold text-primary mb-1.5 flex items-center gap-2">
+                                <Clock className="h-4 w-4" /> System-managed campaign
+                            </div>
+                            <p className="text-foreground/80">
+                                This daily job emails every active member at four cadence points based on their <code className="font-mono text-xs bg-white/60 px-1.5 py-0.5 rounded">membership_expires_at</code>:
+                            </p>
+                            <ul className="list-disc ml-6 mt-1.5 space-y-0.5 text-foreground/80">
+                                <li><strong>30 days</strong> before expiration — friendly heads-up</li>
+                                <li><strong>15 days</strong> before — reminder</li>
+                                <li><strong>5 days</strong> before — final notice</li>
+                                <li><strong>1 day after</strong> — 15-day grace period + $75.00 reactivation-fee warning (members must contact the National office to reactivate)</li>
+                            </ul>
+                            <p className="text-foreground/80 mt-1.5">Once a member pays (extending their expiration), the cycle resets — reminders for the previous cycle stop automatically.</p>
+                            <p className="text-foreground/80 mt-1.5 text-xs">Per-stage email templates are managed in code. Use <strong>Preview</strong> to see all four. You can only toggle this campaign on/off or change the cron schedule.</p>
+                        </div>
+                    )}
                     <div className="grid sm:grid-cols-2 gap-4">
                         <div>
                             <Label>Campaign name</Label>
@@ -219,8 +239,10 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                     </div>
                     <div>
                         <Label>Subject line</Label>
-                        <Input value={form.subject || ""} onChange={(e) => set("subject", e.target.value)} className="rounded-xl mt-1.5" placeholder="Your AOP weekly digest — {{member_name}}" data-testid="auto-subject-input" />
+                        <Input value={form.subject || ""} onChange={(e) => set("subject", e.target.value)} className="rounded-xl mt-1.5" placeholder="Your AOP weekly digest — {{member_name}}" data-testid="auto-subject-input" disabled={isDuesReminders} />
+                        {isDuesReminders && <p className="text-xs text-muted-foreground mt-1">Each stage has its own subject line — see Preview.</p>}
                     </div>
+                    {!isDuesReminders && (
                     <div>
                         <div className="flex items-center justify-between mb-1.5">
                             <Label>Body (HTML)</Label>
@@ -241,7 +263,9 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                             data-testid="auto-body-textarea"
                         />
                     </div>
+                    )}
 
+                    {!isDuesReminders && (
                     <div>
                         <Label>Recipient audience</Label>
                         <div className="grid sm:grid-cols-2 gap-3 mt-1.5">
@@ -266,7 +290,9 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                             )}
                         </div>
                     </div>
+                    )}
 
+                    {!isDuesReminders && (
                     <div>
                         <Label>Sections to include</Label>
                         <p className="text-xs text-muted-foreground">Each tag only renders if its section is enabled.</p>
@@ -279,6 +305,7 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                             ))}
                         </div>
                     </div>
+                    )}
 
                     <div className="flex items-center gap-3">
                         <Switch checked={!!form.is_active} onCheckedChange={(v) => set("is_active", v)} id="auto-active-switch" />
