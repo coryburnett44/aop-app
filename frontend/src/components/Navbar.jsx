@@ -51,8 +51,8 @@ export default function Navbar() {
             className="sticky top-0 z-40 backdrop-blur-xl bg-[hsl(40_33%_98%_/_0.75)] border-b border-orange-900/10"
             data-testid="main-navbar"
         >
-            <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between">
-                <Link to="/" className="flex items-center gap-2 group" data-testid="nav-logo">
+            <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between gap-4">
+                <Link to="/" className="flex items-center gap-2 group shrink-0" data-testid="nav-logo">
                     <img
                         src="https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png"
                         alt="Alpha Omega Phi"
@@ -63,7 +63,7 @@ export default function Navbar() {
                     </span>
                 </Link>
 
-                <nav className="hidden md:flex items-center gap-1">
+                <nav className="hidden xl:flex items-center gap-1">
                     {user && links.map((l) => (
                         <NavLink
                             key={l.to}
@@ -149,7 +149,7 @@ export default function Navbar() {
                         </Button>
                     )}
                     <button
-                        className={`md:hidden rounded-full p-2 hover:bg-muted ${!user ? "hidden" : ""}`}
+                        className={`xl:hidden rounded-full p-2 hover:bg-muted ${!user ? "hidden" : ""}`}
                         onClick={() => setOpen(!open)}
                         data-testid="mobile-menu-btn"
                         aria-label="Menu"
@@ -159,7 +159,7 @@ export default function Navbar() {
                 </div>
             </div>
             {open && user && (
-                <div className="md:hidden border-t border-border bg-background/95 backdrop-blur-xl" data-testid="mobile-menu">
+                <div className="xl:hidden border-t border-border bg-background/95 backdrop-blur-xl" data-testid="mobile-menu">
                     <div className="px-6 py-3 flex flex-col gap-1">
                         {links.map((l) => (
                             <NavLink
