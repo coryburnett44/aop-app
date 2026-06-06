@@ -17,9 +17,12 @@ export default function Footer() {
             <div className="max-w-7xl mx-auto px-6 lg:px-10 py-14 grid md:grid-cols-4 gap-10">
                 <div className="md:col-span-2">
                     <div className="flex items-center gap-3 mb-4">
-                        <div className="w-11 h-11 rounded-2xl grid place-items-center font-heading font-black text-lg" style={{ backgroundColor: "#C8102E" }}>
-                            A
-                        </div>
+                        <img
+                            src="https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/23glwk5a_Trendsetters%20logo.png"
+                            alt="Alpha Omega Phi Trendsetters crest"
+                            className="w-16 h-16 object-contain shrink-0"
+                            data-testid="footer-crest"
+                        />
                         <div>
                             <div className="font-heading font-bold text-xl leading-tight">Alpha Omega Phi</div>
                             <div className="text-xs opacity-75">Military Fraternity &amp; Sorority, Inc.</div>
