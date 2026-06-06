@@ -702,6 +702,75 @@ def register(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    # ---------- /reports/dues-reminders ----------
+    @api.get("/reports/dues-reminders")
+    async def report_dues_reminders(
+        stage: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        _: dict = Depends(admin_tab_dep("reports")),
+    ):
+        """Audit log of dues-reminder emails the system sent.
+        Returns one row per (member, dues period, stage) — i.e. every email send.
+        Filters: stage (before_30 / before_15 / before_5 / grace_1), and ISO start/end
+        on the `sent_at` field. Sorted newest-first."""
+        q: dict = {}
+        if stage:
+            q["stage"] = stage
+        if start or end:
+            q["sent_at"] = {}
+            if start:
+                q["sent_at"]["$gte"] = start
+            if end:
+                q["sent_at"]["$lte"] = end
+        cursor = db.dues_reminders_sent.find(q, {"_id": 0}).sort("sent_at", -1).limit(2000)
+        rows = await cursor.to_list(2000)
+        # Enrich each row with the current member status so the report can flag
+        # accounts that have since paid (their `membership_expires_at` will no
+        # longer match the row's `expires_at`).
+        member_ids = list({r["user_id"] for r in rows})
+        users = {}
+        if member_ids:
+            async for u in db.users.find(
+                {"id": {"$in": member_ids}},
+                {"_id": 0, "id": 1, "name": 1, "email": 1, "membership_expires_at": 1, "status": 1, "chapter_id": 1, "is_lifetime_member": 1},
+            ):
+                users[u["id"]] = u
+        for r in rows:
+            u = users.get(r["user_id"]) or {}
+            current_exp = u.get("membership_expires_at") or ""
+            r["current_expires_at"] = current_exp
+            r["current_status"] = u.get("status") or ""
+            r["chapter_id"] = u.get("chapter_id") or ""
+            r["is_lifetime_member"] = bool(u.get("is_lifetime_member"))
+            # If the member's current expiration is LATER than this row's
+            # `expires_at`, they paid after the email went out (the reminder
+            # cycle stopped). Surface this for the audit trail.
+            r["paid_since"] = bool(current_exp and r.get("expires_at") and current_exp > r["expires_at"])
+        return rows
+
+    # ---------- /reports/dues-reminders/summary ----------
+    @api.get("/reports/dues-reminders/summary")
+    async def report_dues_reminders_summary(
+        _: dict = Depends(admin_tab_dep("reports")),
+    ):
+        """Quick per-stage counts (all-time + last 30 days) so the Reports tab
+        can render a compact strip of stat tiles above the audit table."""
+        all_time = {}
+        last_30 = {}
+        thirty_days_ago = iso(now_utc().replace(hour=0, minute=0, second=0, microsecond=0))
+        # Use a simple aggregation; collection is small (<10k rows expected).
+        pipeline_all = [{"$group": {"_id": "$stage", "n": {"$sum": 1}}}]
+        async for row in db.dues_reminders_sent.aggregate(pipeline_all):
+            all_time[row["_id"]] = row["n"]
+        pipeline_30 = [
+            {"$match": {"sent_at": {"$gte": thirty_days_ago}}},
+            {"$group": {"_id": "$stage", "n": {"$sum": 1}}},
+        ]
+        async for row in db.dues_reminders_sent.aggregate(pipeline_30):
+            last_30[row["_id"]] = row["n"]
+        return {"all_time": all_time, "last_30_days": last_30}
+
     # Expose helpers on register so server.py /me/personnel-brief* can delegate.
     register.personnel_brief_data = personnel_brief_data
     register.personnel_brief_pdf_response = personnel_brief_pdf_response

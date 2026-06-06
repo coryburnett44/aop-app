@@ -127,6 +127,7 @@ function CampaignEditor({ editing, onClose, onSaved }) {
     const [tags, setTags] = useState([]);
     const [busy, setBusy] = useState(false);
     const [previewHtml, setPreviewHtml] = useState("");
+    const [duesDefaults, setDuesDefaults] = useState(null); // {stages, defaults, placeholders}
 
     useEffect(() => {
         if (!editing) { setForm(null); return; }
@@ -136,14 +137,23 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                 cron_expression: "0 9 * * 1", is_active: true,
                 audience: { type: "all", ids: [] },
                 sections: { events: true, photos: true, documents: true, new_members: true, my_rsvps: true, pending_hours: true, birthday_greeting: true },
+                stage_templates: {},
             });
         } else {
-            setForm({ ...editing });
+            setForm({ ...editing, stage_templates: editing.stage_templates || {} });
         }
         setPreviewHtml("");
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
         api.get("/tiers").then(({ data }) => setTiers(data)).catch(() => {});
         api.get("/automated-emails/merge-tags").then(({ data }) => setTags(data.tags || [])).catch(() => {});
+        // Only fetch defaults for dues_reminders kind — saves a roundtrip otherwise.
+        if (editing?.kind === "dues_reminders") {
+            api.get("/automated-emails/dues-reminder-defaults")
+                .then(({ data }) => setDuesDefaults(data))
+                .catch(() => {});
+        } else {
+            setDuesDefaults(null);
+        }
     }, [editing]);
 
     if (!form) return null;
@@ -158,15 +168,38 @@ function CampaignEditor({ editing, onClose, onSaved }) {
     }
     function toggleSection(k) { setForm((p) => ({ ...p, sections: { ...(p.sections || {}), [k]: !(p.sections?.[k] ?? true) } })); }
     function insertTag(tag) { setForm((p) => ({ ...p, body_html: (p.body_html || "") + "\n" + tag })); }
+    function setStage(stageId, field, value) {
+        setForm((p) => ({
+            ...p,
+            stage_templates: {
+                ...(p.stage_templates || {}),
+                [stageId]: { ...((p.stage_templates || {})[stageId] || {}), [field]: value },
+            },
+        }));
+    }
+    function resetStage(stageId) {
+        // Drop the override → the backend falls back to the baked default.
+        setForm((p) => {
+            const next = { ...(p.stage_templates || {}) };
+            delete next[stageId];
+            return { ...p, stage_templates: next };
+        });
+        toast.success("Reset to default");
+    }
 
     async function save() {
-        if (!form.name?.trim() || !form.subject?.trim()) { toast.error("Name and subject are required"); return; }
+        const isDues = form.kind === "dues_reminders";
+        if (!isDues && (!form.name?.trim() || !form.subject?.trim())) { toast.error("Name and subject are required"); return; }
         setBusy(true);
         try {
             const payload = {
-                name: form.name, subject: form.subject, body_html: form.body_html || "",
+                name: form.name || "Annual Dues Reminders",
+                subject: form.subject || "Annual dues reminder",
+                body_html: form.body_html || "",
                 cron_expression: form.cron_expression, is_active: !!form.is_active,
-                audience: form.audience, sections: form.sections,
+                audience: form.audience || { type: "all", ids: [] },
+                sections: form.sections || {},
+                stage_templates: form.stage_templates || {},
             };
             if (form._new) await api.post("/automated-emails", payload);
             else await api.put(`/automated-emails/${form.id}`, payload);
@@ -213,7 +246,58 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                                 <li><strong>1 day after</strong> — 15-day grace period + $75.00 reactivation-fee warning (members must contact the National office to reactivate)</li>
                             </ul>
                             <p className="text-foreground/80 mt-1.5">Once a member pays (extending their expiration), the cycle resets — reminders for the previous cycle stop automatically.</p>
-                            <p className="text-foreground/80 mt-1.5 text-xs">Per-stage email templates are managed in code. Use <strong>Preview</strong> to see all four. You can only toggle this campaign on/off or change the cron schedule.</p>
+                            <p className="text-foreground/80 mt-1.5 text-xs">Edit the subject + body for each stage below. Leave a field blank or click <strong>Reset</strong> to fall back to the default wording.</p>
+                        </div>
+                    )}
+                    {isDuesReminders && duesDefaults && (
+                        <div className="space-y-4" data-testid="dues-stage-editors">
+                            <div className="flex flex-wrap gap-1.5">
+                                <span className="text-xs text-muted-foreground mr-1">Available placeholders:</span>
+                                {(duesDefaults.placeholders || []).map((p) => (
+                                    <code key={p.tag} title={p.desc} className="text-[10px] bg-accent/40 text-accent-foreground rounded-full px-2 py-0.5 font-mono">{p.tag}</code>
+                                ))}
+                            </div>
+                            {(duesDefaults.stages || []).map((sd) => {
+                                const stageId = sd.stage;
+                                const override = (form.stage_templates || {})[stageId] || {};
+                                const def = (duesDefaults.defaults || {})[stageId] || { subject: "", body_html: "" };
+                                const isCustom = !!(override.subject || override.body_html);
+                                return (
+                                    <div key={stageId} className="bg-muted/30 border border-border rounded-2xl p-4" data-testid={`dues-stage-${stageId}`}>
+                                        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] uppercase tracking-widest font-bold bg-primary/15 text-primary rounded-full px-2 py-0.5">{sd.label}</span>
+                                                {isCustom && <span className="text-[10px] uppercase tracking-widest font-bold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">Customized</span>}
+                                                <span className="text-xs text-muted-foreground font-mono">{stageId}</span>
+                                            </div>
+                                            {isCustom && (
+                                                <Button type="button" variant="ghost" size="sm" onClick={() => resetStage(stageId)} className="text-xs rounded-full" data-testid={`dues-stage-reset-${stageId}`}>
+                                                    Reset to default
+                                                </Button>
+                                            )}
+                                        </div>
+                                        <div className="mb-2">
+                                            <Label className="text-xs">Subject</Label>
+                                            <Input
+                                                value={override.subject ?? def.subject}
+                                                onChange={(e) => setStage(stageId, "subject", e.target.value)}
+                                                className="rounded-xl mt-1 text-sm"
+                                                data-testid={`dues-stage-subject-${stageId}`}
+                                            />
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs">Body HTML</Label>
+                                            <Textarea
+                                                rows={5}
+                                                value={override.body_html ?? def.body_html}
+                                                onChange={(e) => setStage(stageId, "body_html", e.target.value)}
+                                                className="rounded-xl mt-1 font-mono text-xs"
+                                                data-testid={`dues-stage-body-${stageId}`}
+                                            />
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                     <div className="grid sm:grid-cols-2 gap-4">

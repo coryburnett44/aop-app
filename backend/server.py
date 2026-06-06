@@ -5451,6 +5451,7 @@ def _automated_email_out(d: dict) -> dict:
         "kind": d.get("kind", "broadcast"),
         "audience": d.get("audience", {"type": "all", "ids": []}),
         "sections": d.get("sections", {}),
+        "stage_templates": d.get("stage_templates", {}),
         "last_run_at": d.get("last_run_at"),
         "next_run_at": d.get("next_run_at"),
         "last_sent_count": d.get("last_sent_count", 0),
@@ -5468,6 +5469,25 @@ async def list_automated_emails(_: dict = Depends(admin_tab_dep("email"))):
 @api.get("/automated-emails/merge-tags")
 async def list_merge_tags(_: dict = Depends(admin_tab_dep("email"))):
     return {"tags": MERGE_TAGS, "sections": AUTOMATED_SECTIONS}
+
+
+@api.get("/automated-emails/dues-reminder-defaults")
+async def get_dues_reminder_defaults(_: dict = Depends(admin_tab_dep("email"))):
+    """Default per-stage templates + the stage cadence list — the frontend uses
+    this to pre-fill the dues editor when an admin first opens it."""
+    return {
+        "stages": DUES_REMINDER_STAGES,
+        "defaults": DUES_REMINDER_DEFAULT_TEMPLATES,
+        "placeholders": [
+            {"tag": "{{first_name}}", "desc": "Recipient's first name"},
+            {"tag": "{{member_name}}", "desc": "Alias of first_name"},
+            {"tag": "{{expires_at}}", "desc": "Member's dues expiration date (YYYY-MM-DD)"},
+            {"tag": "{{grace_days}}", "desc": f"Grace-period length ({DUES_GRACE_DAYS} days)"},
+            {"tag": "{{reactivation_fee}}", "desc": f"Reactivation fee (${DUES_REACTIVATION_FEE:,.2f})"},
+            {"tag": "{{pay_link}}", "desc": "Profile URL where members can pay"},
+            {"tag": "{{contact_email}}", "desc": "National office contact email"},
+        ],
+    }
 
 
 @api.post("/automated-emails")
@@ -5505,12 +5525,14 @@ async def update_automated_email(eid: str, body: AutomatedEmailIn, _: dict = Dep
         raise HTTPException(status_code=400, detail="Invalid cron expression.")
     next_run = _next_cron_run(body.cron_expression)
     # For system-managed campaigns (e.g. dues reminders), only allow the active
-    # toggle + cron expression to change. Everything else is driven by code.
+    # toggle, cron expression, and per-stage templates to change. The rest is
+    # driven by code.
     if (e.get("kind") or "broadcast") == "dues_reminders":
         sets = {
             "is_active": body.is_active,
             "cron_expression": body.cron_expression,
             "next_run_at": iso(next_run) if next_run else None,
+            "stage_templates": body.stage_templates or {},
         }
     else:
         sets = {
@@ -5567,9 +5589,12 @@ async def preview_automated_email(eid: str, admin: dict = Depends(admin_tab_dep(
         # Use a realistic preview date (today + 30) so the placeholder reads naturally.
         preview_exp = iso(now_utc() + timedelta(days=30))
         sample_name = admin.get("name") or "Member"
+        stage_templates = e.get("stage_templates") or {}
         parts = []
         for stage_def in DUES_REMINDER_STAGES:
-            subj, body = _dues_reminder_email_html(sample_name, stage_def["stage"], preview_exp)
+            subj, body = _dues_reminder_email_html(
+                sample_name, stage_def["stage"], preview_exp, stage_templates=stage_templates,
+            )
             parts.append(
                 f'<div style="background:#fff;border-bottom:6px solid #f0ebe1;padding:18px 22px;'
                 f'font-family:-apple-system,sans-serif">'
@@ -5735,18 +5760,96 @@ DUES_REMINDER_STAGES = [
 ]
 DUES_GRACE_DAYS = 15
 DUES_REACTIVATION_FEE = 75.00
+DUES_CONTACT_EMAIL = "info@alphaomegaphi.org"
+
+# Default per-stage subject + body. Admins can override these on a per-stage
+# basis via the campaign's `stage_templates` field. The frontend dues editor
+# pre-fills these as the editable starting point.
+DUES_REMINDER_DEFAULT_TEMPLATES = {
+    "before_30": {
+        "subject": "Your AOP dues renew in 30 days, {{first_name}}",
+        "body_html": (
+            "<p style=\"font-size:15px;line-height:1.55;color:#333\">Hi {{first_name}}, this is a "
+            "friendly heads-up that your Alpha Omega Phi annual dues are due in "
+            "<strong>30 days</strong> (on <strong>{{expires_at}}</strong>). Paying early keeps "
+            "your access uninterrupted and helps us plan the year's events.</p>"
+        ),
+    },
+    "before_15": {
+        "subject": "Reminder: AOP dues due in 15 days, {{first_name}}",
+        "body_html": (
+            "<p style=\"font-size:15px;line-height:1.55;color:#333\">Hi {{first_name}}, your annual "
+            "dues are due in <strong>15 days</strong> (on <strong>{{expires_at}}</strong>). "
+            "Please take a moment to renew so we don't have to interrupt your access.</p>"
+        ),
+    },
+    "before_5": {
+        "subject": "⏰ Final notice — AOP dues due in 5 days, {{first_name}}",
+        "body_html": (
+            "<p style=\"font-size:15px;line-height:1.55;color:#333\">Hi {{first_name}}, this is your "
+            "<strong>final reminder</strong>: AOP annual dues are due in <strong>5 days</strong> "
+            "(on <strong>{{expires_at}}</strong>). Renew now to avoid a lapse in your membership.</p>"
+        ),
+    },
+    "grace_1": {
+        "subject": "Your AOP membership has lapsed — {{grace_days}}-day grace period started",
+        "body_html": (
+            "<p style=\"font-size:15px;line-height:1.55;color:#333\">Hi {{first_name}}, your AOP "
+            "annual dues expired yesterday (on <strong>{{expires_at}}</strong>). You're now in a "
+            "<strong>{{grace_days}}-day grace period</strong>. If your dues aren't paid by the "
+            "end of this window, your account will be moved to <strong>inactive</strong> status "
+            "and a <strong>${{reactivation_fee}} reactivation fee</strong> will be added on top "
+            "of your annual dues.</p>"
+            "<p style=\"font-size:14px;line-height:1.55;color:#333;margin-top:12px\">"
+            "<strong>To reactivate after the grace period, you must contact the National office "
+            "directly to discuss your reactivation.</strong></p>"
+        ),
+    },
+}
 
 
-def _dues_reminder_email_html(member_name: str, stage: str, expires_iso: str) -> tuple[str, str]:
-    """Return (subject, body_html) for a single stage. Templates are baked in
-    so admins don't need to maintain four bodies in the editor."""
+def _apply_dues_placeholders(text: str, first_name: str, expires_iso: str) -> str:
+    """Replace the small set of merge placeholders supported in dues templates."""
+    exp_pretty = (expires_iso or "")[:10]
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    pay_link = f"{frontend}/profile"
+    repl = {
+        "{{first_name}}": first_name or "Member",
+        "{{member_name}}": first_name or "Member",
+        "{{expires_at}}": exp_pretty,
+        "{{grace_days}}": str(DUES_GRACE_DAYS),
+        "{{reactivation_fee}}": f"{DUES_REACTIVATION_FEE:,.2f}",
+        "{{pay_link}}": pay_link,
+        "{{contact_email}}": DUES_CONTACT_EMAIL,
+    }
+    out = text or ""
+    for k, v in repl.items():
+        out = out.replace(k, v)
+    return out
+
+
+def _dues_reminder_email_html(
+    member_name: str,
+    stage: str,
+    expires_iso: str,
+    stage_templates: Optional[dict] = None,
+) -> tuple[str, str]:
+    """Return (subject, body_html) for a single stage. If `stage_templates`
+    has an override for `stage`, use it; otherwise fall back to the baked
+    defaults. The full HTML email wraps the per-stage intro with the AOP
+    header, pay button, and footer."""
     first_name = (member_name or "Member").split(" ")[0]
     frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-    exp_pretty = (expires_iso or "")[:10]
+    overrides = (stage_templates or {}).get(stage) or {}
+    default = DUES_REMINDER_DEFAULT_TEMPLATES.get(stage) or DUES_REMINDER_DEFAULT_TEMPLATES["before_30"]
+    raw_subject = (overrides.get("subject") or default["subject"]).strip()
+    raw_body = (overrides.get("body_html") or default["body_html"]).strip()
+    subject = _apply_dues_placeholders(raw_subject, first_name, expires_iso)
+    intro = _apply_dues_placeholders(raw_body, first_name, expires_iso)
     contact_line = (
         '<p style="font-size:13px;color:#444;margin:14px 0 0">Questions about your renewal? '
         'Reply to this email or contact the National office at '
-        '<a href="mailto:info@alphaomegaphi.org" style="color:#C8102E;font-weight:600">info@alphaomegaphi.org</a>.</p>'
+        f'<a href="mailto:{DUES_CONTACT_EMAIL}" style="color:#C8102E;font-weight:600">{DUES_CONTACT_EMAIL}</a>.</p>'
     )
     pay_btn = (
         f'<a href="{frontend}/profile" '
@@ -5754,41 +5857,6 @@ def _dues_reminder_email_html(member_name: str, stage: str, expires_iso: str) ->
         'padding:12px 22px;text-decoration:none;font-weight:700;font-size:14px;margin-top:14px">'
         'Pay my annual dues →</a>'
     )
-    if stage == "before_30":
-        subject = f"Your AOP dues renew in 30 days, {first_name}"
-        intro = (
-            f"<p style='font-size:15px;line-height:1.55;color:#333'>Hi {first_name}, this is a "
-            "friendly heads-up that your Alpha Omega Phi annual dues are due in "
-            f"<strong>30 days</strong> (on <strong>{exp_pretty}</strong>). Paying early keeps "
-            "your access uninterrupted and helps us plan the year's events.</p>"
-        )
-    elif stage == "before_15":
-        subject = f"Reminder: AOP dues due in 15 days, {first_name}"
-        intro = (
-            f"<p style='font-size:15px;line-height:1.55;color:#333'>Hi {first_name}, your annual "
-            f"dues are due in <strong>15 days</strong> (on <strong>{exp_pretty}</strong>). "
-            "Please take a moment to renew so we don't have to interrupt your access.</p>"
-        )
-    elif stage == "before_5":
-        subject = f"⏰ Final notice — AOP dues due in 5 days, {first_name}"
-        intro = (
-            f"<p style='font-size:15px;line-height:1.55;color:#333'>Hi {first_name}, this is your "
-            f"<strong>final reminder</strong>: AOP annual dues are due in <strong>5 days</strong> "
-            f"(on <strong>{exp_pretty}</strong>). Renew now to avoid a lapse in your membership.</p>"
-        )
-    else:  # grace_1
-        subject = f"Your AOP membership has lapsed — {DUES_GRACE_DAYS}-day grace period started"
-        intro = (
-            f"<p style='font-size:15px;line-height:1.55;color:#333'>Hi {first_name}, your AOP "
-            f"annual dues expired yesterday (on <strong>{exp_pretty}</strong>). You're now in a "
-            f"<strong>{DUES_GRACE_DAYS}-day grace period</strong>. If your dues aren't paid by the "
-            "end of this window, your account will be moved to <strong>inactive</strong> status "
-            f"and a <strong>${DUES_REACTIVATION_FEE:,.2f} reactivation fee</strong> will be added "
-            "on top of your annual dues.</p>"
-            "<p style='font-size:14px;line-height:1.55;color:#333;margin-top:12px'>"
-            "<strong>To reactivate after the grace period, you must contact the National office "
-            "directly to discuss your reactivation.</strong></p>"
-        )
     body = f"""<div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f7f5f0">
   <h1 style="color:#0A2463;margin:0 0 6px;font-size:24px">Alpha Omega Phi · Annual Dues</h1>
   <div style="height:3px;background:#C8102E;width:54px;margin-bottom:18px"></div>
@@ -5810,6 +5878,7 @@ async def _send_dues_reminders(campaign: dict) -> int:
         logger.info(f"Dues reminders '{campaign.get('name')}' skipped — no RESEND_API_KEY")
         return 0
     today = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+    stage_templates = campaign.get("stage_templates") or {}
     total_sent = 0
     for stage_def in DUES_REMINDER_STAGES:
         offset = stage_def["offset_days"]
@@ -5840,7 +5909,9 @@ async def _send_dues_reminders(campaign: dict) -> int:
             if already:
                 continue
             try:
-                subject, body_html = _dues_reminder_email_html(u.get("name", ""), stage, expires)
+                subject, body_html = _dues_reminder_email_html(
+                    u.get("name", ""), stage, expires, stage_templates=stage_templates,
+                )
                 await asyncio.to_thread(resend_sdk.Emails.send, {
                     "from": RESEND_FROM,
                     "to": [email],

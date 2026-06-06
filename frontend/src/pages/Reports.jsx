@@ -37,6 +37,7 @@ export default function Reports() {
                 <TabsTrigger value="hours" className="rounded-full" data-testid="reports-tab-hours">Hours</TabsTrigger>
                 <TabsTrigger value="donations" className="rounded-full" data-testid="reports-tab-donations">Donations</TabsTrigger>
                 <TabsTrigger value="dues" className="rounded-full" data-testid="reports-tab-dues">Dues approvals</TabsTrigger>
+                <TabsTrigger value="dues-reminders" className="rounded-full" data-testid="reports-tab-dues-reminders">Dues reminders</TabsTrigger>
                 <TabsTrigger value="event-tickets" className="rounded-full" data-testid="reports-tab-event-tickets">Event tickets</TabsTrigger>
                 <TabsTrigger value="brief" className="rounded-full" data-testid="reports-tab-brief">Personnel Brief</TabsTrigger>
             </TabsList>
@@ -45,6 +46,7 @@ export default function Reports() {
             <TabsContent value="hours" className="mt-6"><HoursReport /></TabsContent>
             <TabsContent value="donations" className="mt-6"><DonationsReport /></TabsContent>
             <TabsContent value="dues" className="mt-6"><ZeffyDuesApprovals /></TabsContent>
+            <TabsContent value="dues-reminders" className="mt-6"><DuesRemindersReport /></TabsContent>
             <TabsContent value="event-tickets" className="mt-6"><EventTicketApprovals /></TabsContent>
             <TabsContent value="brief" className="mt-6"><PersonnelBriefSection /></TabsContent>
         </Tabs>
@@ -1099,6 +1101,139 @@ function EventTicketApprovals() {
                     })}
                 </div>
             )}
+        </div>
+    );
+}
+
+
+const DUES_STAGE_LABELS = {
+    before_30: "30 days before",
+    before_15: "15 days before",
+    before_5:  "5 days before",
+    grace_1:   "Grace (+1 day)",
+};
+
+function DuesRemindersReport() {
+    const [rows, setRows] = useState([]);
+    const [summary, setSummary] = useState({ all_time: {}, last_30_days: {} });
+    const [filters, setFilters] = useState({ stage: "", start: "", end: "" });
+    const [loading, setLoading] = useState(false);
+
+    async function run() {
+        setLoading(true);
+        try {
+            const params = Object.fromEntries(Object.entries(filters).filter(([_, v]) => v));
+            const [{ data: list }, { data: sum }] = await Promise.all([
+                api.get("/reports/dues-reminders", { params }),
+                api.get("/reports/dues-reminders/summary"),
+            ]);
+            setRows(list);
+            setSummary(sum);
+        } catch (e) {
+            setRows([]);
+        }
+        setLoading(false);
+    }
+    useEffect(() => { run(); }, []); // eslint-disable-line
+
+    function exportCSV() {
+        downloadCSV(`dues-reminders-${new Date().toISOString().slice(0, 10)}.csv`, csvify(rows, [
+            { label: "Sent at", get: (r) => r.sent_at || "" },
+            { label: "Stage", get: (r) => DUES_STAGE_LABELS[r.stage] || r.stage },
+            { label: "Member", get: (r) => r.user_name },
+            { label: "Email", get: (r) => r.user_email },
+            { label: "Reminder cycle expiration", get: (r) => (r.expires_at || "").slice(0, 10) },
+            { label: "Current expiration", get: (r) => (r.current_expires_at || "").slice(0, 10) },
+            { label: "Paid since reminder", get: (r) => (r.paid_since ? "Yes" : "No") },
+            { label: "Current status", get: (r) => r.current_status || "" },
+        ]));
+    }
+
+    const stageTotal = (s) => (summary.all_time?.[s] || 0);
+    const stageRecent = (s) => (summary.last_30_days?.[s] || 0);
+
+    return (
+        <div data-testid="dues-reminders-report">
+            <div className="bg-card rounded-2xl border p-5 mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                    {["before_30", "before_15", "before_5", "grace_1"].map((s) => (
+                        <div key={s} className="bg-muted/30 rounded-xl p-3" data-testid={`dues-stat-${s}`}>
+                            <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">{DUES_STAGE_LABELS[s]}</div>
+                            <div className="text-2xl font-heading font-bold mt-1">{stageTotal(s)}</div>
+                            <div className="text-xs text-muted-foreground">{stageRecent(s)} in last 30d</div>
+                        </div>
+                    ))}
+                </div>
+                <div className="grid sm:grid-cols-4 gap-3 items-end">
+                    <FilterSelect
+                        label="Stage"
+                        value={filters.stage}
+                        onChange={(v) => setFilters({ ...filters, stage: v })}
+                        options={[
+                            { value: "", label: "All stages" },
+                            { value: "before_30", label: DUES_STAGE_LABELS.before_30 },
+                            { value: "before_15", label: DUES_STAGE_LABELS.before_15 },
+                            { value: "before_5",  label: DUES_STAGE_LABELS.before_5 },
+                            { value: "grace_1",   label: DUES_STAGE_LABELS.grace_1 },
+                        ]}
+                        testid="dues-reminders-stage"
+                    />
+                    <div>
+                        <Label className="text-xs">Sent on or after</Label>
+                        <Input type="date" value={filters.start} onChange={(e) => setFilters({ ...filters, start: e.target.value })} className="rounded-xl mt-1.5" data-testid="dues-reminders-start" />
+                    </div>
+                    <div>
+                        <Label className="text-xs">Sent on or before</Label>
+                        <Input type="date" value={filters.end} onChange={(e) => setFilters({ ...filters, end: e.target.value })} className="rounded-xl mt-1.5" data-testid="dues-reminders-end" />
+                    </div>
+                    <div className="flex items-end gap-2">
+                        <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="dues-reminders-run">{loading ? "Loading…" : "Run"}</Button>
+                        <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="dues-reminders-csv"><Download className="h-4 w-4 mr-1.5" />CSV</Button>
+                    </div>
+                </div>
+            </div>
+            <div className="text-sm text-muted-foreground mb-2" data-testid="dues-reminders-count">{rows.length} reminder email{rows.length === 1 ? "" : "s"} matched</div>
+            <div className="bg-card rounded-2xl border overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                            <th className="text-left px-4 py-2.5">Sent</th>
+                            <th className="text-left px-4 py-2.5">Stage</th>
+                            <th className="text-left px-4 py-2.5">Member</th>
+                            <th className="text-left px-4 py-2.5">Email</th>
+                            <th className="text-left px-4 py-2.5">Cycle exp.</th>
+                            <th className="text-left px-4 py-2.5">Paid since</th>
+                            <th className="text-left px-4 py-2.5">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((r) => (
+                            <tr key={r.id} className="border-t border-border" data-testid={`dues-row-${r.id}`}>
+                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                                    {r.sent_at && format(parseISO(r.sent_at), "MMM d, yyyy · h:mm a")}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                    <span className={`text-[10px] uppercase tracking-widest font-bold rounded-full px-2 py-0.5 ${r.stage === "grace_1" ? "bg-red-100 text-red-700" : "bg-primary/15 text-primary"}`}>
+                                        {DUES_STAGE_LABELS[r.stage] || r.stage}
+                                    </span>
+                                </td>
+                                <td className="px-4 py-2.5 font-medium">{r.user_name || "—"}</td>
+                                <td className="px-4 py-2.5 text-muted-foreground">{r.user_email}</td>
+                                <td className="px-4 py-2.5 text-muted-foreground">{(r.expires_at || "").slice(0, 10)}</td>
+                                <td className="px-4 py-2.5">
+                                    {r.paid_since ? (
+                                        <span className="text-[10px] uppercase tracking-widest font-bold bg-green-100 text-green-700 rounded-full px-2 py-0.5">Yes</span>
+                                    ) : <span className="text-xs text-muted-foreground">—</span>}
+                                </td>
+                                <td className="px-4 py-2.5 text-xs uppercase tracking-wider text-muted-foreground">{r.current_status || "—"}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                {rows.length === 0 && !loading && (
+                    <div className="p-6 text-center text-sm text-muted-foreground">No reminders sent yet for these filters.</div>
+                )}
+            </div>
         </div>
     );
 }

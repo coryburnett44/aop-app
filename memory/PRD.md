@@ -16,6 +16,30 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AK — Iteration 42: Dues reminders polish (2026-06-06)
+Three follow-ups on the iter41 dues-reminders work:
+
+1. **Removed navbar "10 Year Anniversary" badge** — the pill in `Navbar.jsx` (data-testid `nav-anniversary-badge`) was overlapping the "Phi" in the logo on home page. The badge has been deleted; the anniversary page is still reachable via the Home hero CTA and direct `/anniversary` URL.
+
+2. **NEW: Admin → Reports → "Dues reminders" tab** showing the audit log of every dues-reminder email sent. Features:
+   - 4 stat tiles (one per stage) showing all-time + last-30-day counts
+   - Filters: stage, sent-on-or-after, sent-on-or-before
+   - Columns: sent timestamp, stage chip, member, email, cycle expiration, "Paid since" badge (when `current_expires_at > row.expires_at`), current status
+   - CSV export
+   - Backend: `GET /api/reports/dues-reminders` + `GET /api/reports/dues-reminders/summary` in `routes/reports.py`. The detail endpoint enriches each row with current member status so admins can see who paid after the email went out vs. who still hasn't.
+
+3. **Per-stage email templates now admin-editable** — moved out of code into the campaign document:
+   - New `stage_templates: { stage_id: {subject, body_html} }` field on `automated_emails` docs
+   - `DUES_REMINDER_DEFAULT_TEMPLATES` in `server.py` is the fallback when no override exists
+   - `_apply_dues_placeholders()` supports `{{first_name}} {{member_name}} {{expires_at}} {{grace_days}} {{reactivation_fee}} {{pay_link}} {{contact_email}}`
+   - New `GET /api/automated-emails/dues-reminder-defaults` returns stages + defaults + placeholder list for the frontend
+   - Frontend `AutomatedEmailsAdmin.jsx` renders 4 stage editor cards (subject input + body textarea + "Customized" pill + Reset-to-default button) inside the dues campaign dialog
+   - PUT `/automated-emails/{id}` honors `stage_templates` for dues_reminders kind (still ignores name/subject/body/audience/sections for system-managed campaigns)
+
+**Verification (iter42)**
+- Live API smoke: `/api/automated-emails/dues-reminder-defaults` returns 4 stages + 7 placeholders + 4 default templates. `/api/reports/dues-reminders` returns rows + per-stage summary. Admin login flow → Reports → Dues reminders tab renders with 4 stat tiles + filter row + empty-state table. Edit "Annual Dues Reminders" → 4 stage editor cards render with subject/body fields pre-filled from defaults.
+- Programmatic test: admin override `{subject: "CUSTOM SUBJ for {{first_name}}", body_html: "<p>CUSTOM BODY exp={{expires_at}}</p>"}` is correctly rendered with placeholders substituted; baked defaults still used when no override present; dedupe + paid-cycle reset unchanged.
+
 ### Phase AJ — Iteration 41: Automated Annual Dues Reminders (2026-06-06)
 
 Added a system-managed automated email campaign that emails every active, non-lifetime member at four cadence points around their `membership_expires_at`:
