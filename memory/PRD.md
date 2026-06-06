@@ -16,6 +16,26 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AI — Iteration 40: routes/rsvps.py extraction (2026-06-06)
+Continuing the server.py refactor: extracted RSVP creation, paid-event Zeffy approval, admin event-ticket approval, RSVP guest-list editing, `/me/events`, QR ticket emails, and check-in lookup/scan endpoints into a new `/app/backend/routes/rsvps.py` module (~480 lines).
+
+**Moved out of server.py (was lines 487-1003):**
+- `_create_rsvp_and_email_ticket` helper (shared by free + paid + admin-approve paths)
+- `make_ticket_token`, `decode_ticket_token`, `make_qr_png_b64`, `_ticket_card_html` helpers
+- `send_rsvp_ticket_email` (Resend-powered QR ticket emails with EVENTS_INBOX_EMAIL CC)
+- `POST /events/{id}/rsvp` (toggle, 402 on paid, 400 on cancelled/umbrella)
+- `POST /events/{id}/payment/confirm` (Zeffy receipt → pending tx; trust_zeffy auto-approve)
+- `PUT /transactions/{tx_id}/approve-event-ticket` (admin approval → RSVP + ticket email)
+- `PUT /events/{id}/rsvp/guests` (in-place guest list edit + re-send tickets)
+- `GET /me/events`
+- `GET /checkin/lookup/{token}` (no auth required, validated server-side)
+- `POST /checkin/scan/{token}` (admin only, idempotent)
+
+Helpers exposed on `routes_rsvps.register.*` so any future back-compat shims can wire to them. `server.py: 6371 → 5895 lines (-476 in iter40; cumulative -1759 since iter32 start).`
+
+#### Verification (iter40)
+7/7 backend regression tests PASS (free RSVP toggle, paid-event 402, cancelled 400, guest-list PUT, payment/confirm pending tx, admin approve idempotent, checkin lookup+scan with role enforcement). Frontend Admin → Gear dialog test-ids verified (no collision). Test seed: `/app/backend/tests/test_iteration39_rsvp_extract.py`.
+
 ### Phase AH — Iteration 38-39: 5 UI/Admin features (2026-06-05)
 1. **Home page CTA reorg** — Anniversary button moved next to "Go to my profile" + "See events" in the hero. Standalone Countdown banner removed from Home (still on /anniversary).
 2. **Gear external-link items** — `GearItemIn`/`UpdateIn` + `gear_out` gained `is_external_link: bool`, `external_url: str`, `name_html: str`. Public `/gear` GearCard now renders external-link items the same card size with a "Visit" red pill instead of price; clicking opens the URL in a new tab. Both editors (public Gear.jsx + Admin.jsx legacy) expose an "External link mode" checkbox, URL field, and HTML / Rich title textarea (uses `dangerouslySetInnerHTML` on render — limited tag set per UI hint).
