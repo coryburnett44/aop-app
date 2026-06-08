@@ -17,7 +17,7 @@ import uuid
 
 from fastapi import Depends, HTTPException
 
-from models import HoursLogIn, HoursReviewIn
+from models import HoursLogIn, HoursReviewIn, AdminHoursLogIn
 
 
 def register(
@@ -53,6 +53,44 @@ def register(
             "date": iso(body.date),
             "event_id": body.event_id,
             "status": "pending",
+            "created_at": iso(now_utc()),
+        }
+        await db.volunteer_hours.insert_one(doc)
+        return hours_out(doc)
+
+    @api.post("/hours/admin")
+    async def admin_log_hours(body: AdminHoursLogIn, admin: dict = Depends(admin_tab_dep("hours"))):
+        """Admin logs hours on behalf of a member. Auto-approved (the admin's
+        act of logging IS the approval). Only `user_id`, `hours`, and `date`
+        are functionally required — everything else is optional."""
+        target = await db.users.find_one({"id": body.user_id}, {"_id": 0, "id": 1, "name": 1, "chapter_id": 1})
+        if not target:
+            raise HTTPException(status_code=404, detail="Member not found")
+        # Chapter-scoped admins (e.g. Governor) can only log for members in their chapter.
+        if is_chapter_scoped(admin):
+            allowed_ids = await chapter_scope_user_ids(admin)
+            if body.user_id not in (allowed_ids or []):
+                raise HTTPException(status_code=403, detail="You can only log hours for members in your chapter.")
+        activity_text = body.activity or body.description or "Logged by admin"
+        doc = {
+            "id": str(uuid.uuid4()),
+            "user_id": target["id"],
+            "user_name": target.get("name", ""),
+            "hours": body.hours,
+            "description": activity_text,
+            "activity": activity_text,
+            "event_type": body.event_type,
+            "agency_name": body.agency_name or "",
+            "host_name": body.host_name or "",
+            "host_email": body.host_email or "",
+            "host_phone": body.host_phone or "",
+            "date": iso(body.date),
+            "event_id": body.event_id,
+            "status": "approved",
+            "approved_at": iso(now_utc()),
+            "approved_by": admin["id"],
+            "approved_by_name": admin.get("name", "Admin"),
+            "logged_by_admin": True,
             "created_at": iso(now_utc()),
         }
         await db.volunteer_hours.insert_one(doc)

@@ -179,6 +179,23 @@ class HoursLogIn(BaseModel):
     description: Optional[str] = None
 
 
+class AdminHoursLogIn(BaseModel):
+    """Admin-only relaxed variant. Admins are trusted to log on behalf of any
+    member without filling every host-of-contact field. The hours go in as
+    `approved` immediately since the admin's act of logging is the approval."""
+    user_id: str
+    hours: float = Field(gt=0, le=1000)
+    date: datetime
+    activity: Optional[str] = ""
+    event_type: Literal["aop_related", "other"] = "aop_related"
+    agency_name: Optional[str] = ""
+    host_name: Optional[str] = ""
+    host_email: Optional[str] = ""
+    host_phone: Optional[str] = ""
+    event_id: Optional[str] = None
+    description: Optional[str] = None
+
+
 class AwardGrantIn(BaseModel):
     user_id: str
     reason: str = ""

@@ -44,7 +44,10 @@ export default function Hours() {
 }
 
 function LogHoursDialog() {
+    const { user } = useAuth();
+    const isAdmin = user?.role === "admin";
     const [open, setOpen] = useState(false);
+    const [members, setMembers] = useState([]);
     const [form, setForm] = useState({
         hours: "",
         date: "",
@@ -54,20 +57,41 @@ function LogHoursDialog() {
         host_name: "",
         host_email: "",
         host_phone: "",
+        user_id: "",
     });
     const [busy, setBusy] = useState(false);
 
     function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
 
+    // Admins need a roster to pick the target member. Load lazily when the
+    // dialog opens so we don't fetch on every page mount.
+    useEffect(() => {
+        if (!open || !isAdmin || members.length) return;
+        api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
+    }, [open, isAdmin, members.length]);
+
+    function emptyForm() {
+        return {
+            hours: "", date: "", event_type: "aop_related", agency_name: "",
+            activity: "", host_name: "", host_email: "", host_phone: "", user_id: "",
+        };
+    }
+
     async function save(e) {
         if (e) e.preventDefault();
-        if (!form.hours || !form.date || !form.activity.trim() || !form.agency_name.trim() || !form.host_name.trim() || !form.host_email.trim() || !form.host_phone.trim()) {
+        if (isAdmin) {
+            // Admins: only hours + date + member are required. Everything else optional.
+            if (!form.hours || !form.date || !form.user_id) {
+                toast.error("Pick a member and enter hours + date");
+                return;
+            }
+        } else if (!form.hours || !form.date || !form.activity.trim() || !form.agency_name.trim() || !form.host_name.trim() || !form.host_email.trim() || !form.host_phone.trim()) {
             toast.error("Every field is required");
             return;
         }
         setBusy(true);
         try {
-            await api.post("/hours", {
+            const payload = {
                 hours: Number(form.hours),
                 date: new Date(form.date).toISOString(),
                 event_type: form.event_type,
@@ -77,10 +101,17 @@ function LogHoursDialog() {
                 host_name: form.host_name,
                 host_email: form.host_email,
                 host_phone: form.host_phone,
-            });
-            toast.success("Hours logged — pending admin review");
+            };
+            if (isAdmin) {
+                payload.user_id = form.user_id;
+                await api.post("/hours/admin", payload);
+                toast.success("Hours logged & approved");
+            } else {
+                await api.post("/hours", payload);
+                toast.success("Hours logged — pending admin review");
+            }
             setOpen(false);
-            setForm({ hours: "", date: "", event_type: "aop_related", agency_name: "", activity: "", host_name: "", host_email: "", host_phone: "" });
+            setForm(emptyForm());
             window.dispatchEvent(new Event("hours-logged"));
         } catch (e) {
             toast.error(e.response?.data?.detail || "Failed");
@@ -94,8 +125,32 @@ function LogHoursDialog() {
                 <Plus className="h-4 w-4 mr-1.5" /> Log hours
             </Button>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-                <DialogHeader><DialogTitle className="font-heading text-2xl">Log volunteer hours</DialogTitle></DialogHeader>
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl">
+                        {isAdmin ? "Log volunteer hours for a member" : "Log volunteer hours"}
+                    </DialogTitle>
+                </DialogHeader>
                 <form onSubmit={save} className="space-y-4 mt-2" data-testid="log-hours-form">
+                    {isAdmin && (
+                        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-3 text-xs text-foreground/80 leading-relaxed" data-testid="hours-admin-banner">
+                            <strong className="text-primary">Admin mode:</strong> only Member, Hours, and Date are required. Everything else is optional and the entry will be auto-approved.
+                        </div>
+                    )}
+                    {isAdmin && (
+                        <div>
+                            <Label>Member *</Label>
+                            <Select value={form.user_id} onValueChange={(v) => set("user_id", v)}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="hours-admin-member-select">
+                                    <SelectValue placeholder="Pick a member" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-72">
+                                    {members.map((m) => (
+                                        <SelectItem key={m.id} value={m.id}>{m.name} {m.email ? `· ${m.email}` : ""}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <Label>Hours *</Label>
@@ -107,7 +162,7 @@ function LogHoursDialog() {
                         </div>
                     </div>
                     <div>
-                        <Label>Event type *</Label>
+                        <Label>Event type {!isAdmin && "*"}</Label>
                         <Select value={form.event_type} onValueChange={(v) => set("event_type", v)}>
                             <SelectTrigger className="rounded-xl mt-1.5" data-testid="hours-event-type">
                                 <SelectValue />
@@ -119,23 +174,23 @@ function LogHoursDialog() {
                         </Select>
                     </div>
                     <div>
-                        <Label>Agency / Organization name *</Label>
-                        <Input required value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" />
+                        <Label>Agency / Organization name {!isAdmin && "*"}</Label>
+                        <Input required={!isAdmin} value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" />
                     </div>
                     <div>
-                        <Label>What did you do? *</Label>
-                        <Textarea required rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" />
+                        <Label>What did you do? {!isAdmin && "*"}</Label>
+                        <Textarea required={!isAdmin} rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" />
                     </div>
                     <div className="border-t pt-3">
-                        <Label className="text-xs uppercase tracking-wider text-muted-foreground">Host / Point of contact *</Label>
+                        <Label className="text-xs uppercase tracking-wider text-muted-foreground">Host / Point of contact {!isAdmin && "*"}</Label>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1.5">
-                            <Input required value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder="Host name *" className="rounded-xl" data-testid="hours-host-name-input" />
-                            <Input required type="email" value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder="Host email *" className="rounded-xl" data-testid="hours-host-email-input" />
-                            <Input required value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder="Host phone *" className="rounded-xl" data-testid="hours-host-phone-input" />
+                            <Input required={!isAdmin} value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder={isAdmin ? "Host name" : "Host name *"} className="rounded-xl" data-testid="hours-host-name-input" />
+                            <Input required={!isAdmin} type="email" value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder={isAdmin ? "Host email" : "Host email *"} className="rounded-xl" data-testid="hours-host-email-input" />
+                            <Input required={!isAdmin} value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder={isAdmin ? "Host phone" : "Host phone *"} className="rounded-xl" data-testid="hours-host-phone-input" />
                         </div>
                     </div>
                     <Button type="submit" disabled={busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-submit-btn">
-                        {busy ? "Saving…" : "Submit for approval"}
+                        {busy ? "Saving…" : (isAdmin ? "Log hours (auto-approved)" : "Submit for approval")}
                     </Button>
                 </form>
             </DialogContent>
