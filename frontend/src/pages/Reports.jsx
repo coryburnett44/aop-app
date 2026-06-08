@@ -57,9 +57,7 @@ function MembersReport() {
     const [rows, setRows] = useState([]);
     const [filters, setFilters] = useState({ status_filter: "", chapter_id: "", tier_id: "", role: "" });
     const [chapters, setChapters] = useState([]);
-    const [tiers, setTiers] = useState([]);
-
-    useEffect(() => {
+    const [tiers, setTiers] = useState([]);    useEffect(() => {
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
         api.get("/tiers").then(({ data }) => setTiers(data)).catch(() => {});
     }, []);
@@ -240,6 +238,15 @@ function RsvpsReport() {
                     </tbody>
                 </table>
             </div>
+        </div>
+    );
+}
+
+function Stat({ label, value }) {
+    return (
+        <div className="bg-muted/30 rounded-xl p-3">
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">{label}</div>
+            <div className="text-2xl font-heading font-bold mt-1">{value ?? "—"}</div>
         </div>
     );
 }
