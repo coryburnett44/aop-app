@@ -2268,6 +2268,10 @@ async def startup():
     await db.dues_reminders_sent.create_index(
         [("user_id", 1), ("expires_at", 1), ("stage", 1)], unique=True
     )
+    # Speed up the daily dues-reminder window scan (4 queries/day, each ranging
+    # over a 1-day window on `membership_expires_at`). Without this index Mongo
+    # would table-scan the whole `users` collection on every campaign run.
+    await db.users.create_index([("membership_expires_at", 1), ("status", 1)])
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -5336,9 +5340,10 @@ def _html_escape(s: str) -> str:
 
 
 async def _chat_digest_loop():
-    """Background loop: every 60s, batch pending notifications older than due_at
+    """Background loop: every 5 minutes, batch pending notifications older than due_at
     by (recipient, conversation), send one consolidated email + SMS (if opted-in)
-    per bundle, mark sent."""
+    per bundle, mark sent. (Was every 60s — 5-minute cadence is still well within
+    the 10-minute 'quiet window' default for chat digests.)"""
     while True:
         try:
             now_iso_s = iso(now_utc())
@@ -5941,7 +5946,10 @@ async def _send_dues_reminders(campaign: dict) -> int:
 
 
 async def _automated_email_loop():
-    """Once a minute, send any campaigns whose `next_run_at` has elapsed."""
+    """Every 5 minutes, send any campaigns whose `next_run_at` has elapsed.
+    Originally polled once a minute, but daily/weekly campaigns don't need
+    minute-level precision — a 5-minute window still lets a 9:00 AM UTC cron
+    fire reliably within 9:00–9:05. Reduces idle wake-ups 10× (288/day vs 1,440)."""
     while True:
         try:
             cursor = db.automated_emails.find({"is_active": True, "next_run_at": {"$lte": iso(now_utc())}}, {"_id": 0})
@@ -5955,7 +5963,7 @@ async def _automated_email_loop():
                 )
         except Exception as e:
             logger.warning(f"Automated email loop error: {e}")
-        await asyncio.sleep(60)
+        await asyncio.sleep(300)
 
 
 async def seed_builtin_automated_emails():
