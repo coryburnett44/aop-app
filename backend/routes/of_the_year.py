@@ -48,7 +48,7 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
             "user_chapter_id": (user or {}).get("chapter_id") if user else d.get("user_chapter_id"),
             "chapter_id": d.get("chapter_id"),
             "chapter_name": (chapter or {}).get("name") if chapter else d.get("chapter_name"),
-            "chapter_image_url": (chapter or {}).get("image_url") if chapter else d.get("chapter_image_url"),
+            "chapter_logo_url": (chapter or {}).get("logo_url") if chapter else d.get("chapter_logo_url"),
             "note": d.get("note") or "",
             "created_at": d.get("created_at"),
             "created_by_name": d.get("created_by_name") or "",

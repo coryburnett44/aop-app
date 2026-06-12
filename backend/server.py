@@ -6259,7 +6259,7 @@ async def leaderboard_community_service(period: str = "quarter", user: dict = De
     cids = [r["chapter_id"] for r in chapter_rows if r["chapter_id"]]
     chapters: dict = {}
     if cids:
-        async for c in db.chapters.find({"id": {"$in": cids}}, {"_id": 0, "id": 1, "name": 1}):
+        async for c in db.chapters.find({"id": {"$in": cids}}, {"_id": 0, "id": 1, "name": 1, "logo_url": 1}):
             chapters[c["id"]] = c
         # Bulk member counts via aggregation — one pass instead of N queries.
         active_counts = {}
@@ -6276,13 +6276,14 @@ async def leaderboard_community_service(period: str = "quarter", user: dict = De
         top_chapters.append({
             **r,
             "chapter_name": c.get("name") or "Unassigned",
+            "logo_url": c.get("logo_url") or None,
             "member_count": int(active_counts.get(r["chapter_id"], 0)),
         })
-    # Backfill chapter_name on top_members
+    # Backfill chapter_name + logo on top_members
     if top_members:
         more_cids = [m["chapter_id"] for m in top_members if m.get("chapter_id") and m["chapter_id"] not in chapters]
         if more_cids:
-            async for c in db.chapters.find({"id": {"$in": more_cids}}, {"_id": 0, "id": 1, "name": 1}):
+            async for c in db.chapters.find({"id": {"$in": more_cids}}, {"_id": 0, "id": 1, "name": 1, "logo_url": 1}):
                 chapters[c["id"]] = c
         for m in top_members:
             m["chapter_name"] = (chapters.get(m.get("chapter_id") or "") or {}).get("name") or "Unassigned"

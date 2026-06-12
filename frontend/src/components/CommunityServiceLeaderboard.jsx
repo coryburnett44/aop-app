@@ -71,6 +71,7 @@ export default function CommunityServiceLeaderboard() {
                                 title={c.chapter_name}
                                 subtitle={`${c.member_count} active member${c.member_count !== 1 ? "s" : ""} · ${c.count} entr${c.count !== 1 ? "ies" : "y"}`}
                                 hours={c.hours}
+                                avatar={c.logo_url}
                                 icon={<Users className="h-5 w-5" />}
                                 testid={`leaderboard-chapter-${c.chapter_id || "unassigned"}`}
                             />

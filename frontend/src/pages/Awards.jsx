@@ -242,7 +242,7 @@ function OfTheYearSection({ isAdmin }) {
 function WinnerCard({ winner, isAdmin, onEdit, onDelete }) {
     const isMember = !!winner.user_id;
     const name = isMember ? (winner.user_name || "—") : (winner.chapter_name || "—");
-    const avatar = isMember ? winner.user_avatar_url : winner.chapter_image_url;
+    const avatar = isMember ? winner.user_avatar_url : winner.chapter_logo_url;
     const initials = (name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
     return (
         <div className="bg-card border border-border rounded-2xl p-4 flex items-center gap-3 shadow-sm" data-testid={`oty-winner-${winner.id}`}>

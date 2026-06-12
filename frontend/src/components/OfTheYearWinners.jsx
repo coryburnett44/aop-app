@@ -49,7 +49,7 @@ export default function OfTheYearWinners() {
                         const Icon = ICONS[cat] || Trophy;
                         const isMember = !!w.user_id;
                         const name = isMember ? (w.user_name || "—") : (w.chapter_name || "—");
-                        const avatar = isMember ? w.user_avatar_url : w.chapter_image_url;
+                        const avatar = isMember ? w.user_avatar_url : w.chapter_logo_url;
                         const initials = (name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
                         return (
                             <div key={cat} className="bg-white rounded-2xl border-2 border-slate-200 p-5 flex items-center gap-4 hover:border-slate-300 hover:shadow-sm transition-all" data-testid={`oty-winner-${cat}`}>
