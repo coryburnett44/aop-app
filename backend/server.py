@@ -2272,6 +2272,10 @@ async def startup():
     # over a 1-day window on `membership_expires_at`). Without this index Mongo
     # would table-scan the whole `users` collection on every campaign run.
     await db.users.create_index([("membership_expires_at", 1), ("status", 1)])
+    # 'Of The Year' awards — only one winner per (category, year).
+    await db.of_the_year_awards.create_index(
+        [("category", 1), ("year", 1)], unique=True
+    )
     # initialize object storage (non-blocking)
     try:
         init_storage()
@@ -6168,6 +6172,127 @@ routes_rsvps.register(
     jwt_algorithm=JWT_ALGORITHM,
     logger=logger,
 )
+
+from routes import of_the_year as routes_of_the_year  # noqa: E402
+routes_of_the_year.register(
+    api,
+    db=db,
+    admin_tab_dep=admin_tab_dep,
+    get_current_user=get_current_user,
+    iso=iso,
+    now_utc=now_utc,
+    logger=logger,
+)
+
+
+# ---------- /leaderboards/community-service ----------
+# Restored after the server.py refactor. Returns top 5 chapters + top 5 members
+# by approved volunteer hours for the requested period.
+@api.get("/leaderboards/community-service")
+async def leaderboard_community_service(period: str = "quarter", user: dict = Depends(get_current_user)):
+    """period ∈ {quarter, month, year, all}. Returns:
+      {period, period_label, top_chapters: [...top 5], top_members: [...top 5]}"""
+    now = now_utc()
+    start_iso: Optional[str] = None
+    if period == "quarter":
+        q = (now.month - 1) // 3
+        q_start = now.replace(month=q * 3 + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_iso = iso(q_start)
+        period_label = f"Q{q + 1} {now.year}"
+    elif period == "month":
+        start_iso = iso(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+        period_label = now.strftime("%B %Y")
+    elif period == "year":
+        start_iso = iso(now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0))
+        period_label = str(now.year)
+    else:
+        period = "all"
+        period_label = "All time"
+
+    match: dict = {"status": "approved"}
+    if start_iso:
+        match["date"] = {"$gte": start_iso}
+
+    # ---- Top members ----
+    member_pipe = [
+        {"$match": match},
+        {"$group": {"_id": "$user_id", "hours": {"$sum": "$hours"}, "count": {"$sum": 1}}},
+        {"$sort": {"hours": -1}},
+        {"$limit": 5},
+    ]
+    member_rows = []
+    async for r in db.volunteer_hours.aggregate(member_pipe):
+        member_rows.append({"user_id": r["_id"], "hours": float(r["hours"] or 0), "count": int(r["count"] or 0)})
+    # Enrich with name / avatar / chapter
+    uids = [r["user_id"] for r in member_rows if r["user_id"]]
+    users: dict = {}
+    if uids:
+        async for u in db.users.find(
+            {"id": {"$in": uids}},
+            {"_id": 0, "id": 1, "name": 1, "avatar_url": 1, "chapter_id": 1},
+        ):
+            users[u["id"]] = u
+    top_members = []
+    for r in member_rows:
+        u = users.get(r["user_id"]) or {}
+        top_members.append({
+            **r,
+            "user_name": u.get("name", "Unknown"),
+            "avatar_url": u.get("avatar_url"),
+            "chapter_id": u.get("chapter_id"),
+            "chapter_name": None,  # filled below
+        })
+
+    # ---- Top chapters ----
+    chapter_pipe = [
+        {"$match": match},
+        {"$lookup": {"from": "users", "localField": "user_id", "foreignField": "id", "as": "u"}},
+        {"$addFields": {"chapter_id": {"$arrayElemAt": ["$u.chapter_id", 0]}}},
+        {"$group": {"_id": "$chapter_id", "hours": {"$sum": "$hours"}, "count": {"$sum": 1}}},
+        {"$sort": {"hours": -1}},
+        {"$limit": 5},
+    ]
+    chapter_rows = []
+    async for r in db.volunteer_hours.aggregate(chapter_pipe):
+        chapter_rows.append({"chapter_id": r["_id"], "hours": float(r["hours"] or 0), "count": int(r["count"] or 0)})
+    # Enrich with chapter name + active member count
+    cids = [r["chapter_id"] for r in chapter_rows if r["chapter_id"]]
+    chapters: dict = {}
+    if cids:
+        async for c in db.chapters.find({"id": {"$in": cids}}, {"_id": 0, "id": 1, "name": 1}):
+            chapters[c["id"]] = c
+        # Bulk member counts via aggregation — one pass instead of N queries.
+        active_counts = {}
+        async for row in db.users.aggregate([
+            {"$match": {"chapter_id": {"$in": cids}, "status": {"$ne": "inactive"}}},
+            {"$group": {"_id": "$chapter_id", "n": {"$sum": 1}}},
+        ]):
+            active_counts[row["_id"]] = row["n"]
+    else:
+        active_counts = {}
+    top_chapters = []
+    for r in chapter_rows:
+        c = chapters.get(r["chapter_id"]) or {}
+        top_chapters.append({
+            **r,
+            "chapter_name": c.get("name") or "Unassigned",
+            "member_count": int(active_counts.get(r["chapter_id"], 0)),
+        })
+    # Backfill chapter_name on top_members
+    if top_members:
+        more_cids = [m["chapter_id"] for m in top_members if m.get("chapter_id") and m["chapter_id"] not in chapters]
+        if more_cids:
+            async for c in db.chapters.find({"id": {"$in": more_cids}}, {"_id": 0, "id": 1, "name": 1}):
+                chapters[c["id"]] = c
+        for m in top_members:
+            m["chapter_name"] = (chapters.get(m.get("chapter_id") or "") or {}).get("name") or "Unassigned"
+
+    return {
+        "period": period,
+        "period_label": period_label,
+        "top_chapters": top_chapters,
+        "top_members": top_members,
+    }
 
 
 # ---------- Mount ----------

@@ -196,6 +196,34 @@ class AdminHoursLogIn(BaseModel):
     description: Optional[str] = None
 
 
+OF_THE_YEAR_CATEGORIES = Literal[
+    "member_of_year",
+    "chapter_of_year",
+    "top_cs_member",
+    "top_cs_chapter",
+    "top_fundraising_member",
+    "top_fundraising_chapter",
+    "top_recruiter",
+]
+
+
+class OfTheYearIn(BaseModel):
+    """One winner per (category, year). The frontend chooses user_id for the
+    *_member / *_recruiter categories, or chapter_id for the *_chapter ones."""
+    category: OF_THE_YEAR_CATEGORIES
+    year: int = Field(ge=1900, le=2100)
+    user_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    note: Optional[str] = ""
+
+
+class OfTheYearUpdateIn(BaseModel):
+    year: Optional[int] = Field(default=None, ge=1900, le=2100)
+    user_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    note: Optional[str] = None
+
+
 class AwardGrantIn(BaseModel):
     user_id: str
     reason: str = ""

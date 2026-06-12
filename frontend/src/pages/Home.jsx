@@ -7,6 +7,7 @@ import { Calendar, Users, Star, ArrowRight, MapPin, Shield, HeartHandshake, LogI
 import { format, parseISO } from "date-fns";
 // Countdown import removed — anniversary banner now lives only on /anniversary (Iter 38).
 import CommunityServiceLeaderboard from "../components/CommunityServiceLeaderboard";
+import OfTheYearWinners from "../components/OfTheYearWinners";
 import { BlocksRenderer } from "../components/cms/BlockRenderer";
 
 const AOP_LOGO = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png";
@@ -218,6 +219,9 @@ export default function Home() {
 
             {/* Community Service Leader Board (top 5 chapters + top 5 members this quarter) */}
             {showSection("leaderboard") && <CommunityServiceLeaderboard />}
+
+            {/* Current-year "Of The Year" winners across all 7 categories */}
+            {showSection("leaderboard") && <OfTheYearWinners />}
 
             {/* Family pulse: New Members + Birthdays */}
             {showSection("family_pulse") && user && (newMembers.length > 0 || birthdays.length > 0) && (
