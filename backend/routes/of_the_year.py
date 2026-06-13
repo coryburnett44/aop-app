@@ -69,7 +69,7 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
         if cids:
             async for c in db.chapters.find(
                 {"id": {"$in": cids}},
-                {"_id": 0, "id": 1, "name": 1, "image_url": 1},
+                {"_id": 0, "id": 1, "name": 1, "logo_url": 1},
             ):
                 chapters[c["id"]] = c
         out = []
