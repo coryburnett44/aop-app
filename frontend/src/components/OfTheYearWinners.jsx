@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { Trophy, Award, Heart, DollarSign, UserPlus, Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 
@@ -50,6 +50,7 @@ export default function OfTheYearWinners() {
                         const isMember = !!w.user_id;
                         const name = isMember ? (w.user_name || "—") : (w.chapter_name || "—");
                         const avatar = isMember ? w.user_avatar_url : w.chapter_logo_url;
+                        const avatarSrc = avatar ? mediaUrl(avatar) : null;
                         const initials = (name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
                         return (
                             <div key={cat} className="bg-white rounded-2xl border-2 border-slate-200 p-5 flex items-center gap-4 hover:border-slate-300 hover:shadow-sm transition-all" data-testid={`oty-winner-${cat}`}>
@@ -60,7 +61,7 @@ export default function OfTheYearWinners() {
                                     <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400">{data.labels[cat]}</div>
                                     <div className="flex items-center gap-2 mt-1">
                                         <Avatar className="h-7 w-7">
-                                            {avatar && <AvatarImage src={avatar} />}
+                                            {avatarSrc && <AvatarImage src={avatarSrc} />}
                                             <AvatarFallback className="text-[10px] bg-primary/10 text-primary">{initials}</AvatarFallback>
                                         </Avatar>
                                         <div className="font-heading font-bold text-base truncate" style={{ color: NAVY }} title={name}>{name}</div>

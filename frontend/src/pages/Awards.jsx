@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../lib/api";
+import { api, mediaUrl } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import {
     Medal, Star, Heart, GraduationCap, Sparkles, Trophy, Award as AwardIcon,
@@ -243,6 +243,7 @@ function WinnerCard({ winner, isAdmin, onEdit, onDelete }) {
     const isMember = !!winner.user_id;
     const name = isMember ? (winner.user_name || "—") : (winner.chapter_name || "—");
     const avatar = isMember ? winner.user_avatar_url : winner.chapter_logo_url;
+    const avatarSrc = avatar ? mediaUrl(avatar) : null;
     const initials = (name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
     return (
         <div className="bg-card border border-border rounded-2xl p-4 flex items-center gap-3 shadow-sm" data-testid={`oty-winner-${winner.id}`}>
@@ -250,7 +251,7 @@ function WinnerCard({ winner, isAdmin, onEdit, onDelete }) {
                 {winner.year}
             </div>
             <Avatar className="h-12 w-12 shrink-0">
-                {avatar && <AvatarImage src={avatar} alt={name} />}
+                {avatarSrc && <AvatarImage src={avatarSrc} alt={name} />}
                 <AvatarFallback className="bg-primary/15 text-primary">{initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
