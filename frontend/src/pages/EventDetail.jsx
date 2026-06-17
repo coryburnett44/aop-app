@@ -146,14 +146,26 @@ export default function EventDetail() {
                             )}
                         </div>
                     </div>
+                    {/* External ticket / payment link — opens in a new tab, no internal RSVP */}
+                    {event.external_url && !event.cancelled && (
+                        <a
+                            href={event.external_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-full py-4 px-6 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-warm transition-colors"
+                            data-testid="event-external-btn"
+                        >
+                            {event.external_button_label || "Get tickets"} ↗
+                        </a>
+                    )}
                     {/* Paid event — Zeffy checkout takes precedence over the free flow */}
-                    {event.is_paid && !hasRsvped && !event.cancelled && (
+                    {!event.external_url && event.is_paid && !hasRsvped && !event.cancelled && (
                         <PaidEventCheckout event={event} onPaid={() => load()} />
                     )}
-                    {!event.is_paid && !hasRsvped && allowsTickets && !event.cancelled && (
+                    {!event.external_url && !event.is_paid && !hasRsvped && allowsTickets && !event.cancelled && (
                         <MemberTicketPicker event={event} onRsvp={(tt) => rsvpWithGuests([], tt)} disabled={loading} />
                     )}
-                    {!event.is_paid && !hasRsvped && !allowsTickets && !event.cancelled && (
+                    {!event.external_url && !event.is_paid && !hasRsvped && !allowsTickets && !event.cancelled && (
                         <Button
                             onClick={toggleRsvp}
                             disabled={loading}

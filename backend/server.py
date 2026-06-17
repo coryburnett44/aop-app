@@ -507,6 +507,8 @@ def event_out(e: dict) -> dict:
         "is_paid": bool(e.get("is_paid")),
         "payment_url": e.get("payment_url", ""),
         "payment_amount": float(e.get("payment_amount") or 0.0),
+        "external_url": e.get("external_url", ""),
+        "external_button_label": e.get("external_button_label", ""),
         "created_at": e.get("created_at"),
     }
 

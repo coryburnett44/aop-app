@@ -331,6 +331,10 @@ class EventIn(BaseModel):
     is_paid: bool = False
     payment_url: str = ""
     payment_amount: float = 0.0
+    # External-ticket option: when external_url is set, members are sent off-site
+    # to buy tickets / pay (no internal Zeffy receipt tracking).
+    external_url: str = ""
+    external_button_label: str = ""
 
 
 class EventUpdateIn(BaseModel):
@@ -351,6 +355,8 @@ class EventUpdateIn(BaseModel):
     is_paid: Optional[bool] = None
     payment_url: Optional[str] = None
     payment_amount: Optional[float] = None
+    external_url: Optional[str] = None
+    external_button_label: Optional[str] = None
 
 
 TicketType = Literal["vip", "all_access", "general", "guest", "speaker", "volunteer"]

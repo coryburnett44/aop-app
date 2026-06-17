@@ -144,6 +144,8 @@ function EventDialog({ event, onSaved, trigger }) {
         is_paid: event?.is_paid || false,
         payment_url: event?.payment_url || "",
         payment_amount: event?.payment_amount || 0,
+        external_url: event?.external_url || "",
+        external_button_label: event?.external_button_label || "",
         allows_ticket_types: event?.allows_ticket_types || false,
         enabled_ticket_types: event?.enabled_ticket_types || [],
     });
@@ -273,22 +275,38 @@ function EventDialog({ event, onSaved, trigger }) {
                             <p className="text-[11px] text-muted-foreground">Members will RSVP without choosing a ticket type. Best for casual gatherings.</p>
                         )}
                     </div>
-                    {/* Paid event toggle */}
-                    <div className={`rounded-2xl border-2 p-4 ${form.is_paid ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
-                        <label className="flex items-center gap-3 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={!!form.is_paid}
-                                onChange={(e) => setForm({ ...form, is_paid: e.target.checked })}
-                                className="h-4 w-4 rounded border-2 border-slate-300 accent-emerald-600"
-                                data-testid="event-paid-toggle"
-                            />
-                            <span className="font-semibold text-sm">
-                                {form.is_paid ? "💲 Paid event — members must pay via Zeffy before RSVP" : "Free event"}
-                            </span>
-                        </label>
-                        {form.is_paid && (
-                            <div className="mt-3 grid sm:grid-cols-[1fr_140px] gap-3">
+                    {/* Payment mode — pick one: free, Zeffy, or external link */}
+                    <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 space-y-2.5" data-testid="event-payment-mode">
+                        <div className="text-[10px] uppercase tracking-widest font-bold text-slate-500 mb-1">Payment / Tickets</div>
+                        {[
+                            { value: "free", title: "Free Event", desc: "Members RSVP without paying.", color: "border-slate-300" },
+                            { value: "zeffy", title: "💲 Paid via Zeffy", desc: "Members pay through Zeffy and submit their receipt #. RSVP confirmed when admin approves (same flow as annual dues).", color: "border-emerald-400 bg-emerald-50" },
+                            { value: "external", title: "🔗 External ticket / payment link", desc: "Members click out to your own ticket page (Eventbrite, Stripe, etc.). No internal tracking — they handle everything off-site.", color: "border-sky-400 bg-sky-50" },
+                        ].map((mode) => {
+                            const currentMode = form.external_url ? "external" : (form.is_paid ? "zeffy" : "free");
+                            const selected = currentMode === mode.value;
+                            return (
+                                <label key={mode.value} className={`flex items-start gap-3 rounded-xl border-2 p-3 cursor-pointer transition-colors ${selected ? mode.color : "border-slate-200 hover:border-slate-300 bg-white"}`} data-testid={`event-payment-mode-${mode.value}`}>
+                                    <input
+                                        type="radio"
+                                        name="payment_mode"
+                                        checked={selected}
+                                        onChange={() => {
+                                            if (mode.value === "free") setForm({ ...form, is_paid: false, payment_url: "", payment_amount: 0, external_url: "", external_button_label: "" });
+                                            else if (mode.value === "zeffy") setForm({ ...form, is_paid: true, external_url: "", external_button_label: "" });
+                                            else setForm({ ...form, is_paid: false, payment_url: "", payment_amount: 0, external_url: form.external_url || "https://", external_button_label: form.external_button_label || "" });
+                                        }}
+                                        className="mt-1 h-4 w-4 accent-primary shrink-0"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-semibold text-sm">{mode.title}</div>
+                                        <div className="text-[11px] text-muted-foreground leading-snug mt-0.5">{mode.desc}</div>
+                                    </div>
+                                </label>
+                            );
+                        })}
+                        {form.is_paid && !form.external_url && (
+                            <div className="mt-3 grid sm:grid-cols-[1fr_140px] gap-3 border-t border-emerald-200 pt-3">
                                 <div>
                                     <Label className="text-xs">Zeffy payment URL</Label>
                                     <Input
@@ -311,8 +329,32 @@ function EventDialog({ event, onSaved, trigger }) {
                                         data-testid="event-payment-amount"
                                     />
                                 </div>
-                                <p className="sm:col-span-2 text-[11px] text-emerald-800 leading-snug">
-                                    Members pay through Zeffy and submit their receipt #. RSVP is confirmed once an admin approves the receipt (or auto-approved for trusted members). Same flow as annual dues.
+                            </div>
+                        )}
+                        {form.external_url && (
+                            <div className="mt-3 grid sm:grid-cols-[1fr_200px] gap-3 border-t border-sky-200 pt-3">
+                                <div>
+                                    <Label className="text-xs">Ticket / payment URL *</Label>
+                                    <Input
+                                        value={form.external_url}
+                                        onChange={(e) => setForm({ ...form, external_url: e.target.value })}
+                                        placeholder="https://www.eventbrite.com/your-event"
+                                        className="rounded-xl mt-1.5"
+                                        data-testid="event-external-url"
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-xs">Button label (optional)</Label>
+                                    <Input
+                                        value={form.external_button_label}
+                                        onChange={(e) => setForm({ ...form, external_button_label: e.target.value })}
+                                        placeholder="Get tickets"
+                                        className="rounded-xl mt-1.5"
+                                        data-testid="event-external-label"
+                                    />
+                                </div>
+                                <p className="sm:col-span-2 text-[11px] text-sky-800 leading-snug">
+                                    Members will see one prominent button that opens this URL in a new tab. No internal RSVP/payment tracking happens for external-ticket events.
                                 </p>
                             </div>
                         )}
