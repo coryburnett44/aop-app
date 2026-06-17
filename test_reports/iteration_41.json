@@ -1,0 +1,30 @@
+{
+  "summary": "Iter 41 - Frontend-only verification of the new sub-event drafting/editing flows in Admin EventDialog and EventDetail SubEventCard. Ran a single end-to-end Playwright script covering all 7 requested scenarios. ALL PASS.",
+  "scenarios_tested": [
+    "S1 PASS: Admin -> Events -> New event dialog renders [data-testid=event-subevents-section]; added 2 drafts via add-subevent-draft-btn; filled subevent-draft-title-0/start-0 and subevent-draft-title-1/start-1; saved. GET /api/events/{parent_id}/sub-events returned 2 children with parent_event_id === parent.id.",
+    "S2 PASS: New event dialog with 2 drafts, clicked remove-subevent-draft-1 -> draft-1 removed from DOM. After save, only the kept draft persisted; the removed draft was NOT created (verified via /api/events/{parent}/sub-events).",
+    "S3 PASS: Editing an existing event (edit-event-{id}) -> the subevents drafts section [event-subevents-section] is NOT rendered (gated to creation mode only).",
+    "S4 PASS: On parent event detail page as admin, each sub-event card exposes sub-event-edit-{id} and sub-event-delete-{id} buttons.",
+    "S5 PASS: Clicking Edit opens [sub-event-edit-form] pre-filled with the sub-event's title (verified input value matches). Changing title and clicking the scoped sub-event-submit inside the edit form sent PUT /api/events/{sub_id}; GET /api/events/{sub_id} returned the new title.",
+    "S6 PASS: Clicking sub-event-delete-{id}, confirming the native confirm dialog, sent DELETE /api/events/{sub_id}; subsequent GET /api/events/{parent}/sub-events no longer contains that id.",
+    "S7 PASS: Logging in as member@clubhaven.app and visiting the same parent event detail page, sub-event-edit-* / sub-event-delete-* selectors return null while the sub-event-{id} card itself is still visible (clickable Link)."
+  ],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Admin.jsx EventDialog.save: sequential POST loop over subDrafts is correct; skips drafts missing title/start_at (counted as failures) and surfaces a single combined toast. Good UX.",
+    "EventDetail.jsx SubEventForm reuses the same component for create + edit via the `existing` prop. Test had to scope the submit selector to [data-testid=sub-event-edit-form] [data-testid=sub-event-submit] because the create form's submit lives outside the edit Dialog — not a bug, just worth noting for future tests.",
+    "Sub-events drafts section is correctly gated by `{!event && (...)}` so it never shows in Edit mode. Verified empirically.",
+    "Member visiting an admin's parent event still sees sub-event cards as Links (works as intended), and SubEventCard correctly hides the edit/delete row when isAdmin=false."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% — 7/7 scenarios"},
+  "test_credentials": "admin@clubhaven.app / Admin123! and member@clubhaven.app / Member123! both working.",
+  "seed_data_creation": "Script created 2 throwaway parent events (TEST_iter41_parent_* and TEST_iter41_remove_*) plus their drafted sub-events, then DELETE'd all of them at the end. No residual TEST_iter41_* rows expected.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Sub-event create/edit/delete flow is healthy end-to-end. When testing the edit dialog, scope the submit selector to the [data-testid=sub-event-edit-form] container — there are two SubEventForm instances on an admin parent page (one inline create form + one inside the edit Dialog). Both use data-testid=sub-event-submit. Native window.confirm() is used for delete — accept it via page.on('dialog', lambda d: d.accept()) BEFORE clicking the delete button.",
+  "rca of the issue": "n/a — no regressions found."
+}

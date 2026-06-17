@@ -261,22 +261,7 @@ function SubEventsPanel({ subs, parentEvent, isAdmin = false, onChange }) {
                     <div className="col-span-full text-sm text-muted-foreground italic">No sub-events yet.{isAdmin ? " Use the + button above to add one." : ""}</div>
                 )}
                 {subs.map((s) => (
-                    <Link
-                        key={s.id}
-                        to={`/events/${s.id}`}
-                        className="block rounded-2xl border border-border bg-muted/30 p-5 hover:border-primary/40 hover:bg-muted/60 transition-colors"
-                        data-testid={`sub-event-${s.id}`}
-                    >
-                        <div className="text-xs uppercase tracking-wider font-semibold text-primary mb-1">{s.category}</div>
-                        <div className="font-heading text-lg font-bold leading-tight">{s.title}</div>
-                        <div className="text-xs text-muted-foreground mt-1.5">
-                            {format(parseISO(s.start_at), "EEE, MMM d · h:mm a")}
-                        </div>
-                        <div className="text-xs mt-2 flex items-center gap-3">
-                            <span><Users className="h-3 w-3 inline mr-1" />{s.rsvp_count} going{s.guest_count > 0 ? ` +${s.guest_count} guests` : ""}</span>
-                            {s.allows_ticket_types && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary">Tickets</span>}
-                        </div>
-                    </Link>
+                    <SubEventCard key={s.id} sub={s} isAdmin={isAdmin} onChange={onChange} />
                 ))}
             </div>
         </section>
@@ -284,13 +269,26 @@ function SubEventsPanel({ subs, parentEvent, isAdmin = false, onChange }) {
 }
 
 function SubEventCreateForm({ parentEvent, onCreated }) {
-    // Default sub-event start = parent event start (admin can edit).
-    const [title, setTitle] = useState("");
-    const [category, setCategory] = useState("general");
-    const [startAt, setStartAt] = useState(parentEvent?.start_at ? parentEvent.start_at.slice(0, 16) : "");
-    const [endAt, setEndAt] = useState("");
-    const [location, setLocation] = useState(parentEvent?.location || "");
-    const [allowsTicketTypes, setAllowsTicketTypes] = useState(false);
+    return (
+        <SubEventForm
+            parentEvent={parentEvent}
+            onDone={onCreated}
+            submitLabel="Create sub-event"
+        />
+    );
+}
+
+function SubEventForm({ parentEvent, existing, onDone, onCancel, submitLabel }) {
+    const isEdit = !!existing;
+    const [title, setTitle] = useState(existing?.title || "");
+    const [category, setCategory] = useState(existing?.category || "general");
+    const [startAt, setStartAt] = useState(
+        existing?.start_at ? existing.start_at.slice(0, 16)
+            : (parentEvent?.start_at ? parentEvent.start_at.slice(0, 16) : "")
+    );
+    const [endAt, setEndAt] = useState(existing?.end_at ? existing.end_at.slice(0, 16) : "");
+    const [location, setLocation] = useState(existing?.location ?? parentEvent?.location ?? "");
+    const [allowsTicketTypes, setAllowsTicketTypes] = useState(!!existing?.allows_ticket_types);
     const [busy, setBusy] = useState(false);
 
     async function submit(e) {
@@ -299,27 +297,35 @@ function SubEventCreateForm({ parentEvent, onCreated }) {
         if (!startAt) { toast.error("Start time is required"); return; }
         setBusy(true);
         try {
-            await api.post("/events", {
+            const payload = {
                 title: title.trim(),
-                description: "",
                 location: location.trim(),
                 start_at: new Date(startAt).toISOString(),
                 end_at: endAt ? new Date(endAt).toISOString() : null,
                 category: category.trim() || "general",
-                capacity: 0,
-                cover_image: "",
-                parent_event_id: parentEvent.id,
                 allows_ticket_types: !!allowsTicketTypes,
-            });
-            toast.success("Sub-event created");
-            setTitle(""); setEndAt("");
-            onCreated?.();
+            };
+            if (isEdit) {
+                await api.put(`/events/${existing.id}`, payload);
+                toast.success("Sub-event updated");
+            } else {
+                await api.post("/events", {
+                    ...payload,
+                    description: "",
+                    capacity: 0,
+                    cover_image: "",
+                    parent_event_id: parentEvent.id,
+                });
+                toast.success("Sub-event created");
+                setTitle(""); setEndAt("");
+            }
+            onDone?.();
         } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
         setBusy(false);
     }
 
     return (
-        <form onSubmit={submit} className="rounded-2xl border-2 border-dashed border-primary/40 bg-primary/[0.04] p-4 mt-3 space-y-3" data-testid="sub-event-create-form">
+        <form onSubmit={submit} className="rounded-2xl border-2 border-dashed border-primary/40 bg-primary/[0.04] p-4 mt-3 space-y-3" data-testid={isEdit ? "sub-event-edit-form" : "sub-event-create-form"}>
             <div className="grid sm:grid-cols-[2fr_1fr] gap-3">
                 <div>
                     <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Title</label>
@@ -356,10 +362,78 @@ function SubEventCreateForm({ parentEvent, onCreated }) {
             </label>
             <div className="flex items-center gap-2 pt-1">
                 <button type="submit" disabled={busy} className="rounded-full bg-primary text-white px-5 py-2 text-sm font-bold hover:bg-primary/90 disabled:opacity-50" data-testid="sub-event-submit">
-                    {busy ? "Creating…" : "Create sub-event"}
+                    {busy ? (isEdit ? "Saving…" : "Creating…") : (submitLabel || (isEdit ? "Save changes" : "Create sub-event"))}
                 </button>
+                {onCancel && (
+                    <button type="button" onClick={onCancel} className="rounded-full px-4 py-2 text-sm font-semibold border border-border hover:bg-muted">
+                        Cancel
+                    </button>
+                )}
             </div>
         </form>
+    );
+}
+
+function SubEventCard({ sub, isAdmin, onChange }) {
+    const [editing, setEditing] = useState(false);
+
+    async function del(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!confirm(`Delete sub-event "${sub.title}"? This cannot be undone.`)) return;
+        try {
+            await api.delete(`/events/${sub.id}`);
+            toast.success("Sub-event deleted");
+            onChange?.();
+        } catch (err) { toast.error(err.response?.data?.detail || "Delete failed"); }
+    }
+
+    return (
+        <div className="rounded-2xl border border-border bg-muted/30 overflow-hidden hover:border-primary/40 hover:bg-muted/60 transition-colors" data-testid={`sub-event-${sub.id}`}>
+            <Link to={`/events/${sub.id}`} className="block p-5">
+                <div className="text-xs uppercase tracking-wider font-semibold text-primary mb-1">{sub.category}</div>
+                <div className="font-heading text-lg font-bold leading-tight">{sub.title}</div>
+                <div className="text-xs text-muted-foreground mt-1.5">
+                    {format(parseISO(sub.start_at), "EEE, MMM d · h:mm a")}
+                </div>
+                <div className="text-xs mt-2 flex items-center gap-3">
+                    <span><Users className="h-3 w-3 inline mr-1" />{sub.rsvp_count} going{sub.guest_count > 0 ? ` +${sub.guest_count} guests` : ""}</span>
+                    {sub.allows_ticket_types && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary">Tickets</span>}
+                </div>
+            </Link>
+            {isAdmin && (
+                <div className="flex items-center gap-2 px-5 pb-4 -mt-1">
+                    <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditing(true); }}
+                        className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider border border-primary text-primary hover:bg-primary hover:text-white transition-colors"
+                        data-testid={`sub-event-edit-${sub.id}`}
+                    >
+                        Edit
+                    </button>
+                    <button
+                        type="button"
+                        onClick={del}
+                        className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider border border-destructive text-destructive hover:bg-destructive hover:text-white transition-colors"
+                        data-testid={`sub-event-delete-${sub.id}`}
+                    >
+                        Delete
+                    </button>
+                </div>
+            )}
+            <Dialog open={editing} onOpenChange={setEditing}>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading text-2xl">Edit sub-event</DialogTitle>
+                    </DialogHeader>
+                    <SubEventForm
+                        existing={sub}
+                        onDone={() => { setEditing(false); onChange?.(); }}
+                        onCancel={() => setEditing(false)}
+                    />
+                </DialogContent>
+            </Dialog>
+        </div>
     );
 }
 

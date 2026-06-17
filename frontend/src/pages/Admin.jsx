@@ -151,6 +151,8 @@ function EventDialog({ event, onSaved, trigger }) {
     });
     const [aiBusy, setAiBusy] = useState(false);
     const [coverUploading, setCoverUploading] = useState(false);
+    // Sub-events drafted during NEW event creation. Each: {title, category, start_at, end_at, location, allows_ticket_types}
+    const [subDrafts, setSubDrafts] = useState([]);
 
     async function save() {
         const payload = {
@@ -161,14 +163,64 @@ function EventDialog({ event, onSaved, trigger }) {
             end_at: form.end_at ? new Date(form.end_at).toISOString() : null,
         };
         try {
-            if (event) await api.put(`/events/${event.id}`, payload);
-            else await api.post("/events", payload);
-            toast.success("Saved");
+            let parentId = event?.id;
+            if (event) {
+                await api.put(`/events/${event.id}`, payload);
+            } else {
+                const { data } = await api.post("/events", payload);
+                parentId = data.id;
+            }
+            // After NEW parent saves, sequentially create sub-events (if any drafted).
+            if (!event && parentId && subDrafts.length > 0) {
+                let okCount = 0;
+                let failCount = 0;
+                for (const s of subDrafts) {
+                    if (!s.title?.trim() || !s.start_at) { failCount++; continue; }
+                    try {
+                        await api.post("/events", {
+                            title: s.title.trim(),
+                            description: "",
+                            location: (s.location || "").trim(),
+                            start_at: new Date(s.start_at).toISOString(),
+                            end_at: s.end_at ? new Date(s.end_at).toISOString() : null,
+                            category: (s.category || "general").trim(),
+                            capacity: 0,
+                            cover_image: "",
+                            parent_event_id: parentId,
+                            allows_ticket_types: !!s.allows_ticket_types,
+                        });
+                        okCount++;
+                    } catch { failCount++; }
+                }
+                if (failCount > 0) toast.error(`Parent saved. ${okCount} sub-event(s) created, ${failCount} failed.`);
+                else if (okCount > 0) toast.success(`Saved with ${okCount} sub-event(s).`);
+                else toast.success("Saved");
+            } else {
+                toast.success("Saved");
+            }
+            setSubDrafts([]);
             setOpen(false);
             onSaved();
         } catch (e) {
             toast.error(e.response?.data?.detail || "Save failed");
         }
+    }
+
+    function addSubDraft() {
+        setSubDrafts((prev) => [...prev, {
+            title: "",
+            category: "general",
+            start_at: form.start_at || "",
+            end_at: "",
+            location: form.location || "",
+            allows_ticket_types: false,
+        }]);
+    }
+    function updateSubDraft(idx, patch) {
+        setSubDrafts((prev) => prev.map((s, i) => i === idx ? { ...s, ...patch } : s));
+    }
+    function removeSubDraft(idx) {
+        setSubDrafts((prev) => prev.filter((_, i) => i !== idx));
     }
 
     async function aiGenerate() {
@@ -388,6 +440,69 @@ function EventDialog({ event, onSaved, trigger }) {
                                     </p>
                                 </div>
                             )}
+                        </div>
+                    )}
+                    {!event && (
+                        <div className="rounded-2xl border-2 border-primary/30 bg-primary/[0.04] p-4 space-y-3" data-testid="event-subevents-section">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="text-[10px] uppercase tracking-widest font-bold text-primary mb-0.5">Optional</div>
+                                    <div className="font-semibold text-sm">Sub-events under this event</div>
+                                    <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">
+                                        Useful for anniversaries, retreats, weekends — members RSVP per sub-event after the parent is published. You can edit / add more later from the event page.
+                                    </p>
+                                </div>
+                                <Button type="button" variant="outline" size="sm" className="rounded-full shrink-0" onClick={addSubDraft} data-testid="add-subevent-draft-btn">
+                                    <Plus className="h-3.5 w-3.5 mr-1" /> Add sub-event
+                                </Button>
+                            </div>
+                            {subDrafts.length === 0 && (
+                                <p className="text-[11px] italic text-muted-foreground">No sub-events yet. Click "Add sub-event" to draft one.</p>
+                            )}
+                            {subDrafts.map((s, idx) => (
+                                <div key={idx} className="rounded-xl border border-primary/30 bg-white p-3 space-y-2.5" data-testid={`subevent-draft-${idx}`}>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="text-[10px] uppercase tracking-wider font-bold text-primary">Sub-event #{idx + 1}</div>
+                                        <button type="button" onClick={() => removeSubDraft(idx)} className="text-[11px] font-bold uppercase tracking-wider text-destructive hover:underline" data-testid={`remove-subevent-draft-${idx}`}>
+                                            Remove
+                                        </button>
+                                    </div>
+                                    <div className="grid sm:grid-cols-[2fr_1fr] gap-2">
+                                        <div>
+                                            <Label className="text-[10px] uppercase tracking-wider">Title *</Label>
+                                            <Input value={s.title} onChange={(e) => updateSubDraft(idx, { title: e.target.value })} placeholder="Welcome reception" className="rounded-xl mt-1 text-sm" data-testid={`subevent-draft-title-${idx}`} />
+                                        </div>
+                                        <div>
+                                            <Label className="text-[10px] uppercase tracking-wider">Category</Label>
+                                            <Input value={s.category} onChange={(e) => updateSubDraft(idx, { category: e.target.value })} placeholder="general" className="rounded-xl mt-1 text-sm" data-testid={`subevent-draft-category-${idx}`} />
+                                        </div>
+                                    </div>
+                                    <div className="grid sm:grid-cols-2 gap-2">
+                                        <div>
+                                            <Label className="text-[10px] uppercase tracking-wider">Starts *</Label>
+                                            <Input type="datetime-local" value={s.start_at} onChange={(e) => updateSubDraft(idx, { start_at: e.target.value })} className="rounded-xl mt-1 text-sm" data-testid={`subevent-draft-start-${idx}`} />
+                                        </div>
+                                        <div>
+                                            <Label className="text-[10px] uppercase tracking-wider">Ends (optional)</Label>
+                                            <Input type="datetime-local" value={s.end_at} onChange={(e) => updateSubDraft(idx, { end_at: e.target.value })} className="rounded-xl mt-1 text-sm" data-testid={`subevent-draft-end-${idx}`} />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <Label className="text-[10px] uppercase tracking-wider">Location</Label>
+                                        <Input value={s.location} onChange={(e) => updateSubDraft(idx, { location: e.target.value })} className="rounded-xl mt-1 text-sm" data-testid={`subevent-draft-location-${idx}`} />
+                                    </div>
+                                    <label className="flex items-center gap-2 text-xs">
+                                        <input
+                                            type="checkbox"
+                                            checked={!!s.allows_ticket_types}
+                                            onChange={(e) => updateSubDraft(idx, { allows_ticket_types: e.target.checked })}
+                                            className="h-3.5 w-3.5 accent-primary"
+                                            data-testid={`subevent-draft-tickets-${idx}`}
+                                        />
+                                        Allow ticket types (VIP / All Access / General Admission)
+                                    </label>
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>
