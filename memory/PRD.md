@@ -16,6 +16,16 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AM — Iteration 43: Sub-events in parent-create + edit/delete from EventDetail (2026-06-17)
+Two related admin UX upgrades for events with sub-events (anniversary / retreat / weekend umbrellas):
+
+1. **Draft sub-events during parent creation** — `Admin.jsx` `EventDialog` now renders a new "Sub-events under this event" section (data-testid `event-subevents-section`) when creating a brand-new event. Admins click `add-subevent-draft-btn` to append draft rows (title, category, starts/ends, location, allows_ticket_types). On Save, the parent is POSTed first, then each draft is POSTed sequentially with `parent_event_id` set to the new parent id. The section is gated to `{!event && (...)}` so editing an existing event hides it.
+2. **Edit / Delete sub-events from EventDetail** — Refactored `SubEventCreateForm` in `EventDetail.jsx` into a reusable `SubEventForm` that handles both create and edit. New `SubEventCard` wraps each sub-event with admin-only `sub-event-edit-{id}` and `sub-event-delete-{id}` buttons. Edit opens a Dialog pre-filled with the sub-event data and PUTs `/api/events/{sub_id}`. Delete confirms and DELETEs the sub-event.
+
+**Verification (iter43)**: testing_agent iteration_41.json — 7/7 frontend scenarios PASS (drafts POST sequentially with correct parent_event_id, remove button discards before save, edit dialog is pre-filled and PUTs successfully, delete removes the card, non-admin members do not see edit/delete buttons).
+
+
+
 ### Phase AK — Iteration 42: Dues reminders polish (2026-06-06)
 Three follow-ups on the iter41 dues-reminders work:
 
