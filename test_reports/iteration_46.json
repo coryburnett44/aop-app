@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 46: tested the new email-deliverability + unsubscribe stack end-to-end. Backend: 10/10 pytest cases pass — GET /api/email/deliverability returns the correct sender (Alpha Omega Phi <info@aop-app.org>), reply_to, sending_domain=aop-app.org, is_resend_sandbox=false, opt_out_count/total_with_email ints, and a 4-row dns_checklist with the real domain interpolated into the DMARC string; non-admin gets 403; GET+POST /api/email/unsubscribe?token=<valid> 302s to /unsubscribed?status=ok&token=... AND flips email_opt_out=true (verified via /api/email/unsubscribe-status); garbage and empty tokens 302 to status=invalid with no DB write; POST /api/email/resubscribe?token=<valid> returns {ok:true, subscribed:true} and clears email_opt_out; garbage token → 400. resolve_segment filter: with member opted-out, posting a custom-segment blast targeting only that member returns 400 'Segment has no recipients' (filter works); after resubscribe, /email/preview returns recipient_count=1. test_only blast returns sent_count=1, failed_count=0 in the email_blasts log. Frontend: /unsubscribed?status=invalid and /unsubscribed with no token both render [data-testid=unsubscribed-error] with 'Missing token' / 'invalid' copy; the full ok flow (admin login → mint token → GET /api/email/unsubscribe redirect → /unsubscribed?status=ok&token=...) renders the title 'You're unsubscribed', shows member@clubhaven.app, and the [data-testid=resubscribe-btn] button flips state to 'You're subscribed' with a success toast. Admin → Email → Deliverability tab fully rendered: [data-testid=deliverability-panel] shows sender/reply-to/sending-domain tiles ('Alpha Omega Phi <info@aop-app.org>', 'info@aop-app.org', 'aop-app.org'), [data-testid=deliverability-optout-count]='0 / 16 members', [data-testid=dns-row-0..3] all present (DMARC row contains 'aop-app.org'), [data-testid=deliverability-app-side] summary present, and [data-testid=deliverability-warning] correctly NOT in DOM because the real domain is configured. No bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration46_email_unsubscribe.py",
+    "/app/test_reports/pytest/iter46_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "send_bulk_email graceful-degrades when RESEND_API_KEY is empty by returning {'ok':false,'skipped':...} — but /email/blast pre-checks RESEND_API_KEY and 503s, so the no-key path of send_bulk_email is essentially dead code reachable only via the dues-reminder cron. Acceptable, but worth a one-line comment noting the cron path uses it.",
+    "_unsubscribe_url_for() builds the unsubscribe URL from FRONTEND_URL + '/api/email/unsubscribe?token=...'. FRONTEND_URL in /app/backend/.env is the preview host (https://club-express-lite.preview.emergentagent.com) — in production this must point to the live aop-app.org so that links inside real emails resolve to the production backend, not the preview environment. Recommend documenting this in PRD / deployment notes (not a code bug, env config concern).",
+    "Token format is 16-byte truncated HMAC-SHA256 (~96-bit security). That's fine for an opt-out link (low value to forge, no PII leak), but worth noting that the same secret (JWT_SECRET fallback) is used for auth JWTs — if either is rotated the other must also rotate. Consider promoting UNSUBSCRIBE_SECRET to a real .env var so rotations don't break sessions.",
+    "Carry-over from iter42/45: hours_out() serializer still doesn't surface logged_by_admin / approved_by_name / imported_from_csv (unrelated to this iter, just unresolved)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration46_email_unsubscribe.py (new, 10 pytest cases)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (8/8 UI checks across /unsubscribed flows + Admin Deliverability tab)"},
+  "test_credentials": "Admin: admin@clubhaven.app / Admin123!  |  Member: member@clubhaven.app / Member123!",
+  "seed_data_creation": "Two test email_blasts entries logged (subject prefix 'TEST_iter46 ...'). Member 8108308c-... toggled opt_out true→false during tests and cleaned up to false at the end. No persistent state changes.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter46 added /api/email/{unsubscribe,resubscribe,unsubscribe-status,deliverability} + send_bulk_email() + Unsubscribed.jsx public page + Admin Email Deliverability sub-tab. Unsubscribe token algorithm: base64url(user_id + '.' + first-16-bytes(b64url(HMAC-SHA256(JWT_SECRET, user_id)))). FRONTEND_URL in /app/backend/.env determines where /api/email/unsubscribe redirects to (currently preview host — needs to be aop-app.org in prod). All tests in /app/backend/tests/test_iteration46_email_unsubscribe.py. testids: unsubscribed-page, unsubscribed-title, unsubscribed-email, unsubscribed-error, resubscribe-btn, email-tab-deliverability, deliverability-panel, deliverability-optout-count, dns-row-0..3, deliverability-app-side, deliverability-warning (absent when RESEND_FROM is non-sandbox).",
+  "rca of the issue": "N/A — no issues found in this iteration."
+}

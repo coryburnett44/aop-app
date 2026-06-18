@@ -3855,8 +3855,133 @@ PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET", "")
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "Alpha Omega Phi <onboarding@resend.dev>")
+RESEND_REPLY_TO = os.environ.get("RESEND_REPLY_TO", "info@aop-app.org")
+ORG_MAILING_ADDRESS = os.environ.get(
+    "ORG_MAILING_ADDRESS",
+    "Alpha Omega Phi Military Fraternity & Sorority, Inc."
+)
+UNSUBSCRIBE_SECRET = os.environ.get("UNSUBSCRIBE_SECRET") or os.environ.get("JWT_SECRET", "")
 if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
+
+
+# ---------- Deliverability helpers ----------
+def _html_to_text(html: str) -> str:
+    """Cheap HTML→plain-text converter for multipart email. Strips tags,
+    decodes a handful of entities, collapses whitespace. Helps deliverability:
+    HTML-only emails are a strong spam signal."""
+    import re
+    import html as _html
+    if not html:
+        return ""
+    text = re.sub(r"(?i)<br\s*/?>", "\n", html)
+    text = re.sub(r"(?i)</(p|div|li|tr|h[1-6])>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = _html.unescape(text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    return text.strip()
+
+
+def _unsubscribe_token(user_id: str) -> str:
+    """HMAC-signed token tied to a specific user_id. Stable per user."""
+    import hmac
+    import hashlib
+    import base64 as _b64
+    secret = (UNSUBSCRIBE_SECRET or "fallback-unsub-secret").encode()
+    sig = hmac.new(secret, user_id.encode(), hashlib.sha256).digest()
+    blob = user_id.encode() + b"." + _b64.urlsafe_b64encode(sig)[:16]
+    return _b64.urlsafe_b64encode(blob).decode().rstrip("=")
+
+
+def _verify_unsubscribe_token(token: str) -> Optional[str]:
+    """Return user_id if token is valid, else None."""
+    import hmac
+    import hashlib
+    import base64 as _b64
+    try:
+        pad = "=" * (-len(token) % 4)
+        blob = _b64.urlsafe_b64decode(token + pad)
+        user_id_bytes, sig_b64 = blob.rsplit(b".", 1)
+        user_id = user_id_bytes.decode()
+        secret = (UNSUBSCRIBE_SECRET or "fallback-unsub-secret").encode()
+        expected = _b64.urlsafe_b64encode(
+            hmac.new(secret, user_id.encode(), hashlib.sha256).digest()
+        )[:16]
+        if not hmac.compare_digest(sig_b64, expected):
+            return None
+        return user_id
+    except Exception:
+        return None
+
+
+def _unsubscribe_url_for(user_id: str) -> str:
+    base = os.environ.get("FRONTEND_URL", "https://aop-app.org").rstrip("/")
+    return f"{base}/api/email/unsubscribe?token={_unsubscribe_token(user_id)}"
+
+
+def _bulk_email_html_footer(unsubscribe_url: str) -> str:
+    import html as _h
+    addr = _h.escape(ORG_MAILING_ADDRESS)
+    return (
+        f'<hr style="border:0;border-top:1px solid #e5e7eb;margin:32px 0 16px">'
+        f'<div style="font-size:11px;color:#888;line-height:1.6;text-align:center;'
+        f'font-family:-apple-system,sans-serif">'
+        f'{addr}<br>'
+        f'You received this email because you are a member of Alpha Omega Phi. '
+        f'<a href="{unsubscribe_url}" style="color:#888;text-decoration:underline">Unsubscribe</a>'
+        f'</div>'
+    )
+
+
+def _bulk_email_text_footer(unsubscribe_url: str) -> str:
+    return (
+        f"\n\n---\n{ORG_MAILING_ADDRESS}\n"
+        f"You received this email because you are a member of Alpha Omega Phi.\n"
+        f"Unsubscribe: {unsubscribe_url}\n"
+    )
+
+
+async def send_bulk_email(
+    *,
+    to_email: str,
+    subject: str,
+    html_body: str,
+    recipient_id: str,
+    tags: Optional[List[dict]] = None,
+) -> dict:
+    """Send a bulk/marketing email with deliverability hygiene:
+      - Multipart HTML + auto-derived plain-text fallback
+      - Reply-To header
+      - List-Unsubscribe + List-Unsubscribe-Post=One-Click headers
+      - Precedence: bulk
+      - Visible unsubscribe footer + org mailing address (CAN-SPAM)
+    """
+    if not RESEND_API_KEY:
+        return {"ok": False, "skipped": "RESEND_API_KEY not set"}
+
+    unsub_url = _unsubscribe_url_for(recipient_id)
+    html_full = html_body + _bulk_email_html_footer(unsub_url)
+    text_full = _html_to_text(html_body) + _bulk_email_text_footer(unsub_url)
+
+    headers = {
+        "List-Unsubscribe": f"<{unsub_url}>, <mailto:{RESEND_REPLY_TO}?subject=unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        "Precedence": "bulk",
+        "X-Entity-Ref-ID": _unsubscribe_token(recipient_id)[:32],
+    }
+    params = {
+        "from": RESEND_FROM,
+        "to": [to_email],
+        "reply_to": RESEND_REPLY_TO,
+        "subject": subject,
+        "html": html_full,
+        "text": text_full,
+        "headers": headers,
+        "tags": tags or [],
+    }
+    return await asyncio.to_thread(resend_sdk.Emails.send, params)
+
 
 # ---------- Twilio SMS (graceful no-op if creds absent) ----------
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
@@ -4187,6 +4312,10 @@ async def resolve_segment(body: EmailBlastIn) -> List[dict]:
         q["id"] = {"$in": body.custom_user_ids}
     elif body.segment == "active":
         q["status_override"] = {"$ne": "deceased"}
+    # Always exclude members who have opted out of bulk email. test_only blasts
+    # bypass this filter (they only go to the admin sending them).
+    if not body.test_only:
+        q["email_opt_out"] = {"$ne": True}
     cursor = db.users.find(q, {"_id": 0, "password_hash": 0}).limit(2000)
     return await cursor.to_list(2000)
 
@@ -4241,15 +4370,17 @@ async def send_email_blast(body: EmailBlastIn, user: dict = Depends(admin_tab_de
             failed.append({"user_id": r.get("id"), "reason": "no email"})
             continue
         try:
-            params = {
-                "from": RESEND_FROM,
-                "to": [email],
-                "subject": body.subject.replace("{{name}}", r.get("name", "")),
-                "html": render_template(body.body_html, r),
-                "tags": [{"name": "blast_id", "value": blast_id}],
-            }
-            res = await asyncio.to_thread(resend_sdk.Emails.send, params)
-            sent.append({"user_id": r.get("id"), "email": email, "resend_id": res.get("id")})
+            res = await send_bulk_email(
+                to_email=email,
+                subject=body.subject.replace("{{name}}", r.get("name", "")),
+                html_body=render_template(body.body_html, r),
+                recipient_id=r.get("id", ""),
+                tags=[
+                    {"name": "blast_id", "value": blast_id},
+                    {"name": "type", "value": "blast"},
+                ],
+            )
+            sent.append({"user_id": r.get("id"), "email": email, "resend_id": (res or {}).get("id") if isinstance(res, dict) else None})
         except Exception as e:
             logger.error(f"Resend send failed for {email}: {e}")
             failed.append({"user_id": r.get("id"), "email": email, "reason": str(e)[:200]})
@@ -4277,6 +4408,96 @@ async def send_email_blast(body: EmailBlastIn, user: dict = Depends(admin_tab_de
 async def list_email_blasts(_: dict = Depends(admin_tab_dep("email"))):
     items = await db.email_blasts.find({}, {"_id": 0}).sort("sent_at", -1).limit(100).to_list(100)
     return items
+
+
+# ---------- Public unsubscribe endpoints ----------
+@api.api_route("/email/unsubscribe", methods=["GET", "POST"])
+async def email_unsubscribe(token: str = ""):
+    """Public one-click unsubscribe (no auth). Reached by Gmail/Yahoo bots that
+    POST per RFC 8058 *and* by humans clicking the footer link. Either way we
+    flip `email_opt_out=true` and bounce them to a friendly confirmation page.
+
+    Idempotent: a second click is a no-op. Returns a 302 redirect so this works
+    whether opened in a real browser or by the provider's prefetcher."""
+    from fastapi.responses import RedirectResponse
+    base = os.environ.get("FRONTEND_URL", "https://aop-app.org").rstrip("/")
+    if not token:
+        return RedirectResponse(url=f"{base}/unsubscribed?status=invalid", status_code=302)
+    user_id = _verify_unsubscribe_token(token)
+    if not user_id:
+        return RedirectResponse(url=f"{base}/unsubscribed?status=invalid", status_code=302)
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"email_opt_out": True, "email_opt_out_at": iso(now_utc())}},
+    )
+    logger.info(f"email_opt_out=true for user_id={user_id} (unsubscribe link)")
+    return RedirectResponse(url=f"{base}/unsubscribed?status=ok&token={token}", status_code=302)
+
+
+@api.post("/email/resubscribe")
+async def email_resubscribe(token: str = ""):
+    """Let a member who clicked Unsubscribe by mistake opt back in. Same HMAC
+    token (so this only works for the person whose token it is)."""
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing token")
+    user_id = _verify_unsubscribe_token(token)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid token")
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"email_opt_out": False}, "$unset": {"email_opt_out_at": ""}},
+    )
+    logger.info(f"email_opt_out=false (resubscribed) user_id={user_id}")
+    return {"ok": True, "subscribed": True}
+
+
+@api.get("/email/unsubscribe-status")
+async def email_unsubscribe_status(token: str = ""):
+    """Public read-only — used by the /unsubscribed page to show the current
+    opt-out state for the token-bearer."""
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing token")
+    user_id = _verify_unsubscribe_token(token)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid token")
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "email": 1, "name": 1, "email_opt_out": 1, "email_opt_out_at": 1})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "email": u.get("email", ""),
+        "name": u.get("name", ""),
+        "opted_out": bool(u.get("email_opt_out", False)),
+        "opted_out_at": u.get("email_opt_out_at"),
+    }
+
+
+@api.get("/email/deliverability")
+async def email_deliverability(_: dict = Depends(admin_tab_dep("email"))):
+    """Admin diagnostic — surfaces the current sender, reply-to, opt-out count,
+    and a DNS checklist the org admin needs to verify on their domain registrar."""
+    opt_out_count = await db.users.count_documents({"email_opt_out": True})
+    total_with_email = await db.users.count_documents({"email": {"$exists": True, "$ne": ""}})
+    # Parse domain from RESEND_FROM ("Name <addr@dom>")
+    import re
+    m = re.search(r"<([^>]+)>", RESEND_FROM)
+    addr = m.group(1) if m else RESEND_FROM
+    domain = addr.split("@", 1)[1] if "@" in addr else ""
+    return {
+        "resend_configured": bool(RESEND_API_KEY),
+        "from": RESEND_FROM,
+        "reply_to": RESEND_REPLY_TO,
+        "sending_domain": domain,
+        "is_resend_sandbox": "resend.dev" in domain,
+        "org_mailing_address": ORG_MAILING_ADDRESS,
+        "opt_out_count": opt_out_count,
+        "total_with_email": total_with_email,
+        "dns_checklist": [
+            {"record": "SPF (TXT)", "value": "Include Resend in your existing SPF or add 'v=spf1 include:_spf.resend.com ~all'", "host": "@"},
+            {"record": "DKIM (CNAME/TXT)", "value": "Resend dashboard → Domains → your domain → copy the 3 DKIM CNAME records and add to DNS", "host": "resend._domainkey + 2 more"},
+            {"record": "DMARC (TXT)", "value": "v=DMARC1; p=quarantine; rua=mailto:dmarc@" + (domain or "yourdomain.com") + "; pct=100", "host": "_dmarc"},
+            {"record": "MX (TXT, optional)", "value": "feedback-loop with Resend for bounce/complaint tracking — configure in Resend dashboard", "host": "@"},
+        ],
+    }
 
 
 class EmailTestSendIn(BaseModel):
@@ -5911,6 +6132,7 @@ async def _send_dues_reminders(campaign: dict) -> int:
                 "status": {"$ne": "inactive"},
                 "is_lifetime_member": {"$ne": True},
                 "email": {"$exists": True, "$ne": ""},
+                "email_opt_out": {"$ne": True},
             },
             {"_id": 0, "id": 1, "name": 1, "email": 1, "membership_expires_at": 1},
         )
@@ -5929,17 +6151,17 @@ async def _send_dues_reminders(campaign: dict) -> int:
                 subject, body_html = _dues_reminder_email_html(
                     u.get("name", ""), stage, expires, stage_templates=stage_templates,
                 )
-                await asyncio.to_thread(resend_sdk.Emails.send, {
-                    "from": RESEND_FROM,
-                    "to": [email],
-                    "subject": subject,
-                    "html": body_html,
-                    "tags": [
+                await send_bulk_email(
+                    to_email=email,
+                    subject=subject,
+                    html_body=body_html,
+                    recipient_id=u["id"],
+                    tags=[
                         {"name": "type", "value": "dues_reminder"},
                         {"name": "stage", "value": stage},
                         {"name": "campaign_id", "value": campaign["id"]},
                     ],
-                })
+                )
                 await db.dues_reminders_sent.insert_one({
                     "id": str(uuid.uuid4()),
                     "user_id": u["id"],

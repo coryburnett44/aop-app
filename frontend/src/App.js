@@ -35,6 +35,7 @@ import CheckinScan from "./pages/CheckinScan";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import SetPassword from "./pages/SetPassword";
+import Unsubscribed from "./pages/Unsubscribed";
 import { SiteSettingsProvider } from "./context/SiteSettingsContext";
 
 function App() {
@@ -71,6 +72,7 @@ function App() {
                             <Route path="/schedule-meeting" element={<ProtectedRoute><ScheduleMeeting /></ProtectedRoute>} />
                             <Route path="/checkin/:token" element={<CheckinScan />} />
                             <Route path="/forgot-password" element={<ForgotPassword />} />
+                            <Route path="/unsubscribed" element={<Unsubscribed />} />
                             <Route path="/reset-password" element={<ResetPassword />} />
                             <Route path="/hours" element={<ProtectedRoute><Hours /></ProtectedRoute>} />
                             <Route path="/page/:slug" element={<CmsPage />} />

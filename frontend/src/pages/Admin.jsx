@@ -2383,6 +2383,7 @@ function EmailBlastAdmin() {
                     <TabsTrigger value="history" className="rounded-full" data-testid="email-tab-history"><Clock className="h-4 w-4 mr-1.5" />History</TabsTrigger>
                     <TabsTrigger value="test-send" className="rounded-full" data-testid="email-tab-test-send"><Send className="h-4 w-4 mr-1.5" />Test send</TabsTrigger>
                     <TabsTrigger value="automated" className="rounded-full" data-testid="email-tab-automated"><Clock className="h-4 w-4 mr-1.5" />Automated</TabsTrigger>
+                    <TabsTrigger value="deliverability" className="rounded-full" data-testid="email-tab-deliverability"><Mail className="h-4 w-4 mr-1.5" />Deliverability</TabsTrigger>
                 </TabsList>
             </div>
             <TabsContent value="compose" className="mt-6"><ComposeBlast /></TabsContent>
@@ -2391,7 +2392,99 @@ function EmailBlastAdmin() {
             <TabsContent value="history" className="mt-6"><BlastHistory /></TabsContent>
             <TabsContent value="test-send" className="mt-6"><EmailTestSend /></TabsContent>
             <TabsContent value="automated" className="mt-6"><AutomatedEmailsAdmin /></TabsContent>
+            <TabsContent value="deliverability" className="mt-6"><EmailDeliverability /></TabsContent>
         </Tabs>
+    );
+}
+
+function EmailDeliverability() {
+    const [data, setData] = useState(null);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        api.get("/email/deliverability")
+            .then(({ data }) => setData(data))
+            .catch((err) => setError(err.response?.data?.detail || "Could not load deliverability info"));
+    }, []);
+
+    if (error) return <div className="bg-card border border-border rounded-2xl p-6 text-red-700" data-testid="deliverability-error">{error}</div>;
+    if (!data) return <div className="text-muted-foreground">Loading…</div>;
+
+    const sandboxWarn = data.is_resend_sandbox;
+    const notConfigured = !data.resend_configured;
+
+    return (
+        <div className="space-y-5 max-w-3xl" data-testid="deliverability-panel">
+            <div className="bg-card border border-border rounded-2xl p-5">
+                <h3 className="font-heading text-xl font-bold mb-1">Email deliverability</h3>
+                <p className="text-sm text-muted-foreground">
+                    Stop emails from landing in members' junk folders. The app already attaches the
+                    headers and unsubscribe link that Gmail/Yahoo bulk-sender rules require — but DNS
+                    authentication on your sending domain (SPF, DKIM, DMARC) is the other half. Verify
+                    those below.
+                </p>
+            </div>
+
+            {(sandboxWarn || notConfigured) && (
+                <div className="rounded-2xl border-2 border-red-300 bg-red-50 p-4 text-sm" data-testid="deliverability-warning">
+                    <div className="font-bold text-red-800 mb-1">⚠ Action required</div>
+                    {notConfigured && <div>Resend API key is not configured on the server. Emails won't send at all.</div>}
+                    {sandboxWarn && <div>You're sending from <code>{data.from}</code> — that's the Resend sandbox address and <strong>guarantees</strong> spam folder placement. Switch <code>RESEND_FROM</code> to your verified domain.</div>}
+                </div>
+            )}
+
+            <div className="grid sm:grid-cols-2 gap-3" data-testid="deliverability-stats">
+                <div className="rounded-2xl border border-border bg-card p-4">
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Sender</div>
+                    <div className="font-mono text-sm mt-1 break-all">{data.from}</div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mt-3">Reply-To</div>
+                    <div className="font-mono text-sm mt-1 break-all">{data.reply_to}</div>
+                </div>
+                <div className="rounded-2xl border border-border bg-card p-4">
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Sending domain</div>
+                    <div className="font-mono text-sm mt-1">{data.sending_domain || "—"}</div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mt-3">Opted out</div>
+                    <div className="font-heading text-2xl font-black mt-1" data-testid="deliverability-optout-count">{data.opt_out_count} <span className="text-sm font-normal text-muted-foreground">/ {data.total_with_email} members</span></div>
+                </div>
+            </div>
+
+            <div className="rounded-2xl border border-border bg-card p-5">
+                <h4 className="font-heading text-lg font-bold mb-1">DNS records to verify</h4>
+                <p className="text-xs text-muted-foreground mb-4">
+                    Log in to your domain registrar (the place you bought <code>{data.sending_domain || "your domain"}</code>)
+                    and confirm these records exist. Without them, Gmail/Yahoo/Outlook will route your
+                    mail straight to spam — no exceptions.
+                </p>
+                <div className="space-y-3">
+                    {data.dns_checklist.map((row, i) => (
+                        <div key={i} className="rounded-xl border border-border bg-muted/30 p-3" data-testid={`dns-row-${i}`}>
+                            <div className="flex items-center gap-2 mb-1">
+                                <span className="inline-block text-[10px] font-bold uppercase tracking-wider rounded-full px-2 py-0.5 bg-primary/10 text-primary">{row.record}</span>
+                                <span className="text-xs text-muted-foreground">Host: <code className="bg-card px-1 py-0.5 rounded">{row.host}</code></span>
+                            </div>
+                            <div className="text-xs leading-relaxed font-mono break-all bg-card border border-border rounded p-2">{row.value}</div>
+                        </div>
+                    ))}
+                </div>
+                <div className="mt-4 text-xs text-muted-foreground leading-relaxed">
+                    After updating DNS, run a deliverability check:&nbsp;
+                    <a href="https://www.mail-tester.com/" target="_blank" rel="noopener noreferrer" className="text-primary font-semibold hover:underline">mail-tester.com</a>
+                    {" "}— send a test from the <strong>Test send</strong> tab to the address they give you, then click their "Check your score". Aim for 9/10 or higher.
+                </div>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-900 leading-relaxed" data-testid="deliverability-app-side">
+                <div className="font-bold text-emerald-800 mb-1.5 text-sm">What this app already does to stay out of junk:</div>
+                <ul className="list-disc pl-5 space-y-1">
+                    <li>Multipart messages (HTML + plain-text fallback)</li>
+                    <li><code>List-Unsubscribe</code> + <code>List-Unsubscribe-Post: List-Unsubscribe=One-Click</code> headers on bulk mail</li>
+                    <li>Visible unsubscribe link + your organization's mailing address in every blast footer (CAN-SPAM compliance)</li>
+                    <li><code>Reply-To</code> set to your real inbox (replies don't bounce)</li>
+                    <li><code>Precedence: bulk</code> on marketing mail so inbox providers route it correctly</li>
+                    <li>Opted-out members are automatically excluded from new blasts and dues reminders</li>
+                </ul>
+            </div>
+        </div>
     );
 }
 
