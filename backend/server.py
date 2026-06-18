@@ -1351,6 +1351,12 @@ def hours_out(h: dict) -> dict:
         "hours_adjusted_by": h.get("hours_adjusted_by"),
         "hours_adjusted_by_name": h.get("hours_adjusted_by_name"),
         "hours_adjusted_at": h.get("hours_adjusted_at"),
+        "logged_by_admin": h.get("logged_by_admin", False),
+        "approved_by": h.get("approved_by"),
+        "approved_by_name": h.get("approved_by_name"),
+        "approved_at": h.get("approved_at"),
+        "imported_from_csv": h.get("imported_from_csv"),
+        "csv_row": h.get("csv_row"),
         "created_at": h.get("created_at"),
     }
 

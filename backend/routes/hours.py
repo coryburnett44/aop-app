@@ -157,11 +157,8 @@ def register(
                 "approved_by": admin["id"],
                 "approved_by_name": admin.get("name", "Admin"),
                 "logged_by_admin": True,
-                "bulk_batch_id": "bulk-" + str(uuid.uuid4())[:12] if False else None,
                 "created_at": ts,
             }
-            # Drop the placeholder None field so we don't litter docs
-            doc.pop("bulk_batch_id", None)
             docs.append(doc)
             results.append({"user_id": uid, "ok": True, "name": target.get("name", "")})
 
@@ -331,11 +328,14 @@ def register(
         if docs:
             await db.volunteer_hours.insert_many(docs)
 
+        # Avoid sending an unbounded errors[] payload for huge files.
+        errors_truncated = errors[:50]
         return {
             "created": len(docs),
             "failed": len(errors),
             "total": len(rows),
-            "errors": errors,
+            "errors": errors_truncated,
+            "errors_truncated": len(errors) > 50,
         }
 
     @api.get("/hours")

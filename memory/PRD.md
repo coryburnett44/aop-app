@@ -16,6 +16,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AN — Iteration 44: Admin bulk hours + CSV import (2026-06-18)
+Two new admin productivity tools for volunteer-hours logging:
+
+1. **Multi-member hours** — `Hours.jsx` `LogHoursDialog` for admins replaces the single-member Select with a searchable checkbox list (data-testid `hours-admin-member-search` + `hours-admin-member-checkbox-{id}`). Selecting 2+ members routes the save to a new `POST /api/hours/admin/bulk` endpoint that auto-approves the same hours/activity for every selected member in one round-trip; selecting exactly 1 keeps the original `/hours/admin` path. Submit button label switches dynamically ("Log hours for N members (auto-approved)").
+2. **CSV import** — New "Import CSV" button beside "Log hours" opens `CsvImportDialog`. Required columns: `member_email, hours, date`; optional: `activity, event_type, agency_name, host_*`. Tolerates UTF-8 BOM, MM/DD/YYYY dates, and reports per-row errors. Endpoints added:
+   - `POST /api/hours/admin/csv` (multipart, max 1000 rows / 1 MB, auto-approve, returns `{created, failed, total, errors[]}`)
+   - `GET /api/hours/admin/csv/template` (sample CSV download)
+3. **Serializer audit fields** — `hours_out()` now surfaces `logged_by_admin`, `approved_by`, `approved_by_name`, `approved_at`, `imported_from_csv`, `csv_row` so UIs/audits can distinguish admin-logged vs self-logged vs CSV-imported rows.
+
+**Verification (iter44)**: testing_agent iteration_42.json — 15/15 pytest cases pass (bulk validation, de-dupe, mixed valid/invalid ids, CSV happy path, CSV bad columns/dates/hours, authz). Frontend 13/13 Playwright checks pass (multi-select counter, single-vs-bulk endpoint routing, CSV upload success + error panels, member-side hidden controls). Testing agent fixed a missing `@api.get("/hours")` decorator regression during this iteration.
+
+
+
 ### Phase AM — Iteration 43: Sub-events in parent-create + edit/delete from EventDetail (2026-06-17)
 Two related admin UX upgrades for events with sub-events (anniversary / retreat / weekend umbrellas):
 
