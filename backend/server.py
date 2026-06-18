@@ -139,6 +139,11 @@ def public_user(u: dict) -> dict:
         "country": u.get("country", ""),
         "chat_email_notifications": u.get("chat_email_notifications", True),
         "chat_sms_notifications": u.get("chat_sms_notifications", True),
+        "email_opt_out": bool(u.get("email_opt_out", False)),
+        "email_prefs": {
+            "blasts": (u.get("email_prefs") or {}).get("blasts", True),
+            "dues_reminders": (u.get("email_prefs") or {}).get("dues_reminders", True),
+        },
         "birthdate": u.get("birthdate", ""),
         "branch_of_service": u.get("branch_of_service", ""),
         "join_date": u.get("join_date") or u.get("created_at"),
@@ -4312,10 +4317,12 @@ async def resolve_segment(body: EmailBlastIn) -> List[dict]:
         q["id"] = {"$in": body.custom_user_ids}
     elif body.segment == "active":
         q["status_override"] = {"$ne": "deceased"}
-    # Always exclude members who have opted out of bulk email. test_only blasts
-    # bypass this filter (they only go to the admin sending them).
+    # Always exclude members who have opted out of bulk email or toggled off
+    # the "blasts" category in their Profile. test_only blasts bypass this
+    # filter (they only go to the admin sending them).
     if not body.test_only:
         q["email_opt_out"] = {"$ne": True}
+        q["email_prefs.blasts"] = {"$ne": False}
     cursor = db.users.find(q, {"_id": 0, "password_hash": 0}).limit(2000)
     return await cursor.to_list(2000)
 
@@ -4404,7 +4411,70 @@ async def send_email_blast(body: EmailBlastIn, user: dict = Depends(admin_tab_de
     return {"blast_id": blast_id, "sent": len(sent), "failed": len(failed)}
 
 
-@api.get("/email/blasts")
+@api.get("/me/email-preferences")
+async def get_my_email_preferences(user: dict = Depends(get_current_user)):
+    """Member's per-category email preferences. Defaults to opted-in for each
+    category. The master `email_opt_out` flag (set by the one-click Unsubscribe
+    footer link) overrides every category and is shown here so the member can
+    re-subscribe from the Profile page without needing the original email."""
+    prefs = user.get("email_prefs") or {}
+    return {
+        "email_opt_out": bool(user.get("email_opt_out", False)),
+        "email_opt_out_at": user.get("email_opt_out_at"),
+        "email_prefs": {
+            "blasts": prefs.get("blasts", True),
+            "dues_reminders": prefs.get("dues_reminders", True),
+        },
+    }
+
+
+class EmailPreferencesIn(BaseModel):
+    blasts: Optional[bool] = None
+    dues_reminders: Optional[bool] = None
+    # When the member toggles any category back on we automatically clear the
+    # master email_opt_out flag — saves them clicking a separate Re-subscribe.
+    email_opt_out: Optional[bool] = None
+
+
+@api.put("/me/email-preferences")
+async def update_my_email_preferences(body: EmailPreferencesIn, user: dict = Depends(get_current_user)):
+    cur_prefs = user.get("email_prefs") or {}
+    next_prefs = {
+        "blasts": cur_prefs.get("blasts", True),
+        "dues_reminders": cur_prefs.get("dues_reminders", True),
+    }
+    if body.blasts is not None:
+        next_prefs["blasts"] = bool(body.blasts)
+    if body.dues_reminders is not None:
+        next_prefs["dues_reminders"] = bool(body.dues_reminders)
+
+    update_doc: dict = {"email_prefs": next_prefs}
+    unset_doc: dict = {}
+    if body.email_opt_out is not None:
+        update_doc["email_opt_out"] = bool(body.email_opt_out)
+        if body.email_opt_out:
+            update_doc["email_opt_out_at"] = iso(now_utc())
+        else:
+            unset_doc["email_opt_out_at"] = ""
+    # If member re-enabled any category we treat that as an implicit re-subscribe
+    # (clear the master kill switch).
+    elif (next_prefs["blasts"] or next_prefs["dues_reminders"]) and user.get("email_opt_out"):
+        update_doc["email_opt_out"] = False
+        unset_doc["email_opt_out_at"] = ""
+
+    mongo_update: dict = {"$set": update_doc}
+    if unset_doc:
+        mongo_update["$unset"] = unset_doc
+    await db.users.update_one({"id": user["id"]}, mongo_update)
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return {
+        "ok": True,
+        "email_opt_out": bool(u.get("email_opt_out", False)),
+        "email_prefs": u.get("email_prefs") or next_prefs,
+    }
+
+
+
 async def list_email_blasts(_: dict = Depends(admin_tab_dep("email"))):
     items = await db.email_blasts.find({}, {"_id": 0}).sort("sent_at", -1).limit(100).to_list(100)
     return items
@@ -6133,6 +6203,7 @@ async def _send_dues_reminders(campaign: dict) -> int:
                 "is_lifetime_member": {"$ne": True},
                 "email": {"$exists": True, "$ne": ""},
                 "email_opt_out": {"$ne": True},
+                "email_prefs.dues_reminders": {"$ne": False},
             },
             {"_id": 0, "id": 1, "name": 1, "email": 1, "membership_expires_at": 1},
         )

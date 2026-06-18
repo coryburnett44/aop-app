@@ -457,8 +457,9 @@ export default function Profile() {
                     </form>
                 </TabsContent>
 
-                <TabsContent value="notifications" className="mt-6">
+                <TabsContent value="notifications" className="mt-6 space-y-6">
                     <NotificationPrefs user={user} onSaved={(updated) => setUser(updated)} />
+                    <EmailPreferences user={user} onSaved={(updated) => setUser(updated)} />
                 </TabsContent>
 
                 <TabsContent value="activity" className="mt-6">
@@ -694,6 +695,100 @@ function NotificationPrefs({ user, onSaved }) {
                 <p className="text-xs text-muted-foreground">If you turn both off, you'll only see new messages by opening the chat tab.</p>
                 <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="notif-save-btn">
                     {busy ? "Saving…" : "Save"}
+                </Button>
+            </div>
+        </div>
+    );
+}
+
+function EmailPreferences({ user, onSaved }) {
+    const [optOut, setOptOut] = useState(!!user?.email_opt_out);
+    const [blasts, setBlasts] = useState(user?.email_prefs?.blasts !== false);
+    const [duesReminders, setDuesReminders] = useState(user?.email_prefs?.dues_reminders !== false);
+    const [loaded, setLoaded] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        // Refresh from server in case the public unsubscribe link was clicked
+        // since the last user fetch (otherwise the master toggle looks stale).
+        api.get("/me/email-preferences")
+            .then(({ data }) => {
+                setOptOut(!!data.email_opt_out);
+                setBlasts(data.email_prefs?.blasts !== false);
+                setDuesReminders(data.email_prefs?.dues_reminders !== false);
+                setLoaded(true);
+            })
+            .catch(() => setLoaded(true));
+    }, []);
+
+    async function save() {
+        setBusy(true);
+        try {
+            const payload = {
+                blasts,
+                dues_reminders: duesReminders,
+                email_opt_out: optOut,
+            };
+            const { data } = await api.put("/me/email-preferences", payload);
+            setOptOut(!!data.email_opt_out);
+            setBlasts(data.email_prefs?.blasts !== false);
+            setDuesReminders(data.email_prefs?.dues_reminders !== false);
+            // Sync the user object so other tabs see the change immediately.
+            onSaved?.({ ...user, email_opt_out: !!data.email_opt_out, email_prefs: data.email_prefs });
+            toast.success("Email preferences saved");
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not save");
+        }
+        setBusy(false);
+    }
+
+    return (
+        <div className="bg-card rounded-2xl p-6 border border-border shadow-warm max-w-2xl space-y-6" data-testid="email-preferences">
+            <div>
+                <h2 className="font-heading text-xl font-bold">Email preferences</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                    Choose which Alpha Omega Phi emails you want to receive. Account-critical
+                    emails — password resets, your own RSVP receipts, security alerts — always
+                    come through regardless of these settings.
+                </p>
+            </div>
+
+            {loaded && optOut && (
+                <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-3 text-sm" data-testid="email-prefs-master-banner">
+                    <div className="font-bold text-amber-800 mb-0.5">⚠ You are currently unsubscribed from all marketing email.</div>
+                    <div className="text-amber-900/80 text-xs leading-relaxed">
+                        This happens when you click "Unsubscribe" at the bottom of an email. Toggle any category back on below — we'll automatically re-subscribe you to the master list.
+                    </div>
+                </div>
+            )}
+
+            <ToggleRow
+                title="Newsletter & announcement blasts"
+                description="Chapter news, event invites, fundraising drives, and the periodic admin email blast. Sent from the Admin → Email tab."
+                checked={blasts && !optOut}
+                onChange={(v) => { setBlasts(v); if (v) setOptOut(false); }}
+                testid="email-prefs-blasts-toggle"
+            />
+
+            <ToggleRow
+                title="Annual dues renewal reminders"
+                description="Friendly heads-up emails 30, 15, and 5 days before your membership expires, plus a final note 1 day after. Highly recommended — missing renewal puts you in inactive status."
+                checked={duesReminders && !optOut}
+                onChange={(v) => { setDuesReminders(v); if (v) setOptOut(false); }}
+                testid="email-prefs-dues-toggle"
+            />
+
+            <ToggleRow
+                title="Unsubscribe from everything (master kill switch)"
+                description="Equivalent to clicking the Unsubscribe link in the footer of any email blast. Turning this on overrides the individual toggles above."
+                checked={optOut}
+                onChange={setOptOut}
+                testid="email-prefs-optout-toggle"
+            />
+
+            <div className="pt-3 border-t border-border/40 flex items-center justify-end">
+                <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="email-prefs-save-btn">
+                    {busy ? "Saving…" : "Save email preferences"}
                 </Button>
             </div>
         </div>
