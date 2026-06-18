@@ -200,12 +200,23 @@ def register(
         )
 
     @api.post("/hours/admin/csv")
-    async def admin_log_hours_csv(file: UploadFile = File(...), admin: dict = Depends(admin_tab_dep("hours"))):
+    async def admin_log_hours_csv(
+        file: UploadFile = File(...),
+        dry_run: bool = False,
+        admin: dict = Depends(admin_tab_dep("hours")),
+    ):
         """Bulk-import volunteer hours from a CSV file. Required columns:
         member_email, hours, date. Optional: activity, event_type, agency_name,
         host_name, host_email, host_phone. Every successfully parsed row is
         auto-approved. Rows that fail validation are returned in `errors`
-        so the admin can fix and re-upload."""
+        so the admin can fix and re-upload.
+
+        When `dry_run=true` is passed (querystring or form), nothing is written
+        to the database. The response includes a `preview` array with one entry
+        per CSV row (status='ready' or 'error', resolved member name, parsed
+        values, and an error message when applicable) so admins can sanity-check
+        the whole file before committing.
+        """
         if not file.filename or not file.filename.lower().endswith(".csv"):
             raise HTTPException(status_code=400, detail="Upload a .csv file")
         raw = await file.read()
@@ -256,6 +267,7 @@ def register(
         ts = iso(now_utc())
         docs: list[dict] = []
         errors: list[dict] = []
+        preview: list[dict] = []
 
         def opt(row, key_lower):
             real = normalized.get(key_lower)
@@ -263,44 +275,61 @@ def register(
                 return ""
             return (row.get(real) or "").strip()
 
+        def add_error(row_num: int, email: str, member_name: str, message: str, raw_hours: str = "", raw_date: str = "", raw_activity: str = ""):
+            errors.append({"row": row_num, "message": message})
+            preview.append({
+                "row": row_num,
+                "status": "error",
+                "email": email,
+                "member_name": member_name,
+                "hours": raw_hours,
+                "date": raw_date,
+                "activity": raw_activity,
+                "message": message,
+            })
+
         for idx, row in enumerate(rows, start=2):  # row 1 is header, so data starts at 2
-            email = (row.get(email_key) or "").strip().lower()
+            email_raw = (row.get(email_key) or "").strip()
+            email = email_raw.lower()
+            raw_hours = (row.get(hours_key) or "").strip()
+            raw_date = (row.get(date_key) or "").strip()
+            raw_activity = opt(row, "activity")
+
             if not email:
-                errors.append({"row": idx, "message": "Missing member_email"})
+                add_error(idx, "", "", "Missing member_email", raw_hours, raw_date, raw_activity)
                 continue
             target = users_by_email.get(email)
             if not target:
-                errors.append({"row": idx, "message": f"No member with email {email}"})
+                add_error(idx, email_raw, "", f"No member with email {email_raw}", raw_hours, raw_date, raw_activity)
                 continue
             if scoped_ids is not None and target["id"] not in scoped_ids:
-                errors.append({"row": idx, "message": f"{email} is out of your chapter scope"})
+                add_error(idx, email_raw, target.get("name", ""), f"{email_raw} is out of your chapter scope", raw_hours, raw_date, raw_activity)
                 continue
             try:
-                hours_val = float((row.get(hours_key) or "").strip())
+                hours_val = float(raw_hours)
                 if hours_val <= 0 or hours_val > 1000:
                     raise ValueError("hours must be > 0 and <= 1000")
             except Exception:
-                errors.append({"row": idx, "message": "Invalid hours value"})
+                add_error(idx, email_raw, target.get("name", ""), "Invalid hours value", raw_hours, raw_date, raw_activity)
                 continue
-            date_raw = (row.get(date_key) or "").strip()
-            if not date_raw:
-                errors.append({"row": idx, "message": "Missing date"})
+            if not raw_date:
+                add_error(idx, email_raw, target.get("name", ""), "Missing date", raw_hours, raw_date, raw_activity)
                 continue
             try:
                 # Accept common shapes: 2026-06-15, 2026/06/15, 06/15/2026, ISO datetime
-                d_norm = date_raw.replace("/", "-")
+                d_norm = raw_date.replace("/", "-")
                 if len(d_norm) == 10 and d_norm[2] == "-" and d_norm[5] == "-":
                     # MM-DD-YYYY → flip
                     mm, dd, yyyy = d_norm.split("-")
                     d_norm = f"{yyyy}-{mm}-{dd}"
                 parsed_dt = _dt.fromisoformat(d_norm.replace("Z", ""))
             except Exception:
-                errors.append({"row": idx, "message": f"Invalid date '{date_raw}'"})
+                add_error(idx, email_raw, target.get("name", ""), f"Invalid date '{raw_date}'", raw_hours, raw_date, raw_activity)
                 continue
             event_type = (opt(row, "event_type") or "aop_related").lower()
             if event_type not in ("aop_related", "other"):
                 event_type = "aop_related"
-            activity_text = opt(row, "activity") or "Logged by admin (CSV import)"
+            activity_text = raw_activity or "Logged by admin (CSV import)"
             docs.append({
                 "id": str(uuid.uuid4()),
                 "user_id": target["id"],
@@ -324,18 +353,33 @@ def register(
                 "csv_row": idx,
                 "created_at": ts,
             })
+            preview.append({
+                "row": idx,
+                "status": "ready",
+                "email": target.get("email", email_raw),
+                "member_name": target.get("name", ""),
+                "hours": hours_val,
+                "date": iso(parsed_dt)[:10],
+                "activity": activity_text,
+            })
 
-        if docs:
+        if not dry_run and docs:
             await db.volunteer_hours.insert_many(docs)
 
         # Avoid sending an unbounded errors[] payload for huge files.
         errors_truncated = errors[:50]
+        # Cap preview at 200 rows so very large files don't blow up the response.
+        preview_truncated = preview[:200]
         return {
-            "created": len(docs),
+            "dry_run": dry_run,
+            "created": 0 if dry_run else len(docs),
+            "ready": len(docs),  # number that WOULD be created (or were)
             "failed": len(errors),
             "total": len(rows),
             "errors": errors_truncated,
             "errors_truncated": len(errors) > 50,
+            "preview": preview_truncated,
+            "preview_truncated": len(preview) > 200,
         }
 
     @api.get("/hours")

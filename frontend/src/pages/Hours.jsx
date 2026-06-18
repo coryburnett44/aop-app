@@ -271,8 +271,11 @@ function LogHoursDialog() {
 function CsvImportDialog() {
     const [open, setOpen] = useState(false);
     const [file, setFile] = useState(null);
-    const [busy, setBusy] = useState(false);
-    const [result, setResult] = useState(null);
+    const [preview, setPreview] = useState(null); // dry-run response
+    const [previewing, setPreviewing] = useState(false);
+    const [importing, setImporting] = useState(false);
+    const [result, setResult] = useState(null); // final import response
+    const [errorBanner, setErrorBanner] = useState("");
 
     async function downloadTemplate() {
         try {
@@ -288,11 +291,29 @@ function CsvImportDialog() {
         } catch (e) { toast.error("Couldn't download template"); }
     }
 
-    async function upload(e) {
-        e.preventDefault();
-        if (!file) { toast.error("Pick a .csv file first"); return; }
-        setBusy(true);
+    async function runPreview(f) {
+        if (!f) return;
+        setPreviewing(true);
+        setPreview(null);
         setResult(null);
+        setErrorBanner("");
+        try {
+            const fd = new FormData();
+            fd.append("file", f);
+            const { data } = await api.post("/hours/admin/csv?dry_run=true", fd, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+            setPreview(data);
+        } catch (err) {
+            setErrorBanner(err.response?.data?.detail || "Could not preview CSV");
+        }
+        setPreviewing(false);
+    }
+
+    async function confirmImport() {
+        if (!file) return;
+        if (!preview || preview.ready === 0) { toast.error("Nothing ready to import"); return; }
+        setImporting(true);
         try {
             const fd = new FormData();
             fd.append("file", file);
@@ -304,14 +325,16 @@ function CsvImportDialog() {
             else toast.error("No rows imported — see errors below");
             window.dispatchEvent(new Event("hours-logged"));
         } catch (err) {
-            toast.error(err.response?.data?.detail || "Upload failed");
+            toast.error(err.response?.data?.detail || "Import failed");
         }
-        setBusy(false);
+        setImporting(false);
     }
 
     function reset() {
         setFile(null);
+        setPreview(null);
         setResult(null);
+        setErrorBanner("");
     }
 
     return (
@@ -325,11 +348,11 @@ function CsvImportDialog() {
             >
                 Import CSV
             </Button>
-            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle className="font-heading text-2xl">Bulk import hours from CSV</DialogTitle>
                 </DialogHeader>
-                <form onSubmit={upload} className="space-y-4 mt-2" data-testid="hours-csv-form">
+                <div className="space-y-4 mt-2" data-testid="hours-csv-form">
                     <div className="bg-primary/5 border border-primary/20 rounded-2xl p-3 text-xs leading-relaxed">
                         <div className="font-bold text-primary mb-1">CSV format</div>
                         <div className="text-foreground/80">
@@ -347,20 +370,120 @@ function CsvImportDialog() {
                             ⬇ Download template
                         </button>
                     </div>
-                    <div>
-                        <Label>CSV file</Label>
-                        <Input
-                            type="file"
-                            accept=".csv,text/csv"
-                            onChange={(e) => { setFile(e.target.files?.[0] || null); setResult(null); }}
-                            className="rounded-xl mt-1.5"
-                            data-testid="hours-csv-file-input"
-                        />
-                        {file && <div className="text-xs text-muted-foreground mt-1.5">Selected: <span className="font-mono">{file.name}</span> ({(file.size / 1024).toFixed(1)} KB)</div>}
-                    </div>
-                    <Button type="submit" disabled={busy || !file} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-csv-upload-btn">
-                        {busy ? "Importing…" : "Import + auto-approve"}
-                    </Button>
+                    {!result && (
+                        <div>
+                            <Label>CSV file</Label>
+                            <Input
+                                type="file"
+                                accept=".csv,text/csv"
+                                onChange={(e) => {
+                                    const f = e.target.files?.[0] || null;
+                                    setFile(f);
+                                    setPreview(null);
+                                    setResult(null);
+                                    setErrorBanner("");
+                                    if (f) runPreview(f);
+                                }}
+                                className="rounded-xl mt-1.5"
+                                data-testid="hours-csv-file-input"
+                            />
+                            {file && <div className="text-xs text-muted-foreground mt-1.5">Selected: <span className="font-mono">{file.name}</span> ({(file.size / 1024).toFixed(1)} KB){previewing && " — analyzing…"}</div>}
+                        </div>
+                    )}
+
+                    {errorBanner && (
+                        <div className="rounded-2xl border border-red-300 bg-red-50 text-red-800 text-sm p-3" data-testid="hours-csv-error-banner">
+                            {errorBanner}
+                        </div>
+                    )}
+
+                    {preview && !result && (
+                        <div className="space-y-3" data-testid="hours-csv-preview">
+                            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-3 text-sm">
+                                <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Dry-run preview</span>
+                                <span className="text-green-700 font-bold" data-testid="hours-csv-preview-ready">✅ {preview.ready} ready</span>
+                                {preview.failed > 0 && <span className="text-red-700 font-bold" data-testid="hours-csv-preview-failed">⚠ {preview.failed} error{preview.failed === 1 ? "" : "s"}</span>}
+                                <span className="text-muted-foreground text-xs">of {preview.total} row{preview.total === 1 ? "" : "s"}</span>
+                            </div>
+                            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                                <div className="max-h-80 overflow-auto" data-testid="hours-csv-preview-table">
+                                    <table className="w-full text-xs">
+                                        <thead className="bg-muted/50 text-[10px] uppercase tracking-wider sticky top-0 z-10">
+                                            <tr>
+                                                <th className="px-3 py-2 text-left font-bold w-12">Row</th>
+                                                <th className="px-3 py-2 text-left font-bold">Status</th>
+                                                <th className="px-3 py-2 text-left font-bold">Member</th>
+                                                <th className="px-3 py-2 text-left font-bold w-16">Hrs</th>
+                                                <th className="px-3 py-2 text-left font-bold w-28">Date</th>
+                                                <th className="px-3 py-2 text-left font-bold">Activity / Error</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {preview.preview.map((p) => (
+                                                <tr
+                                                    key={p.row}
+                                                    className={`border-t border-border ${p.status === "error" ? "bg-red-50/60" : "bg-card"}`}
+                                                    data-testid={`hours-csv-preview-row-${p.row}`}
+                                                >
+                                                    <td className="px-3 py-1.5 font-mono text-muted-foreground">{p.row}</td>
+                                                    <td className="px-3 py-1.5">
+                                                        {p.status === "ready" ? (
+                                                            <span className="inline-block text-[10px] font-bold uppercase tracking-wider rounded-full px-2 py-0.5 bg-green-100 text-green-700">Ready</span>
+                                                        ) : (
+                                                            <span className="inline-block text-[10px] font-bold uppercase tracking-wider rounded-full px-2 py-0.5 bg-red-100 text-red-700">Error</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-1.5">
+                                                        <div className="font-semibold truncate max-w-[180px]">{p.member_name || <span className="italic text-muted-foreground">unresolved</span>}</div>
+                                                        <div className="text-[11px] text-muted-foreground truncate max-w-[180px]">{p.email}</div>
+                                                    </td>
+                                                    <td className="px-3 py-1.5 font-mono">{p.hours || "—"}</td>
+                                                    <td className="px-3 py-1.5 font-mono">{p.date || "—"}</td>
+                                                    <td className="px-3 py-1.5">
+                                                        {p.status === "error" ? (
+                                                            <span className="text-red-700">{p.message}</span>
+                                                        ) : (
+                                                            <span className="text-foreground/90 truncate block max-w-[260px]">{p.activity}</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {preview.preview_truncated && (
+                                    <div className="px-3 py-2 text-[11px] text-muted-foreground bg-muted/30 border-t border-border">
+                                        Showing first 200 rows. Confirming the import will still process every row in the file.
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <Button
+                                    type="button"
+                                    onClick={confirmImport}
+                                    disabled={importing || preview.ready === 0}
+                                    className="rounded-full bg-primary hover:bg-primary/90 flex-1 min-w-[200px]"
+                                    data-testid="hours-csv-confirm-btn"
+                                >
+                                    {importing ? "Importing…" : `Confirm import (${preview.ready} row${preview.ready === 1 ? "" : "s"})`}
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={reset}
+                                    disabled={importing}
+                                    className="rounded-full"
+                                    data-testid="hours-csv-reset-btn"
+                                >
+                                    Choose different file
+                                </Button>
+                            </div>
+                            {preview.ready === 0 && (
+                                <div className="text-xs text-red-700 italic">No rows are ready to import. Fix the errors above and re-upload.</div>
+                            )}
+                        </div>
+                    )}
+
                     {result && (
                         <div className="rounded-2xl border border-border bg-muted/30 p-3 text-sm" data-testid="hours-csv-result">
                             <div className="flex items-center gap-3 mb-2">
@@ -379,9 +502,12 @@ function CsvImportDialog() {
                                     ))}
                                 </div>
                             )}
+                            <Button type="button" onClick={reset} variant="outline" className="rounded-full mt-3" data-testid="hours-csv-import-another">
+                                Import another file
+                            </Button>
                         </div>
                     )}
-                </form>
+                </div>
             </DialogContent>
         </Dialog>
     );
