@@ -16,6 +16,34 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AP — Iteration 46: Email deliverability + one-click unsubscribe (2026-06-18)
+User reported admin email blasts landing in production members' junk folders. Verified the org is sending from their own domain (`info@aop-app.org`), not the Resend sandbox — so the fix is bulk-sender hygiene + DNS authentication, not domain switching. Shipped:
+
+1. **`send_bulk_email()` helper** (`server.py`) — every blast and dues reminder now goes through this wrapper which auto-attaches:
+   - Multipart: HTML + auto-derived plain-text fallback (HTML-only is a strong spam signal)
+   - `Reply-To: info@aop-app.org`
+   - `List-Unsubscribe: <https://.../api/email/unsubscribe?token=...>, <mailto:info@aop-app.org?subject=unsubscribe>`
+   - `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058 — required by Gmail/Yahoo for senders >5000/day, used as positive signal even below that threshold)
+   - `Precedence: bulk` header
+   - Visible footer with organization mailing address + Unsubscribe link (CAN-SPAM)
+2. **Opt-out infrastructure**:
+   - `users.email_opt_out` boolean + `email_opt_out_at` timestamp
+   - `resolve_segment()` excludes opted-out members from blasts (except `test_only`)
+   - Dues-reminder cron also skips `email_opt_out=true`
+3. **Public endpoints** (no auth, HMAC-token-secured):
+   - `GET / POST /api/email/unsubscribe?token=...` → flips opt_out, 302s to `/unsubscribed?status=ok|invalid`
+   - `POST /api/email/resubscribe?token=...` → flips opt_out back
+   - `GET /api/email/unsubscribe-status?token=...` → read state for /unsubscribed page
+4. **`GET /api/email/deliverability`** (admin) — returns sender, reply-to, sending domain, opt-out count, sandbox warning flag, and a DNS checklist (SPF / DKIM / DMARC / feedback-loop) with the org's real domain interpolated into the DMARC value.
+5. **Public `/unsubscribed` React page** (`Unsubscribed.jsx`) — confirms the opt-out, shows email, offers "I clicked by mistake — re-subscribe" button.
+6. **Admin → Email → Deliverability tab** with sender/reply-to/sending-domain tiles, opt-out counter, DNS checklist, mail-tester.com link, and a green summary card listing all the headers/footers the app already attaches.
+
+**Production note**: The unsubscribe link's host is built from backend env `FRONTEND_URL`. Preview env currently has it set to the preview URL — when deployed to prod, this must be `FRONTEND_URL=https://aop-app.org` in the production backend env (otherwise members clicking Unsubscribe in production emails would land on the preview env). New env vars introduced (with safe defaults): `RESEND_REPLY_TO`, `ORG_MAILING_ADDRESS`, `UNSUBSCRIBE_SECRET` (falls back to `JWT_SECRET`).
+
+**Verification (iter46)**: testing_agent iteration_46.json — 10/10 backend pytest + 8/8 frontend Playwright PASS. Unsubscribe token format: `base64url(user_id + '.' + first16(b64url(HMAC-SHA256(SECRET, user_id))))`.
+
+
+
 ### Phase AO — Iteration 45: CSV import dry-run preview (2026-06-18)
 Two-step admin CSV import flow on `/hours`:
 
