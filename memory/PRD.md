@@ -16,6 +16,16 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AO — Iteration 45: CSV import dry-run preview (2026-06-18)
+Two-step admin CSV import flow on `/hours`:
+
+1. **Backend** — `POST /api/hours/admin/csv` now accepts a `dry_run` query param. When `dry_run=true`, the endpoint validates the file exactly as it would for a real import, builds a per-row `preview` list (each row tagged `status: "ready" | "error"` with resolved `member_name`, `email`, parsed `hours`, `date`, `activity` and an error `message` when applicable), and returns `{dry_run, created: 0, ready, failed, total, errors, preview, preview_truncated}` **without writing anything**. Preview list is capped at 200 entries; `preview_truncated` flag signals overflow.
+2. **Frontend** — `CsvImportDialog` is now a wizard: picking the file auto-POSTs to `?dry_run=true` and renders a sticky-header table (`hours-csv-preview-table`) with READY/ERROR pills, member name, hours, date, activity (or red error message). The header chip summarises `✅ X ready · ⚠ Y errors of N rows`. A "Confirm import (X rows)" CTA POSTs without `dry_run` to actually persist. "Choose different file" resets to the picker; after a successful confirm "Import another file" cycles back. Confirm is disabled when `ready === 0`.
+
+**Verification (iter45)**: testing_agent iteration_45.json — 6/6 new pytest cases pass (dry-run skips insert, confirm writes, errors-only dry-run, preview cap > 200, authz), 15/15 iter42 regression still green, 10/10 frontend Playwright checks pass (auto-preview on file select, READY/ERROR rendering, dynamic confirm label, disabled confirm when ready=0, both reset paths).
+
+
+
 ### Phase AN — Iteration 44: Admin bulk hours + CSV import (2026-06-18)
 Two new admin productivity tools for volunteer-hours logging:
 
