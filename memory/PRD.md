@@ -16,6 +16,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AQ — Iteration 47: Member-facing Email preferences (2026-06-18)
+Members can now self-manage which AOP emails they receive from Profile → Notifications without needing the email footer link:
+
+1. **Backend** — new `GET / PUT /api/me/email-preferences`. Storage: `users.email_prefs = {blasts: bool, dues_reminders: bool}` (default both true). `email_opt_out` remains the master kill switch. `public_user()` now exposes both fields on `/api/auth/me`.
+2. **Implicit re-subscribe** — when a member toggles any category back on via PUT (without explicitly passing `email_opt_out`), the master `email_opt_out` flag is auto-cleared. Saves them clicking the public re-subscribe button.
+3. **Per-category filters** — `resolve_segment()` now also excludes `email_prefs.blasts === false`; dues-reminder cron now also excludes `email_prefs.dues_reminders === false`.
+4. **Frontend** — `EmailPreferences` card added to Profile → Notifications tab with three switches (`email-prefs-blasts-toggle`, `email-prefs-dues-toggle`, `email-prefs-optout-toggle`), per-category descriptions, an amber `email-prefs-master-banner` shown when master kill is on, and a Save button that toasts on success. Category toggles visually disable when master is on (`checked={cat && !optOut}`) but underlying state is preserved.
+
+**Verification (iter47)**: testing_agent iteration_47.json — 12/12 backend pytest + 7/7 frontend Playwright PASS, including implicit-re-subscribe and persistence-after-navigation. No bugs found.
+
+
+
 ### Phase AP — Iteration 46: Email deliverability + one-click unsubscribe (2026-06-18)
 User reported admin email blasts landing in production members' junk folders. Verified the org is sending from their own domain (`info@aop-app.org`), not the Resend sandbox — so the fix is bulk-sender hygiene + DNS authentication, not domain switching. Shipped:
 
