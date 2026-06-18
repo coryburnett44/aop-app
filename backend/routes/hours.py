@@ -7,17 +7,24 @@ Owns:
   - DELETE /hours/{id}                 (member or admin)
   - GET    /me/hours                   (filterable by year/quarter/month/status)
   - GET    /me/hours/summary           (year rollup: by_month / by_quarter)
+  - POST   /hours/admin                (admin logs hours for ONE member, auto-approved)
+  - POST   /hours/admin/bulk           (admin logs SAME hours for many members)
+  - POST   /hours/admin/csv            (admin uploads CSV → bulk log + auto-approve)
+  - GET    /hours/admin/csv/template   (download a CSV template w/ headers + sample row)
 
 The `hours_out` serializer, `_period_to_range` helper, and chapter-scoping
 helpers remain in server.py and are injected.
 """
+import csv
+import io
 from datetime import datetime as _dt
 from typing import Optional
 import uuid
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, UploadFile, File
+from fastapi.responses import Response
 
-from models import HoursLogIn, HoursReviewIn, AdminHoursLogIn
+from models import HoursLogIn, HoursReviewIn, AdminHoursLogIn, AdminHoursBulkLogIn
 
 
 def register(
@@ -95,6 +102,241 @@ def register(
         }
         await db.volunteer_hours.insert_one(doc)
         return hours_out(doc)
+
+    @api.post("/hours/admin/bulk")
+    async def admin_log_hours_bulk(body: AdminHoursBulkLogIn, admin: dict = Depends(admin_tab_dep("hours"))):
+        """Admin logs the SAME volunteer activity for multiple members at once.
+        Returns a per-member result list so the frontend can show which inserts
+        succeeded and which were rejected (e.g. user not found, out of chapter
+        scope). Auto-approved like the single-member variant."""
+        # De-dupe user_ids in case the picker sent the same id twice
+        unique_ids = list(dict.fromkeys(body.user_ids))
+        if not unique_ids:
+            raise HTTPException(status_code=400, detail="No members selected")
+
+        # Look up all targets in one round-trip
+        targets_cursor = db.users.find(
+            {"id": {"$in": unique_ids}},
+            {"_id": 0, "id": 1, "name": 1, "chapter_id": 1},
+        )
+        targets = {t["id"]: t for t in await targets_cursor.to_list(len(unique_ids))}
+
+        # Chapter-scoped admins can only act inside their chapter
+        scoped_ids = None
+        if is_chapter_scoped(admin):
+            scoped_ids = set(await chapter_scope_user_ids(admin) or [])
+
+        activity_text = body.activity or body.description or "Logged by admin"
+        ts = iso(now_utc())
+        docs: list[dict] = []
+        results: list[dict] = []
+        for uid in unique_ids:
+            target = targets.get(uid)
+            if not target:
+                results.append({"user_id": uid, "ok": False, "error": "Member not found"})
+                continue
+            if scoped_ids is not None and uid not in scoped_ids:
+                results.append({"user_id": uid, "ok": False, "error": "Out of chapter scope"})
+                continue
+            doc = {
+                "id": str(uuid.uuid4()),
+                "user_id": target["id"],
+                "user_name": target.get("name", ""),
+                "hours": body.hours,
+                "description": activity_text,
+                "activity": activity_text,
+                "event_type": body.event_type,
+                "agency_name": body.agency_name or "",
+                "host_name": body.host_name or "",
+                "host_email": body.host_email or "",
+                "host_phone": body.host_phone or "",
+                "date": iso(body.date),
+                "event_id": body.event_id,
+                "status": "approved",
+                "approved_at": ts,
+                "approved_by": admin["id"],
+                "approved_by_name": admin.get("name", "Admin"),
+                "logged_by_admin": True,
+                "bulk_batch_id": "bulk-" + str(uuid.uuid4())[:12] if False else None,
+                "created_at": ts,
+            }
+            # Drop the placeholder None field so we don't litter docs
+            doc.pop("bulk_batch_id", None)
+            docs.append(doc)
+            results.append({"user_id": uid, "ok": True, "name": target.get("name", "")})
+
+        if docs:
+            await db.volunteer_hours.insert_many(docs)
+
+        ok_count = sum(1 for r in results if r["ok"])
+        fail_count = len(results) - ok_count
+        return {
+            "created": ok_count,
+            "failed": fail_count,
+            "total": len(results),
+            "results": results,
+        }
+
+    @api.get("/hours/admin/csv/template")
+    async def admin_csv_template(_: dict = Depends(admin_tab_dep("hours"))):
+        """Returns a small CSV template so admins know which headers to use.
+        Includes a single illustrative row that the admin should delete before
+        uploading."""
+        headers = [
+            "member_email", "hours", "date", "activity", "event_type",
+            "agency_name", "host_name", "host_email", "host_phone",
+        ]
+        sample = [
+            "member@clubhaven.app", "2.5", "2026-06-15",
+            "Trail cleanup at Forest Park", "aop_related",
+            "Wounded Warrior Project", "Jane Host",
+            "jane@example.org", "555-123-4567",
+        ]
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(headers)
+        writer.writerow(sample)
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="aop-hours-template.csv"'},
+        )
+
+    @api.post("/hours/admin/csv")
+    async def admin_log_hours_csv(file: UploadFile = File(...), admin: dict = Depends(admin_tab_dep("hours"))):
+        """Bulk-import volunteer hours from a CSV file. Required columns:
+        member_email, hours, date. Optional: activity, event_type, agency_name,
+        host_name, host_email, host_phone. Every successfully parsed row is
+        auto-approved. Rows that fail validation are returned in `errors`
+        so the admin can fix and re-upload."""
+        if not file.filename or not file.filename.lower().endswith(".csv"):
+            raise HTTPException(status_code=400, detail="Upload a .csv file")
+        raw = await file.read()
+        # Cap upload size to ~1 MB to keep parsing fast
+        if len(raw) > 1024 * 1024:
+            raise HTTPException(status_code=400, detail="CSV too large (max 1 MB)")
+        try:
+            text = raw.decode("utf-8-sig")  # tolerate Excel BOM
+        except UnicodeDecodeError:
+            try:
+                text = raw.decode("latin-1")
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Could not decode CSV: {exc}")
+
+        reader = csv.DictReader(io.StringIO(text))
+        if not reader.fieldnames:
+            raise HTTPException(status_code=400, detail="CSV has no header row")
+        normalized = {(h or "").strip().lower(): h for h in reader.fieldnames}
+        if "member_email" not in normalized and "email" not in normalized:
+            raise HTTPException(status_code=400, detail="CSV must include a 'member_email' column")
+        if "hours" not in normalized:
+            raise HTTPException(status_code=400, detail="CSV must include an 'hours' column")
+        if "date" not in normalized:
+            raise HTTPException(status_code=400, detail="CSV must include a 'date' column")
+
+        email_key = normalized.get("member_email") or normalized.get("email")
+        hours_key = normalized["hours"]
+        date_key = normalized["date"]
+
+        # Pre-resolve every email in the file in one DB round-trip
+        rows = list(reader)
+        if not rows:
+            raise HTTPException(status_code=400, detail="CSV has no data rows")
+        if len(rows) > 1000:
+            raise HTTPException(status_code=400, detail="CSV is too large (max 1000 rows)")
+
+        emails = sorted({(r.get(email_key) or "").strip().lower() for r in rows if (r.get(email_key) or "").strip()})
+        users_cursor = db.users.find(
+            {"email": {"$in": emails}},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "chapter_id": 1},
+        )
+        users_by_email = {u["email"].lower(): u for u in await users_cursor.to_list(len(emails) or 1)}
+
+        scoped_ids = None
+        if is_chapter_scoped(admin):
+            scoped_ids = set(await chapter_scope_user_ids(admin) or [])
+
+        ts = iso(now_utc())
+        docs: list[dict] = []
+        errors: list[dict] = []
+
+        def opt(row, key_lower):
+            real = normalized.get(key_lower)
+            if not real:
+                return ""
+            return (row.get(real) or "").strip()
+
+        for idx, row in enumerate(rows, start=2):  # row 1 is header, so data starts at 2
+            email = (row.get(email_key) or "").strip().lower()
+            if not email:
+                errors.append({"row": idx, "message": "Missing member_email"})
+                continue
+            target = users_by_email.get(email)
+            if not target:
+                errors.append({"row": idx, "message": f"No member with email {email}"})
+                continue
+            if scoped_ids is not None and target["id"] not in scoped_ids:
+                errors.append({"row": idx, "message": f"{email} is out of your chapter scope"})
+                continue
+            try:
+                hours_val = float((row.get(hours_key) or "").strip())
+                if hours_val <= 0 or hours_val > 1000:
+                    raise ValueError("hours must be > 0 and <= 1000")
+            except Exception:
+                errors.append({"row": idx, "message": "Invalid hours value"})
+                continue
+            date_raw = (row.get(date_key) or "").strip()
+            if not date_raw:
+                errors.append({"row": idx, "message": "Missing date"})
+                continue
+            try:
+                # Accept common shapes: 2026-06-15, 2026/06/15, 06/15/2026, ISO datetime
+                d_norm = date_raw.replace("/", "-")
+                if len(d_norm) == 10 and d_norm[2] == "-" and d_norm[5] == "-":
+                    # MM-DD-YYYY → flip
+                    mm, dd, yyyy = d_norm.split("-")
+                    d_norm = f"{yyyy}-{mm}-{dd}"
+                parsed_dt = _dt.fromisoformat(d_norm.replace("Z", ""))
+            except Exception:
+                errors.append({"row": idx, "message": f"Invalid date '{date_raw}'"})
+                continue
+            event_type = (opt(row, "event_type") or "aop_related").lower()
+            if event_type not in ("aop_related", "other"):
+                event_type = "aop_related"
+            activity_text = opt(row, "activity") or "Logged by admin (CSV import)"
+            docs.append({
+                "id": str(uuid.uuid4()),
+                "user_id": target["id"],
+                "user_name": target.get("name", ""),
+                "hours": hours_val,
+                "description": activity_text,
+                "activity": activity_text,
+                "event_type": event_type,
+                "agency_name": opt(row, "agency_name"),
+                "host_name": opt(row, "host_name"),
+                "host_email": opt(row, "host_email"),
+                "host_phone": opt(row, "host_phone"),
+                "date": iso(parsed_dt),
+                "event_id": None,
+                "status": "approved",
+                "approved_at": ts,
+                "approved_by": admin["id"],
+                "approved_by_name": admin.get("name", "Admin"),
+                "logged_by_admin": True,
+                "imported_from_csv": file.filename,
+                "csv_row": idx,
+                "created_at": ts,
+            })
+
+        if docs:
+            await db.volunteer_hours.insert_many(docs)
+
+        return {
+            "created": len(docs),
+            "failed": len(errors),
+            "total": len(rows),
+            "errors": errors,
+        }
 
     @api.get("/hours")
     async def list_hours(status_filter: Optional[str] = None, admin: dict = Depends(require_admin)):

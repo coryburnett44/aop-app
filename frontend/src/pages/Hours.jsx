@@ -24,7 +24,10 @@ export default function Hours() {
                     <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight">Volunteer hours</h1>
                     <p className="text-muted-foreground mt-2">Log hours, track approvals, celebrate the work.</p>
                 </div>
-                <LogHoursDialog />
+                <div className="flex flex-wrap items-center gap-2">
+                    {user.role === "admin" && <CsvImportDialog />}
+                    <LogHoursDialog />
+                </div>
             </div>
 
             <Tabs value={tab} onValueChange={setTab}>
@@ -48,6 +51,8 @@ function LogHoursDialog() {
     const isAdmin = user?.role === "admin";
     const [open, setOpen] = useState(false);
     const [members, setMembers] = useState([]);
+    const [memberQuery, setMemberQuery] = useState("");
+    const [selectedIds, setSelectedIds] = useState([]);
     const [form, setForm] = useState({
         hours: "",
         date: "",
@@ -57,11 +62,13 @@ function LogHoursDialog() {
         host_name: "",
         host_email: "",
         host_phone: "",
-        user_id: "",
     });
     const [busy, setBusy] = useState(false);
 
     function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+    function toggleMember(id) {
+        setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+    }
 
     // Admins need a roster to pick the target member. Load lazily when the
     // dialog opens so we don't fetch on every page mount.
@@ -73,16 +80,16 @@ function LogHoursDialog() {
     function emptyForm() {
         return {
             hours: "", date: "", event_type: "aop_related", agency_name: "",
-            activity: "", host_name: "", host_email: "", host_phone: "", user_id: "",
+            activity: "", host_name: "", host_email: "", host_phone: "",
         };
     }
 
     async function save(e) {
         if (e) e.preventDefault();
         if (isAdmin) {
-            // Admins: only hours + date + member are required. Everything else optional.
-            if (!form.hours || !form.date || !form.user_id) {
-                toast.error("Pick a member and enter hours + date");
+            // Admins: only hours + date + ≥1 member are required. Everything else optional.
+            if (!form.hours || !form.date || selectedIds.length === 0) {
+                toast.error("Pick at least one member and enter hours + date");
                 return;
             }
         } else if (!form.hours || !form.date || !form.activity.trim() || !form.agency_name.trim() || !form.host_name.trim() || !form.host_email.trim() || !form.host_phone.trim()) {
@@ -103,21 +110,40 @@ function LogHoursDialog() {
                 host_phone: form.host_phone,
             };
             if (isAdmin) {
-                payload.user_id = form.user_id;
-                await api.post("/hours/admin", payload);
-                toast.success("Hours logged & approved");
+                if (selectedIds.length > 1) {
+                    payload.user_ids = selectedIds;
+                    const { data } = await api.post("/hours/admin/bulk", payload);
+                    if (data.failed > 0) {
+                        toast.success(`Logged ${data.created} of ${data.total} members (${data.failed} skipped)`);
+                    } else {
+                        toast.success(`Hours logged for ${data.created} members ✅`);
+                    }
+                } else {
+                    payload.user_id = selectedIds[0];
+                    await api.post("/hours/admin", payload);
+                    toast.success("Hours logged & approved");
+                }
             } else {
                 await api.post("/hours", payload);
                 toast.success("Hours logged — pending admin review");
             }
             setOpen(false);
             setForm(emptyForm());
+            setSelectedIds([]);
+            setMemberQuery("");
             window.dispatchEvent(new Event("hours-logged"));
         } catch (e) {
             toast.error(e.response?.data?.detail || "Failed");
         }
         setBusy(false);
     }
+
+    const filteredMembers = isAdmin && memberQuery.trim()
+        ? members.filter((m) => {
+            const q = memberQuery.trim().toLowerCase();
+            return (m.name || "").toLowerCase().includes(q) || (m.email || "").toLowerCase().includes(q);
+        })
+        : members;
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -127,28 +153,66 @@ function LogHoursDialog() {
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle className="font-heading text-2xl">
-                        {isAdmin ? "Log volunteer hours for a member" : "Log volunteer hours"}
+                        {isAdmin ? "Log volunteer hours for members" : "Log volunteer hours"}
                     </DialogTitle>
                 </DialogHeader>
                 <form onSubmit={save} className="space-y-4 mt-2" data-testid="log-hours-form">
                     {isAdmin && (
                         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-3 text-xs text-foreground/80 leading-relaxed" data-testid="hours-admin-banner">
-                            <strong className="text-primary">Admin mode:</strong> only Member, Hours, and Date are required. Everything else is optional and the entry will be auto-approved.
+                            <strong className="text-primary">Admin mode:</strong> only Members, Hours, and Date are required. Pick one or many members — the entry will be auto-approved for each.
                         </div>
                     )}
                     {isAdmin && (
                         <div>
-                            <Label>Member *</Label>
-                            <Select value={form.user_id} onValueChange={(v) => set("user_id", v)}>
-                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="hours-admin-member-select">
-                                    <SelectValue placeholder="Pick a member" />
-                                </SelectTrigger>
-                                <SelectContent className="max-h-72">
-                                    {members.map((m) => (
-                                        <SelectItem key={m.id} value={m.id}>{m.name} {m.email ? `· ${m.email}` : ""}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                            <Label>Members * <span className="text-xs font-normal text-muted-foreground">({selectedIds.length} selected)</span></Label>
+                            <Input
+                                placeholder="Search members by name or email…"
+                                value={memberQuery}
+                                onChange={(e) => setMemberQuery(e.target.value)}
+                                className="rounded-xl mt-1.5"
+                                data-testid="hours-admin-member-search"
+                            />
+                            {selectedIds.length > 0 && (
+                                <div className="mt-2 flex items-center justify-between text-xs">
+                                    <span className="text-muted-foreground" data-testid="hours-admin-selected-summary">
+                                        {selectedIds.length} member{selectedIds.length === 1 ? "" : "s"} selected
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedIds([])}
+                                        className="text-primary font-semibold hover:underline"
+                                        data-testid="hours-admin-clear-selected"
+                                    >
+                                        Clear
+                                    </button>
+                                </div>
+                            )}
+                            <div className="mt-1.5 max-h-48 overflow-y-auto rounded-xl border border-border bg-card divide-y divide-border" data-testid="hours-admin-member-list">
+                                {filteredMembers.length === 0 ? (
+                                    <div className="px-3 py-4 text-xs text-muted-foreground italic">No members match.</div>
+                                ) : (
+                                    filteredMembers.map((m) => {
+                                        const checked = selectedIds.includes(m.id);
+                                        return (
+                                            <label
+                                                key={m.id}
+                                                className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-sm hover:bg-muted/40 ${checked ? "bg-primary/5" : ""}`}
+                                                data-testid={`hours-admin-member-row-${m.id}`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={() => toggleMember(m.id)}
+                                                    className="h-4 w-4 accent-primary shrink-0"
+                                                    data-testid={`hours-admin-member-checkbox-${m.id}`}
+                                                />
+                                                <span className="font-medium truncate">{m.name}</span>
+                                                {m.email && <span className="text-xs text-muted-foreground truncate">· {m.email}</span>}
+                                            </label>
+                                        );
+                                    })
+                                )}
+                            </div>
                         </div>
                     )}
                     <div className="grid grid-cols-2 gap-3">
@@ -178,7 +242,7 @@ function LogHoursDialog() {
                         <Input required={!isAdmin} value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" />
                     </div>
                     <div>
-                        <Label>What did you do? {!isAdmin && "*"}</Label>
+                        <Label>What did {isAdmin && selectedIds.length > 1 ? "they" : "you"} do? {!isAdmin && "*"}</Label>
                         <Textarea required={!isAdmin} rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" />
                     </div>
                     <div className="border-t pt-3">
@@ -190,8 +254,133 @@ function LogHoursDialog() {
                         </div>
                     </div>
                     <Button type="submit" disabled={busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-submit-btn">
-                        {busy ? "Saving…" : (isAdmin ? "Log hours (auto-approved)" : "Submit for approval")}
+                        {busy
+                            ? "Saving…"
+                            : isAdmin
+                                ? (selectedIds.length > 1
+                                    ? `Log hours for ${selectedIds.length} members (auto-approved)`
+                                    : "Log hours (auto-approved)")
+                                : "Submit for approval"}
                     </Button>
+                </form>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function CsvImportDialog() {
+    const [open, setOpen] = useState(false);
+    const [file, setFile] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState(null);
+
+    async function downloadTemplate() {
+        try {
+            const { data } = await api.get("/hours/admin/csv/template", { responseType: "blob" });
+            const url = URL.createObjectURL(data);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "aop-hours-template.csv";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) { toast.error("Couldn't download template"); }
+    }
+
+    async function upload(e) {
+        e.preventDefault();
+        if (!file) { toast.error("Pick a .csv file first"); return; }
+        setBusy(true);
+        setResult(null);
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            const { data } = await api.post("/hours/admin/csv", fd, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+            setResult(data);
+            if (data.created > 0) toast.success(`Imported ${data.created} of ${data.total} rows`);
+            else toast.error("No rows imported — see errors below");
+            window.dispatchEvent(new Event("hours-logged"));
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Upload failed");
+        }
+        setBusy(false);
+    }
+
+    function reset() {
+        setFile(null);
+        setResult(null);
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+            <Button
+                type="button"
+                onClick={() => setOpen(true)}
+                variant="outline"
+                className="rounded-full border-primary text-primary hover:bg-primary hover:text-white"
+                data-testid="hours-import-csv-btn"
+            >
+                Import CSV
+            </Button>
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl">Bulk import hours from CSV</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={upload} className="space-y-4 mt-2" data-testid="hours-csv-form">
+                    <div className="bg-primary/5 border border-primary/20 rounded-2xl p-3 text-xs leading-relaxed">
+                        <div className="font-bold text-primary mb-1">CSV format</div>
+                        <div className="text-foreground/80">
+                            Required columns: <code>member_email</code>, <code>hours</code>, <code>date</code>.
+                            Optional: <code>activity</code>, <code>event_type</code>, <code>agency_name</code>,
+                            <code>host_name</code>, <code>host_email</code>, <code>host_phone</code>.
+                            Every imported row is <strong>auto-approved</strong>. Max 1,000 rows / 1&nbsp;MB.
+                        </div>
+                        <button
+                            type="button"
+                            onClick={downloadTemplate}
+                            className="mt-2 text-primary font-bold hover:underline"
+                            data-testid="hours-csv-download-template"
+                        >
+                            ⬇ Download template
+                        </button>
+                    </div>
+                    <div>
+                        <Label>CSV file</Label>
+                        <Input
+                            type="file"
+                            accept=".csv,text/csv"
+                            onChange={(e) => { setFile(e.target.files?.[0] || null); setResult(null); }}
+                            className="rounded-xl mt-1.5"
+                            data-testid="hours-csv-file-input"
+                        />
+                        {file && <div className="text-xs text-muted-foreground mt-1.5">Selected: <span className="font-mono">{file.name}</span> ({(file.size / 1024).toFixed(1)} KB)</div>}
+                    </div>
+                    <Button type="submit" disabled={busy || !file} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-csv-upload-btn">
+                        {busy ? "Importing…" : "Import + auto-approve"}
+                    </Button>
+                    {result && (
+                        <div className="rounded-2xl border border-border bg-muted/30 p-3 text-sm" data-testid="hours-csv-result">
+                            <div className="flex items-center gap-3 mb-2">
+                                <span className="text-green-700 font-bold">✅ {result.created} imported</span>
+                                {result.failed > 0 && <span className="text-red-700 font-bold">⚠ {result.failed} skipped</span>}
+                                <span className="text-muted-foreground text-xs">of {result.total} row{result.total === 1 ? "" : "s"}</span>
+                            </div>
+                            {result.errors && result.errors.length > 0 && (
+                                <div className="max-h-40 overflow-y-auto bg-card rounded-xl border border-red-200 p-2 text-xs space-y-1" data-testid="hours-csv-errors">
+                                    <div className="font-bold text-red-700 uppercase text-[10px] tracking-wider">Errors</div>
+                                    {result.errors.map((err, i) => (
+                                        <div key={i} className="flex gap-2">
+                                            <span className="font-mono text-muted-foreground shrink-0">Row {err.row}:</span>
+                                            <span>{err.message}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </form>
             </DialogContent>
         </Dialog>

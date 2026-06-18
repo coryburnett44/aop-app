@@ -196,6 +196,23 @@ class AdminHoursLogIn(BaseModel):
     description: Optional[str] = None
 
 
+class AdminHoursBulkLogIn(BaseModel):
+    """Admin logs the SAME volunteer activity for multiple members at once
+    (e.g. 12 members showed up for the same park cleanup). Auto-approved like
+    the single-member variant."""
+    user_ids: List[str] = Field(min_length=1)
+    hours: float = Field(gt=0, le=1000)
+    date: datetime
+    activity: Optional[str] = ""
+    event_type: Literal["aop_related", "other"] = "aop_related"
+    agency_name: Optional[str] = ""
+    host_name: Optional[str] = ""
+    host_email: Optional[str] = ""
+    host_phone: Optional[str] = ""
+    event_id: Optional[str] = None
+    description: Optional[str] = None
+
+
 OF_THE_YEAR_CATEGORIES = Literal[
     "member_of_year",
     "chapter_of_year",

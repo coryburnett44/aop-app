@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 42: tested new admin bulk-hours endpoints (/api/hours/admin/bulk, /api/hours/admin/csv, /api/hours/admin/csv/template) plus the refactored multi-select LogHoursDialog and CsvImportDialog on /hours. 15/15 pytest cases pass and the full Playwright flow (multi-select counter, dynamic submit label, bulk-vs-single endpoint routing, CSV upload with success + error panels, member-side hidden controls) all pass end-to-end. Found and fixed a regression: GET /api/hours was returning 405 because list_hours() was missing its @api.get('/hours') decorator (probably stripped when the CSV endpoint was added). Also flagged one minor serializer gap.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/hours", "issue": "list_hours() was missing @api.get('/hours') decorator — admin Review Queue would 405. FIXED by testing agent (small decorator addition in /app/backend/routes/hours.py)."},
+      {"endpoint": "GET /api/hours, /api/me/hours", "issue": "hours_out() serializer does not surface logged_by_admin / approved_by / approved_at / imported_from_csv / csv_row fields even though they are persisted. Audit / UI 'who logged this' label will not have data to show. Recommend exposing logged_by_admin + approved_by_name from hours_out()."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration42_bulk_hours_csv.py",
+    "/app/test_reports/pytest/iter42_results.xml"
+  ],
+  "action_items": [
+    "(Optional but recommended) Update hours_out() in /app/backend/server.py:1331 to surface logged_by_admin, approved_by_name, imported_from_csv so the UI/audit trail can distinguish admin-logged vs self-logged hours.",
+    "(Optional) Consider trimming the CSV `errors` list in the response when there are hundreds of rows (current list is unbounded up to 1000 rows)."
+  ],
+  "critical_code_review_comments": [
+    "BUG FIXED: /app/backend/routes/hours.py line ~340 — `async def list_hours(...)` was defined directly under the CSV endpoint's `return {…}` with NO decorator. Effect: GET /api/hours returned 405 Method Not Allowed, breaking the admin Review Queue list endpoint. Added @api.get('/hours'). Please review the patch.",
+    "/app/backend/routes/hours.py:160 — `\"bulk_batch_id\": \"bulk-\" + str(uuid.uuid4())[:12] if False else None` is dead code (condition is hard-coded False) and then immediately popped on line 164. Clean up.",
+    "/app/backend/routes/hours.py CSV import: no upper-bound on `errors` returned. A 1000-row file of bad rows would produce a 1000-item array in the response. Consider capping to first 50 + a summary count.",
+    "Bulk endpoint correctly de-dupes user_ids and handles chapter-scoping for governor admins — verified via tests.",
+    "Frontend Hours.jsx dialog correctly routes 1-member → /hours/admin (single) and 2+ → /hours/admin/bulk — verified via network listener."
+  ],
+  "updated_files": [
+    "/app/backend/routes/hours.py (added missing @api.get('/hours') decorator)",
+    "/app/backend/tests/test_iteration42_bulk_hours_csv.py (new pytest file, 15 tests)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% (all 13 checks)"},
+  "test_credentials": "Admin: admin@clubhaven.app / Admin123!  |  Member: member@clubhaven.app / Member123!  (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Test rows inserted in volunteer_hours with TEST_iter42 prefix (activity text contains the prefix and a per-run uuid8 tag). Not cleaned up — safe to ignore or delete by activity prefix.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 42 added two endpoints: POST /api/hours/admin/bulk (json) and POST /api/hours/admin/csv (multipart) + GET /api/hours/admin/csv/template. Backend tests live at /app/backend/tests/test_iteration42_bulk_hours_csv.py and pass 15/15. The Hours.jsx dialog uses a per-id checkbox list with testids hours-admin-member-checkbox-{user_id}; selecting 2+ switches the submit handler to the bulk endpoint. Watch for the hours_out() serializer minor issue (does not surface logged_by_admin) if any future test depends on that field being in API responses — query the DB directly or expose the field via hours_out()."
+}
