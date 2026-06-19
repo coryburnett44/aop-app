@@ -256,6 +256,119 @@ def register(
         )
         return {"rsvped": True, "guests": len(rsvp_doc["guests"]), "ticket_id": rsvp_doc["ticket_id"]}
 
+    @api.post("/events/{event_id}/admin-rsvp")
+    async def admin_rsvp_event(
+        event_id: str,
+        body: dict,
+        admin: dict = Depends(get_current_user),
+    ):
+        """Admin RSVPs a specific member to an event on their behalf, with
+        optional guests. Used when a member is unreachable, RSVP'd verbally,
+        or sent guest names to leadership via DM.
+
+        Body shape: { user_id: str, ticket_type?: str, guests?: [...], send_email?: bool }
+
+        - Idempotent: if the member already has an RSVP for the event, returns
+          409 with the current state so the admin can decide to delete + recreate.
+        - send_email defaults to True so the member gets their digital ticket(s)
+          right away, but admins can suppress it for back-fills (e.g. recording
+          historic attendance).
+        """
+        if admin.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Only admins can RSVP on behalf of a member.")
+        target_user_id = (body or {}).get("user_id")
+        if not target_user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+        target = await db.users.find_one({"id": target_user_id}, {"_id": 0})
+        if not target:
+            raise HTTPException(status_code=404, detail="Member not found")
+        e = await db.events.find_one({"id": event_id}, {"_id": 0})
+        if not e:
+            raise HTTPException(status_code=404, detail="Event not found")
+        if e.get("cancelled"):
+            raise HTTPException(status_code=400, detail="This event has been cancelled — RSVPs are closed.")
+        has_children = await db.events.find_one({"parent_event_id": event_id})
+        if has_children:
+            raise HTTPException(status_code=400, detail="This event is an umbrella — RSVP each sub-event individually.")
+        existing = await db.rsvps.find_one({"event_id": event_id, "user_id": target_user_id})
+        if existing:
+            raise HTTPException(status_code=409, detail=f"{target.get('name', 'Member')} already has an RSVP for this event.")
+
+        ticket_type = (body.get("ticket_type") or "general")
+        guests_in = body.get("guests") or []
+        # Coerce free-form guest dicts into Pydantic-shaped objects for the
+        # shared helper. Allow either name strings or full {name, ticket_type} dicts.
+        normalized_guests = []
+        for g in guests_in:
+            if isinstance(g, str):
+                normalized_guests.append({"name": g.strip(), "ticket_type": "general"})
+            elif isinstance(g, dict) and g.get("name"):
+                normalized_guests.append({
+                    "name": str(g["name"]).strip(),
+                    "ticket_type": (g.get("ticket_type") or "general"),
+                })
+        send_email = bool(body.get("send_email", True))
+
+        # If we don't want an email, monkey-patch the shared helper's email
+        # task scheduling for this call only by short-circuiting the helper's
+        # try/except via a sentinel. Simplest: build the RSVP doc inline.
+        if not send_email:
+            rsvp_doc = {
+                "id": str(uuid.uuid4()),
+                "event_id": event_id,
+                "user_id": target["id"],
+                "user_name": target.get("name", ""),
+                "ticket_id": str(uuid.uuid4()),
+                "ticket_type": ticket_type,
+                "guests": [
+                    {
+                        "name": g["name"],
+                        "ticket_type": g.get("ticket_type", "general"),
+                        "ticket_id": str(uuid.uuid4()),
+                        "checked_in_at": None,
+                    }
+                    for g in normalized_guests
+                ],
+                "payment_tx_id": None,
+                "created_by_admin": admin["id"],
+                "created_by_admin_name": admin.get("name", "Admin"),
+                "email_suppressed": True,
+                "created_at": iso(now_utc()),
+            }
+            if e.get("capacity", 0) > 0 and (e.get("rsvp_count", 0) + e.get("guest_count", 0) + 1 + len(rsvp_doc["guests"])) > e["capacity"]:
+                raise HTTPException(status_code=400, detail="Event does not have enough seats")
+            await db.rsvps.insert_one(rsvp_doc)
+            await db.events.update_one(
+                {"id": event_id},
+                {"$inc": {"rsvp_count": 1, "guest_count": len(rsvp_doc["guests"])}},
+            )
+        else:
+            rsvp_doc = await _create_rsvp_and_email_ticket(
+                user=target,
+                event=e,
+                ticket_type=ticket_type,
+                guests_raw=normalized_guests,
+            )
+            # Stamp the admin attribution on the doc (helps the Reports tab tell
+            # admin-created RSVPs apart from self-service ones at audit time).
+            await db.rsvps.update_one(
+                {"id": rsvp_doc["id"]},
+                {"$set": {
+                    "created_by_admin": admin["id"],
+                    "created_by_admin_name": admin.get("name", "Admin"),
+                }},
+            )
+            rsvp_doc["created_by_admin"] = admin["id"]
+            rsvp_doc["created_by_admin_name"] = admin.get("name", "Admin")
+        return {
+            "rsvped": True,
+            "user_id": target["id"],
+            "user_name": target.get("name", ""),
+            "ticket_id": rsvp_doc["ticket_id"],
+            "guests": len(rsvp_doc.get("guests", []) or []),
+            "email_sent": send_email,
+        }
+
     @api.post("/events/{event_id}/payment/confirm")
     async def event_payment_confirm(
         event_id: str,

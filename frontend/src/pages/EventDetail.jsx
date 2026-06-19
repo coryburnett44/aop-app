@@ -39,6 +39,11 @@ export default function EventDetail() {
     const myRsvp = user && rsvps.find((r) => r.user_id === user.id);
     const myGuests = myRsvp?.guests || [];
     const allowsTickets = !!event?.allows_ticket_types;
+    // Guests drafted before the member clicks RSVP. Lets them submit one
+    // combined request (member + guests in the same POST) so they receive a
+    // single confirmation email instead of two (RSVP → ticket; then later
+    // guests → re-sent ticket).
+    const [pendingGuests, setPendingGuests] = useState([]);
 
     async function rsvpWithGuests(guests, memberTicketType) {
         if (!user) { toast.error("Please log in to RSVP"); return; }
@@ -46,6 +51,7 @@ export default function EventDetail() {
         try {
             const { data } = await api.post(`/events/${id}/rsvp`, { guests, ticket_type: memberTicketType });
             toast.success(data.rsvped ? `You're going! 🎉${data.guests ? ` +${data.guests} guests` : ""} Ticket emailed.` : "RSVP removed");
+            setPendingGuests([]);
             await load();
         } catch (e) {
             toast.error(e.response?.data?.detail || "Something went wrong");
@@ -54,7 +60,8 @@ export default function EventDetail() {
     }
 
     async function toggleRsvp() {
-        await rsvpWithGuests([], "general");
+        if (hasRsvped) { await rsvpWithGuests([], "general"); return; }
+        await rsvpWithGuests(pendingGuests, "general");
     }
 
     async function updateGuests(guests) {
@@ -163,7 +170,7 @@ export default function EventDetail() {
                         <PaidEventCheckout event={event} onPaid={() => load()} />
                     )}
                     {!event.external_url && !event.is_paid && !hasRsvped && allowsTickets && !event.cancelled && (
-                        <MemberTicketPicker event={event} onRsvp={(tt) => rsvpWithGuests([], tt)} disabled={loading} />
+                        <MemberTicketPicker event={event} onRsvp={(tt) => rsvpWithGuests(pendingGuests, tt)} disabled={loading} />
                     )}
                     {!event.external_url && !event.is_paid && !hasRsvped && !allowsTickets && !event.cancelled && (
                         <Button
@@ -172,8 +179,17 @@ export default function EventDetail() {
                             className="w-full rounded-full py-6 bg-primary hover:bg-primary/90 shadow-warm"
                             data-testid="rsvp-btn"
                         >
-                            {loading ? "Updating…" : "RSVP"}
+                            {loading ? "Updating…" : (pendingGuests.length > 0 ? `RSVP — me + ${pendingGuests.length} guest${pendingGuests.length === 1 ? "" : "s"}` : "RSVP")}
                         </Button>
+                    )}
+                    {!hasRsvped && !event.cancelled && !event.external_url && !event.is_paid && (
+                        <GuestManager
+                            guests={pendingGuests}
+                            onSave={async (guests) => setPendingGuests(guests)}
+                            disabled={loading}
+                            allowsTickets={allowsTickets}
+                            pendingMode
+                        />
                     )}
                     {event.cancelled && !hasRsvped && (
                         <Button
@@ -207,6 +223,9 @@ export default function EventDetail() {
                                 {rsvps.length > 8 && <span className="text-xs text-muted-foreground px-3 py-1">+{rsvps.length - 8} more</span>}
                             </div>
                         </div>
+                    )}
+                    {user?.role === "admin" && !event.cancelled && (
+                        <AdminRsvpForMemberDialog event={event} existingRsvps={rsvps} onAdded={load} allowsTickets={allowsTickets} />
                     )}
                 </aside>
             </div>
@@ -470,7 +489,169 @@ function MemberTicketPicker({ event, onRsvp, disabled }) {
     );
 }
 
-function GuestManager({ guests, onSave, disabled, allowsTickets }) {
+/**
+ * Admin-only inline RSVP creator. Lets an admin pick any member by name/email
+ * search and RSVP them — optionally with guest names + ticket type + email
+ * suppression flag (for back-filling historic attendance without spamming the
+ * member). One combined call hits POST /events/{id}/admin-rsvp so the target
+ * member gets exactly one digital-ticket email (or none) just like the new
+ * member-side combined flow.
+ */
+function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets }) {
+    const [open, setOpen] = useState(false);
+    const [members, setMembers] = useState([]);
+    const [query, setQuery] = useState("");
+    const [selectedId, setSelectedId] = useState("");
+    const [ticketType, setTicketType] = useState("general");
+    const [guests, setGuests] = useState([]);
+    const [sendEmail, setSendEmail] = useState(true);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        if (!open || members.length) return;
+        api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
+    }, [open, members.length]);
+
+    const rsvpedIds = new Set((existingRsvps || []).map((r) => r.user_id));
+    const filtered = (members || [])
+        .filter((m) => !rsvpedIds.has(m.id))
+        .filter((m) => {
+            const q = query.trim().toLowerCase();
+            if (!q) return true;
+            return (m.name || "").toLowerCase().includes(q) || (m.email || "").toLowerCase().includes(q);
+        })
+        .slice(0, 50);
+
+    function addGuestRow() { setGuests([...guests, { name: "", email: "", phone: "", ticket_type: allowsTickets ? "general" : "guest" }]); }
+    function removeGuest(i) { setGuests(guests.filter((_, idx) => idx !== i)); }
+    function updateGuest(i, field, val) { setGuests(guests.map((g, idx) => idx === i ? { ...g, [field]: val } : g)); }
+
+    async function submit(e) {
+        e.preventDefault();
+        if (!selectedId) { toast.error("Pick a member first"); return; }
+        const cleanGuests = guests.filter((g) => g.name?.trim()).map((g) => ({
+            name: g.name.trim(),
+            email: g.email?.trim() || "",
+            phone: g.phone?.trim() || "",
+            ticket_type: g.ticket_type || (allowsTickets ? "general" : "guest"),
+        }));
+        setBusy(true);
+        try {
+            const { data } = await api.post(`/events/${event.id}/admin-rsvp`, {
+                user_id: selectedId,
+                ticket_type: ticketType,
+                guests: cleanGuests,
+                send_email: sendEmail,
+            });
+            toast.success(
+                `${data.user_name} is going!${data.guests ? ` +${data.guests} guests.` : ""}${data.email_sent ? " Ticket emailed." : " Email suppressed."}`,
+            );
+            setOpen(false);
+            setSelectedId(""); setGuests([]); setQuery(""); setTicketType("general"); setSendEmail(true);
+            onAdded?.();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Could not RSVP this member");
+        }
+        setBusy(false);
+    }
+
+    return (
+        <div className="border-t border-dashed border-primary/40 pt-3 mt-1" data-testid="admin-rsvp-section">
+            <div className="text-[10px] uppercase tracking-widest font-bold text-primary mb-1.5">Admin tools</div>
+            <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(true)}
+                className="w-full rounded-full border-primary text-primary hover:bg-primary hover:text-white"
+                data-testid="admin-add-rsvp-btn"
+            >
+                <Plus className="h-4 w-4 mr-1.5" /> RSVP a member + guests
+            </Button>
+            <Dialog open={open} onOpenChange={setOpen}>
+                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading text-2xl">RSVP a member for this event</DialogTitle>
+                    </DialogHeader>
+                    <form onSubmit={submit} className="space-y-4 mt-2" data-testid="admin-rsvp-form">
+                        <div>
+                            <Label>Member *</Label>
+                            <Input
+                                placeholder="Search by name or email…"
+                                value={query}
+                                onChange={(e) => setQuery(e.target.value)}
+                                className="rounded-xl mt-1.5"
+                                data-testid="admin-rsvp-member-search"
+                            />
+                            <div className="mt-1.5 max-h-44 overflow-y-auto rounded-xl border border-border bg-card divide-y divide-border" data-testid="admin-rsvp-member-list">
+                                {filtered.length === 0 ? (
+                                    <div className="px-3 py-3 text-xs text-muted-foreground italic">{members.length === 0 ? "Loading members…" : (rsvpedIds.size > 0 ? "All matching members already have RSVPs." : "No members match.")}</div>
+                                ) : filtered.map((m) => (
+                                    <label key={m.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-sm hover:bg-muted/40 ${selectedId === m.id ? "bg-primary/5" : ""}`} data-testid={`admin-rsvp-member-row-${m.id}`}>
+                                        <input type="radio" name="admin-rsvp-pick" checked={selectedId === m.id} onChange={() => setSelectedId(m.id)} className="h-4 w-4 accent-primary shrink-0" data-testid={`admin-rsvp-member-radio-${m.id}`} />
+                                        <span className="font-medium truncate">{m.name}</span>
+                                        {m.email && <span className="text-xs text-muted-foreground truncate">· {m.email}</span>}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                        {allowsTickets && (
+                            <div>
+                                <Label>Member ticket type</Label>
+                                <Select value={ticketType} onValueChange={setTicketType}>
+                                    <SelectTrigger className="rounded-xl mt-1.5" data-testid="admin-rsvp-ticket-type"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="vip">VIP</SelectItem>
+                                        <SelectItem value="all_access">All Access</SelectItem>
+                                        <SelectItem value="general">General Admission</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <Label className="text-xs uppercase tracking-wider">Guests ({guests.length})</Label>
+                                <button type="button" onClick={addGuestRow} className="text-primary hover:underline text-xs font-medium" data-testid="admin-rsvp-add-guest">
+                                    <UserPlus className="h-3 w-3 inline mr-1" />Add guest
+                                </button>
+                            </div>
+                            {guests.length === 0 && <div className="text-[11px] italic text-muted-foreground">No guests. Add one above if needed.</div>}
+                            <div className="space-y-2">
+                                {guests.map((g, i) => (
+                                    <div key={i} className="border border-border rounded-xl p-3 space-y-2 relative" data-testid={`admin-rsvp-guest-row-${i}`}>
+                                        <button type="button" onClick={() => removeGuest(i)} className="absolute top-2 right-2 text-muted-foreground hover:text-destructive" data-testid={`admin-rsvp-remove-guest-${i}`}>
+                                            <X className="h-4 w-4" />
+                                        </button>
+                                        <Input placeholder="Guest name *" value={g.name} onChange={(e) => updateGuest(i, "name", e.target.value)} className="rounded-xl" data-testid={`admin-rsvp-guest-name-${i}`} />
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <Input placeholder="Email (optional)" value={g.email || ""} onChange={(e) => updateGuest(i, "email", e.target.value)} className="rounded-xl text-sm" data-testid={`admin-rsvp-guest-email-${i}`} />
+                                            <Input placeholder="Phone (optional)" value={g.phone || ""} onChange={(e) => updateGuest(i, "phone", e.target.value)} className="rounded-xl text-sm" data-testid={`admin-rsvp-guest-phone-${i}`} />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <label className="flex items-center gap-2 text-sm" data-testid="admin-rsvp-send-email-label">
+                            <input
+                                type="checkbox"
+                                checked={sendEmail}
+                                onChange={(e) => setSendEmail(e.target.checked)}
+                                className="h-4 w-4 accent-primary"
+                                data-testid="admin-rsvp-send-email-toggle"
+                            />
+                            <span>Email the digital ticket to the member <span className="text-xs text-muted-foreground">(uncheck to back-fill silently)</span></span>
+                        </label>
+                        <Button type="submit" disabled={busy || !selectedId} className="w-full rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="admin-rsvp-submit">
+                            {busy ? "Saving…" : `Confirm RSVP${guests.length ? ` + ${guests.length} guest${guests.length === 1 ? "" : "s"}` : ""}`}
+                        </Button>
+                    </form>
+                </DialogContent>
+            </Dialog>
+        </div>
+    );
+}
+
+
+function GuestManager({ guests, onSave, disabled, allowsTickets, pendingMode }) {
     const [open, setOpen] = useState(false);
     const [list, setList] = useState(guests || []);
     useEffect(() => { setList(guests || []); }, [guests]);
@@ -491,13 +672,18 @@ function GuestManager({ guests, onSave, disabled, allowsTickets }) {
     }
 
     return (
-        <div className="border-t border-border/40 pt-3 mt-1" data-testid="guest-manager">
+        <div className={`${pendingMode ? "" : "border-t border-border/40 pt-3 mt-1"}`} data-testid="guest-manager">
             <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2 flex items-center justify-between">
-                <span>Your guests ({(guests || []).length})</span>
+                <span>{pendingMode ? `Add guests before you RSVP (${(guests || []).length})` : `Your guests (${(guests || []).length})`}</span>
                 <button onClick={() => setOpen(true)} className="text-primary hover:underline normal-case tracking-normal text-xs font-medium" data-testid="manage-guests-btn">
-                    <UserPlus className="h-3 w-3 inline mr-1" />Manage
+                    <UserPlus className="h-3 w-3 inline mr-1" />{(guests || []).length > 0 ? "Edit" : "Add"}
                 </button>
             </div>
+            {pendingMode && (guests || []).length === 0 && (
+                <div className="text-[11px] text-muted-foreground italic leading-relaxed -mt-1 mb-2">
+                    Bringing a +1? Add them now — you'll get one combined ticket email when you RSVP (instead of two separate emails).
+                </div>
+            )}
             {(guests || []).length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                     {(guests || []).map((g, i) => (
@@ -510,8 +696,12 @@ function GuestManager({ guests, onSave, disabled, allowsTickets }) {
             )}
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-                    <DialogHeader><DialogTitle className="font-heading text-2xl">Manage your guests</DialogTitle></DialogHeader>
-                    <p className="text-xs text-muted-foreground -mt-1">Each guest receives their own QR ticket inside your confirmation email. Updating the list re-sends the email.</p>
+                    <DialogHeader><DialogTitle className="font-heading text-2xl">{pendingMode ? "Add guests" : "Manage your guests"}</DialogTitle></DialogHeader>
+                    <p className="text-xs text-muted-foreground -mt-1">
+                        {pendingMode
+                            ? "Each guest gets their own QR ticket inside your single confirmation email after you RSVP."
+                            : "Each guest receives their own QR ticket inside your confirmation email. Updating the list re-sends the email."}
+                    </p>
                     <div className="space-y-3 mt-3">
                         {list.length === 0 && <div className="text-sm text-muted-foreground italic">No guests yet — add one below.</div>}
                         {list.map((g, i) => (
