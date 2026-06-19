@@ -178,6 +178,7 @@ function RecipientsDialog({ award, onClose }) {
 
     useEffect(() => {
         if (!award) return;
+        setRows([]); // clear immediately so switching awards doesn't briefly show prior data
         setLoading(true);
         api.get(`/awards/${award.id}/grants`)
             .then(({ data }) => setRows(data || []))

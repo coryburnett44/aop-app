@@ -16,6 +16,13 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AS — Iteration 49: Clickable recipient counter on Awards Catalog (2026-06-19)
+- **Backend**: new `GET /api/awards/{award_id}/grants` (member-auth) returns up to 500 enriched grant rows sorted granted_at DESC. Each: `{user_id, member_name, avatar_url, granted_at, year, ordinal, reason}`. Falls back to stored `user_name` (then "Former member") if the user has been deleted since the grant.
+- **Frontend** (`Awards.jsx` `CatalogSection`): the "Granted to X members" footer on each catalog tile is now a button (with hover arrow affordance) when grants exist; tiles with 0 grants render "Not yet granted" as static text. Clicking opens `RecipientsDialog` which groups grants by year (newest first), showing avatar + name + ordinal pill (2×/3× for repeat awards) + Mon Day date. Rows clear on award switch so there's no stale-data flash.
+- **Verification (iter49)**: testing_agent iteration_49.json — 6/6 backend pytest + 8/8 frontend Playwright PASS. Applied 2 minor defensive tweaks from the code review (member_name `or`-chain for departed-user edge case; `setRows([])` on award switch).
+
+
+
 ### Phase AR — Iteration 48: Tier chart correctness + Awards reports + Card photos (2026-06-19)
 Three admin/member-facing fixes:
 

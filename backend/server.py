@@ -1258,7 +1258,7 @@ async def list_award_grants(award_id: str, _: dict = Depends(get_current_user)):
             year = granted_at[:4] if len(granted_at) >= 4 else ""
         out.append({
             "user_id": g.get("user_id"),
-            "member_name": u.get("name", g.get("user_name", "Former member")),
+            "member_name": u.get("name") or g.get("user_name") or "Former member",
             "avatar_url": u.get("avatar_url"),
             "granted_at": granted_at,
             "year": year,
