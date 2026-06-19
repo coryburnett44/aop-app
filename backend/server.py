@@ -1225,6 +1225,48 @@ async def list_awards():
         a["granted_distinct_count"] = len(distinct)
     return [award_out(a) for a in items]
 
+
+@api.get("/awards/{award_id}/grants")
+async def list_award_grants(award_id: str, _: dict = Depends(get_current_user)):
+    """Public-to-members list of who has received this award and when. Drives
+    the clickable recipient list inside each tile on /awards. Returns minimal
+    info: member name, avatar, year granted, ordinal (so repeat grants render
+    "2× in 2024"). Sorted by granted_at DESC. Cheap — a single index hit on
+    award_grants + one users lookup."""
+    grants = await db.award_grants.find(
+        {"award_id": award_id},
+        {"_id": 0, "user_id": 1, "user_name": 1, "granted_at": 1, "ordinal": 1, "reason": 1},
+    ).sort("granted_at", -1).to_list(500)
+    if not grants:
+        return []
+    uids = list({g["user_id"] for g in grants if g.get("user_id")})
+    users: dict = {}
+    if uids:
+        async for u in db.users.find(
+            {"id": {"$in": uids}},
+            {"_id": 0, "id": 1, "name": 1, "avatar_url": 1},
+        ):
+            users[u["id"]] = u
+    out = []
+    for g in grants:
+        u = users.get(g.get("user_id") or "") or {}
+        granted_at = g.get("granted_at") or ""
+        year = ""
+        if granted_at:
+            # Strings are ISO so the first 4 chars are the year. Avoid parsing
+            # full datetimes for a hot list endpoint.
+            year = granted_at[:4] if len(granted_at) >= 4 else ""
+        out.append({
+            "user_id": g.get("user_id"),
+            "member_name": u.get("name", g.get("user_name", "Former member")),
+            "avatar_url": u.get("avatar_url"),
+            "granted_at": granted_at,
+            "year": year,
+            "ordinal": g.get("ordinal", 1),
+            "reason": g.get("reason", ""),
+        })
+    return out
+
 @api.post("/awards")
 async def create_award(body: AwardIn, _: dict = Depends(admin_tab_dep("awards"))):
     doc = body.model_dump()

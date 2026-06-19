@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 49: validated clickable 'Granted to X members' counter feature on /awards. Backend: new endpoint GET /api/awards/{award_id}/grants verified end-to-end via test_iteration49_award_grants_endpoint.py (6 passed, 1 skipped due to admin user CRUD endpoint not being /api/admin/users or /api/users — covered by code review instead). The endpoint returns 5 enriched grant rows for the seeded Life Membership Ribbon (4f1a923c-…), each with user_id, member_name, avatar_url, granted_at, year (first 4 chars of granted_at), ordinal, reason; rows are sorted granted_at DESC. Riley Chen has 3 grants with ordinals [1,2,3]. Empty award → []. Nonexistent award_id → 200 with [] (no 404, matches spec — endpoint does not look up the award). Anonymous request → 401. Frontend (Playwright as member@clubhaven.app): on /awards each catalog tile renders [data-testid=award-grant-count-{id}]; the Life Membership tile (granted>0) is a <button> with text 'Granted 5 times to 2 members', the other 15 tiles (granted=0) are <div> elements with text 'Not yet granted' (confirmed NOT buttons). Clicking the Life tile counter opens [data-testid=award-recipients-dialog] with title 'Life Membership Ribbon' and [data-testid=award-recipients-count]='5 grants'. Year headers [data-testid=recipients-year-2026] and [data-testid=recipients-year-2024] both render. 5 recipient rows with correct testids (e.g. recipient-row-8108308c-…-3, recipient-row-…-2, recipient-row-…-1, recipient-row-459ad15b-…-2, recipient-row-…-1). Ordinal pills '3×' and '2×' appear only on rows where ordinal>1; ordinal=1 rows have no '1×' pill. Mon Day dates render (Jun 5, May 10, Mar 10). Escape closes the dialog (state resets). Only one award has grants in seed, so the 'open different award after close' stale-state test could only be partially exercised — the useEffect dependency on `award` triggers refetch+state reset which is correct by inspection.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration49_award_grants_endpoint.py",
+    "/app/test_reports/pytest/iter49_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:1261 `u.get('name', g.get('user_name', 'Former member'))` — for departed users (u={}), if the stored user_name is an empty string '' (not missing), the result is '' instead of 'Former member' because dict.get returns the empty string. Defensive change: `u.get('name') or g.get('user_name') or 'Former member'`. Low risk in current seed (user_name is always populated at grant time from user.name) but matters if a name is ever blanked out.",
+    "server.py:1230 endpoint deliberately returns 200 with [] for unknown award_id (per spec — avoids an extra awards lookup). Documented behavior; just call this out so future tests don't assert 404.",
+    "Awards.jsx:175 RecipientsDialog useEffect — correctly resets `rows` only via setRows in .then (stale-state risk between switching awards: on rapid switching, the prior award's rows briefly render until next .then fires because we don't `setRows([])` upfront). Minor; consider clearing rows at the start of the effect for visual cleanliness."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration49_award_grants_endpoint.py (new, 7 cases)"
+  ],
+  "success_rate": {"backend": "100% (6/6 pass, 1 skipped for env reason)", "frontend": "100% (all 8 UI checks: button-vs-static counter, dialog open, title, count text, 2 year groups, 5 rows, ordinal pills 3×/2× presence + 1× absence, Escape closes)"},
+  "test_credentials": "Admin: admin@clubhaven.app / Admin123!  |  Member: member@clubhaven.app / Member123!",
+  "seed_data_creation": "None persisted (the empty-award test creates+deletes a TEST_ award within a single test). The departed-member fallback test attempted to create+grant+delete a disposable user but skipped because /api/admin/users and /api/users do not accept that admin-create payload in this app — fallback verified by code reading instead.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter49 backend test = test_iteration49_award_grants_endpoint.py. Endpoint: GET /api/awards/{award_id}/grants (server.py:1229), member-auth required, returns up to 500 rows sorted granted_at DESC. Seed: 'Life Membership Ribbon' id=4f1a923c-6be8-47f3-baed-dbb7cb804e48 has 5 grants (Riley Chen ordinals 1/2/3 + Mem Mgr ordinals 1/2). All other 15 catalog awards are still ungranted in seed. Frontend testids: award-grant-count-{id} (button when total>0, div with 'Not yet granted' when total==0), award-recipients-dialog, award-recipients-count, recipients-year-{YYYY}, recipient-row-{user_id}-{ordinal}. Ordinal pill is rendered only when r.ordinal > 1. To exercise 'switch to another award shows fresh data', grant any other award to a member before running the test.",
+  "rca of the issue": "N/A — no issues found."
+}

@@ -54,6 +54,7 @@ export default function Awards() {
 function CatalogSection() {
     const [awards, setAwards] = useState([]);
     const [recent, setRecent] = useState([]);
+    const [recipientsAward, setRecipientsAward] = useState(null); // award whose modal is open
 
     useEffect(() => {
         api.get("/awards").then(({ data }) => setAwards(data)).catch(() => {});
@@ -84,19 +85,39 @@ function CatalogSection() {
                             </div>
                             <h3 className="font-heading font-bold text-xl mt-4 relative z-10">{a.name}</h3>
                             <p className="text-sm text-muted-foreground mt-2 leading-relaxed relative z-10">{a.description}</p>
-                            <div className="mt-4 text-xs font-semibold text-muted-foreground relative z-10">
-                                {(() => {
-                                    const total = a.granted_count || 0;
-                                    const distinct = a.granted_distinct_count == null ? total : a.granted_distinct_count;
-                                    if (total === distinct) return `Granted to ${distinct} member${distinct !== 1 ? "s" : ""}`;
-                                    return `Granted ${total} times to ${distinct} member${distinct !== 1 ? "s" : ""}`;
-                                })()}
-                            </div>
+                            {(() => {
+                                const total = a.granted_count || 0;
+                                const distinct = a.granted_distinct_count == null ? total : a.granted_distinct_count;
+                                const label = total === distinct
+                                    ? `Granted to ${distinct} member${distinct !== 1 ? "s" : ""}`
+                                    : `Granted ${total} times to ${distinct} member${distinct !== 1 ? "s" : ""}`;
+                                if (total === 0) {
+                                    return (
+                                        <div className="mt-4 text-xs font-semibold text-muted-foreground relative z-10" data-testid={`award-grant-count-${a.id}`}>
+                                            Not yet granted
+                                        </div>
+                                    );
+                                }
+                                return (
+                                    <button
+                                        type="button"
+                                        onClick={() => setRecipientsAward(a)}
+                                        className="mt-4 text-xs font-semibold text-primary hover:underline relative z-10 inline-flex items-center gap-1 group"
+                                        data-testid={`award-grant-count-${a.id}`}
+                                        aria-label={`See recipients of ${a.name}`}
+                                    >
+                                        <span>{label}</span>
+                                        <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">→</span>
+                                    </button>
+                                );
+                            })()}
                         </div>
                     );
                 })}
                 {awards.length === 0 && <div className="col-span-full text-muted-foreground">No awards configured yet.</div>}
             </div>
+
+            <RecipientsDialog award={recipientsAward} onClose={() => setRecipientsAward(null)} />
 
             {recent.length > 0 && (
                 <>
@@ -144,6 +165,97 @@ function CatalogSection() {
         </div>
     );
 }
+
+/**
+ * Modal that lists every recipient of a given award with the year it was
+ * granted. Triggered by clicking the "Granted to X members" counter on each
+ * tile in the Awards Catalog. Fetches lazily when opened so we don't preload
+ * dozens of grant lists on page mount.
+ */
+function RecipientsDialog({ award, onClose }) {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (!award) return;
+        setLoading(true);
+        api.get(`/awards/${award.id}/grants`)
+            .then(({ data }) => setRows(data || []))
+            .catch(() => setRows([]))
+            .finally(() => setLoading(false));
+    }, [award]);
+
+    if (!award) return null;
+    const Icon = CATALOG_ICONS[award.icon] || Trophy;
+
+    // Group by year (newest first) for a tidy timeline-style listing
+    const byYear = rows.reduce((acc, r) => {
+        const y = r.year || "—";
+        (acc[y] = acc[y] || []).push(r);
+        return acc;
+    }, {});
+    const years = Object.keys(byYear).sort((a, b) => String(b).localeCompare(String(a)));
+
+    return (
+        <Dialog open={!!award} onOpenChange={(v) => { if (!v) onClose(); }}>
+            <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="award-recipients-dialog">
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl flex items-center gap-3">
+                        <span className="w-11 h-11 rounded-2xl grid place-items-center shrink-0" style={{ backgroundColor: `${award.color}33`, color: award.color }}>
+                            <Icon className="h-5 w-5" />
+                        </span>
+                        <span className="min-w-0 truncate">{award.name}</span>
+                    </DialogTitle>
+                </DialogHeader>
+                <div className="mt-2 text-sm text-muted-foreground" data-testid="award-recipients-count">
+                    {loading ? "Loading…" : `${rows.length} grant${rows.length === 1 ? "" : "s"}`}
+                </div>
+                {!loading && rows.length === 0 && (
+                    <div className="mt-4 text-sm italic text-muted-foreground">No recipients yet.</div>
+                )}
+                <div className="mt-4 space-y-5">
+                    {years.map((year) => (
+                        <div key={year} data-testid={`recipients-year-${year}`}>
+                            <div className="flex items-center gap-3 mb-2">
+                                <div className="font-heading text-lg font-bold">{year}</div>
+                                <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground">
+                                    {byYear[year].length} grant{byYear[year].length === 1 ? "" : "s"}
+                                </div>
+                                <div className="flex-1 h-px bg-border" />
+                            </div>
+                            <ul className="space-y-2">
+                                {byYear[year].map((r, i) => {
+                                    const initials = (r.member_name || "M").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+                                    return (
+                                        <li key={`${r.user_id}-${r.granted_at}-${i}`} className="flex items-center gap-3 p-2 rounded-xl hover:bg-muted/40 transition-colors" data-testid={`recipient-row-${r.user_id}-${r.ordinal || 1}`}>
+                                            <Avatar className="h-9 w-9 shrink-0">
+                                                {r.avatar_url && <AvatarImage src={mediaUrl(r.avatar_url)} alt={r.member_name} />}
+                                                <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">{initials}</AvatarFallback>
+                                            </Avatar>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-medium truncate">{r.member_name}</div>
+                                                {r.reason && <div className="text-[11px] text-muted-foreground truncate">{r.reason}</div>}
+                                            </div>
+                                            {r.ordinal > 1 && (
+                                                <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary shrink-0" title={`${r.ordinal}th award to this member`}>
+                                                    {r.ordinal}×
+                                                </span>
+                                            )}
+                                            <div className="text-xs text-muted-foreground tabular-nums shrink-0">
+                                                {r.granted_at ? format(parseISO(r.granted_at), "MMM d") : ""}
+                                            </div>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        </div>
+                    ))}
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 
 function OfTheYearSection({ isAdmin }) {
     const [categories, setCategories] = useState([]);
