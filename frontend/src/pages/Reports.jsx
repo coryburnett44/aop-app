@@ -39,6 +39,7 @@ export default function Reports() {
                 <TabsTrigger value="dues" className="rounded-full" data-testid="reports-tab-dues">Dues approvals</TabsTrigger>
                 <TabsTrigger value="dues-reminders" className="rounded-full" data-testid="reports-tab-dues-reminders">Dues reminders</TabsTrigger>
                 <TabsTrigger value="event-tickets" className="rounded-full" data-testid="reports-tab-event-tickets">Event tickets</TabsTrigger>
+                <TabsTrigger value="awards" className="rounded-full" data-testid="reports-tab-awards">Awards</TabsTrigger>
                 <TabsTrigger value="brief" className="rounded-full" data-testid="reports-tab-brief">Personnel Brief</TabsTrigger>
             </TabsList>
             <TabsContent value="members" className="mt-6"><MembersReport /></TabsContent>
@@ -48,6 +49,7 @@ export default function Reports() {
             <TabsContent value="dues" className="mt-6"><ZeffyDuesApprovals /></TabsContent>
             <TabsContent value="dues-reminders" className="mt-6"><DuesRemindersReport /></TabsContent>
             <TabsContent value="event-tickets" className="mt-6"><EventTicketApprovals /></TabsContent>
+            <TabsContent value="awards" className="mt-6"><AwardsReport /></TabsContent>
             <TabsContent value="brief" className="mt-6"><PersonnelBriefSection /></TabsContent>
         </Tabs>
     );
@@ -1239,6 +1241,246 @@ function DuesRemindersReport() {
                 </table>
                 {rows.length === 0 && !loading && (
                     <div className="p-6 text-center text-sm text-muted-foreground">No reminders sent yet for these filters.</div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Admin → Reports → Awards
+ *
+ * Two side-by-side audit panels:
+ *   1. Award grants  — every ribbon/medal granted to a member (from award_grants)
+ *   2. Of-The-Year   — yearly winners (Top Chapter, Member, Fundraiser, etc.)
+ *
+ * Both are searchable + filter by year, and export to CSV so leadership can
+ * archive recognition records each year.
+ */
+function AwardsReport() {
+    return (
+        <div className="space-y-8" data-testid="awards-report">
+            <AwardGrantsTable />
+            <OfTheYearTable />
+        </div>
+    );
+}
+
+function AwardGrantsTable() {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState("");
+    const [year, setYear] = useState("");
+
+    useEffect(() => {
+        setLoading(true);
+        const params = new URLSearchParams();
+        if (year) params.set("year", year);
+        api.get(`/reports/award-grants${params.toString() ? `?${params}` : ""}`)
+            .then(({ data }) => setRows(data || []))
+            .catch(() => setRows([]))
+            .finally(() => setLoading(false));
+    }, [year]);
+
+    const filtered = search.trim()
+        ? rows.filter((r) => {
+            const q = search.trim().toLowerCase();
+            return (
+                (r.current_user_name || "").toLowerCase().includes(q)
+                || (r.user_email || "").toLowerCase().includes(q)
+                || (r.award_name || "").toLowerCase().includes(q)
+                || (r.chapter_name || "").toLowerCase().includes(q)
+                || (r.reason || "").toLowerCase().includes(q)
+            );
+        })
+        : rows;
+
+    function exportCSV() {
+        const headers = [
+            { label: "Granted at", get: (r) => r.granted_at || "" },
+            { label: "Member", get: (r) => r.current_user_name || r.user_name || "" },
+            { label: "Email", get: (r) => r.user_email || "" },
+            { label: "Chapter", get: (r) => r.chapter_name || "" },
+            { label: "Award", get: (r) => r.award_name || "" },
+            { label: "Award #", get: (r) => r.ordinal || 1 },
+            { label: "Granted by", get: (r) => r.granted_by_name || "" },
+            { label: "Reason", get: (r) => r.reason || "" },
+        ];
+        downloadCSV(`award-grants-${new Date().toISOString().slice(0, 10)}.csv`, csvify(filtered, headers));
+    }
+
+    return (
+        <div className="bg-card rounded-2xl border border-border shadow-warm overflow-hidden">
+            <div className="flex flex-wrap items-end justify-between gap-3 p-4 border-b border-border">
+                <div>
+                    <h3 className="font-heading text-lg font-bold">Award grants</h3>
+                    <p className="text-xs text-muted-foreground">Every ribbon, medal, and recognition awarded to a member — most recent first.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                        type="search"
+                        placeholder="Search member, award, chapter…"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        className="rounded-full text-sm h-9 w-64"
+                        data-testid="awards-grants-search"
+                    />
+                    <Select value={year || "_all"} onValueChange={(v) => setYear(v === "_all" ? "" : v)}>
+                        <SelectTrigger className="rounded-full h-9 w-32 text-sm" data-testid="awards-grants-year"><SelectValue placeholder="All years" /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="_all">All years</SelectItem>
+                            {Array.from({ length: 6 }).map((_, i) => {
+                                const y = new Date().getFullYear() - i;
+                                return <SelectItem key={y} value={String(y)}>{y}</SelectItem>;
+                            })}
+                        </SelectContent>
+                    </Select>
+                    <Button variant="outline" className="rounded-full h-9 text-xs" onClick={exportCSV} data-testid="awards-grants-export"><Download className="h-3.5 w-3.5 mr-1" />CSV</Button>
+                </div>
+            </div>
+            <div className="text-xs text-muted-foreground px-4 pt-3" data-testid="awards-grants-count">
+                {loading ? "Loading…" : `${filtered.length} grant${filtered.length === 1 ? "" : "s"}`}
+            </div>
+            <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                            <th className="px-4 py-2.5 text-left font-semibold">Granted</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Member</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Chapter</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Award</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Granted by</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                        {filtered.map((r) => (
+                            <tr key={r.id} className="hover:bg-muted/30" data-testid={`award-grant-row-${r.id}`}>
+                                <td className="px-4 py-2.5 text-xs whitespace-nowrap">{r.granted_at ? format(parseISO(r.granted_at), "MMM d, yyyy") : "—"}</td>
+                                <td className="px-4 py-2.5">
+                                    <div className="flex items-center gap-2">
+                                        {r.user_avatar_url ? (
+                                            <img src={mediaUrl(r.user_avatar_url)} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
+                                        ) : (
+                                            <div className="w-7 h-7 rounded-full bg-primary/15 text-primary grid place-items-center text-[10px] font-bold">{(r.current_user_name || "?").charAt(0).toUpperCase()}</div>
+                                        )}
+                                        <div>
+                                            <div className="font-semibold">{r.current_user_name || r.user_name || "—"}</div>
+                                            {r.user_email && <div className="text-[11px] text-muted-foreground">{r.user_email}</div>}
+                                        </div>
+                                    </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-xs">{r.chapter_name || "—"}</td>
+                                <td className="px-4 py-2.5">
+                                    <div className="flex items-center gap-2">
+                                        <span className="inline-block w-3 h-3 rounded-full border border-border" style={{ backgroundColor: r.award_color || "#F9D466" }} />
+                                        <span className="font-semibold">{r.award_name}</span>
+                                        {r.ordinal > 1 && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary">{r.ordinal}×</span>}
+                                    </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-xs">{r.granted_by_name || "—"}</td>
+                                <td className="px-4 py-2.5 text-xs text-foreground/80 max-w-[280px] truncate" title={r.reason}>{r.reason || "—"}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                {filtered.length === 0 && !loading && (
+                    <div className="p-6 text-center text-sm text-muted-foreground">No award grants {search ? "match your search" : year ? "in this year" : "yet"}.</div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function OfTheYearTable() {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [year, setYear] = useState(String(new Date().getFullYear()));
+
+    useEffect(() => {
+        setLoading(true);
+        const params = new URLSearchParams();
+        if (year && year !== "_all") params.set("year", year);
+        api.get(`/reports/of-the-year${params.toString() ? `?${params}` : ""}`)
+            .then(({ data }) => setRows(data || []))
+            .catch(() => setRows([]))
+            .finally(() => setLoading(false));
+    }, [year]);
+
+    function exportCSV() {
+        const headers = [
+            { label: "Year", get: (r) => r.year },
+            { label: "Category", get: (r) => r.category_label || r.category },
+            { label: "Winner", get: (r) => r.current_user_name || r.user_name || r.chapter_name || "" },
+            { label: "Email", get: (r) => r.user_email || "" },
+            { label: "Chapter", get: (r) => r.chapter_name || "" },
+            { label: "Note", get: (r) => r.note || "" },
+            { label: "Added by", get: (r) => r.created_by_name || "" },
+        ];
+        downloadCSV(`of-the-year-${year || "all"}.csv`, csvify(rows, headers));
+    }
+
+    return (
+        <div className="bg-card rounded-2xl border border-border shadow-warm overflow-hidden">
+            <div className="flex flex-wrap items-end justify-between gap-3 p-4 border-b border-border">
+                <div>
+                    <h3 className="font-heading text-lg font-bold">Of-The-Year winners</h3>
+                    <p className="text-xs text-muted-foreground">Annual recognition (Top Chapter, Member, Fundraiser, Recruiter, etc.) Set them in Admin → Awards → Of-The-Year.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <Select value={year} onValueChange={setYear}>
+                        <SelectTrigger className="rounded-full h-9 w-32 text-sm" data-testid="oty-year"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="_all">All years</SelectItem>
+                            {Array.from({ length: 6 }).map((_, i) => {
+                                const y = new Date().getFullYear() - i;
+                                return <SelectItem key={y} value={String(y)}>{y}</SelectItem>;
+                            })}
+                        </SelectContent>
+                    </Select>
+                    <Button variant="outline" className="rounded-full h-9 text-xs" onClick={exportCSV} data-testid="oty-export"><Download className="h-3.5 w-3.5 mr-1" />CSV</Button>
+                </div>
+            </div>
+            <div className="text-xs text-muted-foreground px-4 pt-3" data-testid="oty-count">
+                {loading ? "Loading…" : `${rows.length} winner${rows.length === 1 ? "" : "s"}`}
+            </div>
+            <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                            <th className="px-4 py-2.5 text-left font-semibold">Year</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Category</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Winner</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Note</th>
+                            <th className="px-4 py-2.5 text-left font-semibold">Added by</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                        {rows.map((r) => (
+                            <tr key={r.id} className="hover:bg-muted/30" data-testid={`oty-row-${r.id}`}>
+                                <td className="px-4 py-2.5 text-xs font-mono">{r.year}</td>
+                                <td className="px-4 py-2.5 font-semibold">{r.category_label || r.category}</td>
+                                <td className="px-4 py-2.5">
+                                    <div className="flex items-center gap-2">
+                                        {r.user_avatar_url || r.chapter_logo_url ? (
+                                            <img src={mediaUrl(r.user_avatar_url || r.chapter_logo_url)} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
+                                        ) : (
+                                            <div className="w-7 h-7 rounded-full bg-primary/15 text-primary grid place-items-center text-[10px] font-bold">{((r.current_user_name || r.chapter_name || "?").charAt(0) || "?").toUpperCase()}</div>
+                                        )}
+                                        <div>
+                                            <div className="font-semibold">{r.current_user_name || r.user_name || r.chapter_name || "—"}</div>
+                                            {r.user_email && <div className="text-[11px] text-muted-foreground">{r.user_email}</div>}
+                                        </div>
+                                    </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-xs text-foreground/80 max-w-[280px]">{r.note || "—"}</td>
+                                <td className="px-4 py-2.5 text-xs">{r.created_by_name || "—"}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                {rows.length === 0 && !loading && (
+                    <div className="p-6 text-center text-sm text-muted-foreground">No "of-the-year" winners {year !== "_all" ? `for ${year}` : "recorded yet"}.</div>
                 )}
             </div>
         </div>

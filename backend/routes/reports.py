@@ -771,6 +771,105 @@ def register(
             last_30[row["_id"]] = row["n"]
         return {"all_time": all_time, "last_30_days": last_30}
 
+    # ---------- /reports/award-grants ----------
+    @api.get("/reports/award-grants")
+    async def report_award_grants(
+        award_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        year: Optional[int] = None,
+        _: dict = Depends(admin_tab_dep("reports")),
+    ):
+        """Every award (ribbon/medal) ever granted to a member, sorted newest
+        first. Used by the Admin → Reports → Awards tab so leadership can audit
+        who received what, when, and why."""
+        q: dict = {}
+        if award_id:
+            q["award_id"] = award_id
+        if user_id:
+            q["user_id"] = user_id
+        if year is not None:
+            # Year filter operates on the granted_at ISO string
+            start = f"{year}-01-01T00:00:00"
+            end = f"{year + 1}-01-01T00:00:00"
+            q["granted_at"] = {"$gte": start, "$lt": end}
+        rows = await db.award_grants.find(q, {"_id": 0}).sort("granted_at", -1).limit(2000).to_list(2000)
+        # Enrich with current member email + chapter so the audit table is
+        # useful even if the member's stored name changed since the grant.
+        uids = [r["user_id"] for r in rows if r.get("user_id")]
+        users: dict = {}
+        if uids:
+            async for u in db.users.find(
+                {"id": {"$in": uids}},
+                {"_id": 0, "id": 1, "name": 1, "email": 1, "chapter_id": 1, "avatar_url": 1},
+            ):
+                users[u["id"]] = u
+        cids = list({(users.get(uid) or {}).get("chapter_id") for uid in uids} - {None, ""})
+        chapters: dict = {}
+        if cids:
+            async for c in db.chapters.find({"id": {"$in": cids}}, {"_id": 0, "id": 1, "name": 1}):
+                chapters[c["id"]] = c.get("name", "")
+        out = []
+        for r in rows:
+            u = users.get(r.get("user_id") or "") or {}
+            out.append({
+                **r,
+                "current_user_name": u.get("name", r.get("user_name", "")),
+                "user_email": u.get("email", ""),
+                "user_avatar_url": u.get("avatar_url"),
+                "chapter_name": chapters.get(u.get("chapter_id") or "", ""),
+            })
+        return out
+
+    # ---------- /reports/of-the-year ----------
+    # Local copy of category labels — mirrors routes/of_the_year.CATEGORY_LABELS.
+    # Kept here so the reports module doesn't import another routes module.
+    _OTY_LABELS = {
+        "member_of_year": "Member of the Year",
+        "chapter_of_year": "Chapter of the Year",
+        "top_cs_member": "Top Community Service Member",
+        "top_cs_chapter": "Top Community Service Chapter",
+        "top_fundraising_member": "Top Fundraising Member",
+        "top_fundraising_chapter": "Top Fundraising Chapter",
+        "top_recruiter": "Top Member Recruiter",
+    }
+
+    @api.get("/reports/of-the-year")
+    async def report_of_the_year(
+        year: Optional[int] = None,
+        _: dict = Depends(admin_tab_dep("reports")),
+    ):
+        """All "Of The Year" winners (member-of-the-year, chapter-of-the-year,
+        fundraiser-of-the-year, etc.) for the audit table. Plain enriched list
+        — newest year first, alphabetical category inside each year."""
+        q: dict = {}
+        if year is not None:
+            q["year"] = year
+        rows = await db.of_the_year_awards.find(q, {"_id": 0}).sort([("year", -1), ("category", 1)]).to_list(1000)
+        uids = [r["user_id"] for r in rows if r.get("user_id")]
+        cids = [r["chapter_id"] for r in rows if r.get("chapter_id")]
+        users: dict = {}
+        chapters: dict = {}
+        if uids:
+            async for u in db.users.find({"id": {"$in": uids}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "avatar_url": 1, "chapter_id": 1}):
+                users[u["id"]] = u
+        if cids:
+            async for c in db.chapters.find({"id": {"$in": cids}}, {"_id": 0, "id": 1, "name": 1, "logo_url": 1}):
+                chapters[c["id"]] = c
+        out = []
+        for r in rows:
+            u = users.get(r.get("user_id") or "") or {}
+            c = chapters.get(r.get("chapter_id") or "") or {}
+            out.append({
+                **r,
+                "category_label": _OTY_LABELS.get(r.get("category", ""), r.get("category", "")),
+                "current_user_name": u.get("name", r.get("user_name", "")),
+                "user_email": u.get("email", ""),
+                "user_avatar_url": u.get("avatar_url"),
+                "chapter_name": c.get("name", r.get("chapter_name", "")),
+                "chapter_logo_url": c.get("logo_url"),
+            })
+        return out
+
     # Expose helpers on register so server.py /me/personnel-brief* can delegate.
     register.personnel_brief_data = personnel_brief_data
     register.personnel_brief_pdf_response = personnel_brief_pdf_response

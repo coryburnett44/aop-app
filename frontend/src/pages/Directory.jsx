@@ -173,13 +173,15 @@ export default function Directory() {
                             className="text-left bg-card border border-border rounded-2xl overflow-hidden hover:-translate-y-1 hover:shadow-warm transition-all focus:outline-none focus:ring-2 focus:ring-primary/40 flex flex-col"
                             data-testid={`member-card-${m.id}`}
                         >
-                            {/* Rectangular member photo */}
+                            {/* Rectangular member photo — `object-contain` so the entire
+                                uploaded image is visible (no cropping). Solid background
+                                fills any letterboxing for non-4:3 photos. */}
                             <div className="aspect-[4/3] w-full bg-muted/40 border-b border-border overflow-hidden flex items-center justify-center">
                                 {m.avatar_url ? (
                                     <img
                                         src={mediaUrl(m.avatar_url)}
                                         alt={m.name}
-                                        className="w-full h-full object-cover"
+                                        className="w-full h-full object-contain"
                                         onError={(e) => { e.currentTarget.style.display = 'none'; }}
                                     />
                                 ) : (

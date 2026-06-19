@@ -113,26 +113,34 @@ export default function AdminDashboard() {
                     <h3 className="font-heading font-semibold text-lg">By membership tier</h3>
                     <p className="text-sm text-muted-foreground">Distribution across tiers</p>
                     <div className="h-64 mt-2">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={members.by_tier}
-                                    dataKey="count"
-                                    nameKey="tier"
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={50}
-                                    outerRadius={80}
-                                    paddingAngle={3}
-                                >
-                                    {members.by_tier.map((_, i) => (
-                                        <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip contentStyle={{ borderRadius: 12 }} />
-                                <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
-                            </PieChart>
-                        </ResponsiveContainer>
+                        {members.by_tier.length === 0 ? (
+                            <div className="h-full flex flex-col items-center justify-center text-center px-6 text-muted-foreground" data-testid="tier-chart-empty">
+                                <div className="text-4xl mb-2 opacity-50">🏷️</div>
+                                <div className="text-sm font-semibold">No members assigned to a tier yet</div>
+                                <div className="text-xs mt-1 leading-relaxed">Create tiers under Admin → Tiers and assign them to members. They'll appear here.</div>
+                            </div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={members.by_tier}
+                                        dataKey="count"
+                                        nameKey="tier"
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={50}
+                                        outerRadius={80}
+                                        paddingAngle={3}
+                                    >
+                                        {members.by_tier.map((_, i) => (
+                                            <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip contentStyle={{ borderRadius: 12 }} />
+                                    <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        )}
                     </div>
                 </div>
             </div>

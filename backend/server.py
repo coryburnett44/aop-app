@@ -2058,11 +2058,30 @@ async def admin_stats(admin: dict = Depends(require_admin)):
     expired = await db.users.count_documents(uq({"membership_expires_at": {"$lt": now_iso}}))
     active_members = total_members - expired
 
+    # "By membership tier" pie chart: count members grouped by their tier_id,
+    # then resolve to the tier's display name. Members with no tier_id (or
+    # whose tier_id points to a deleted tier) are excluded — "Standard" /
+    # "Lifetime" are NOT tiers, they are status concepts and would confuse the
+    # chart if shown alongside real tiers.
     tier_cursor = db.users.aggregate([
         {"$match": user_q_extra} if scoped else {"$match": {}},
-        {"$group": {"_id": "$membership_tier", "count": {"$sum": 1}}},
+        {"$match": {"tier_id": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$tier_id", "count": {"$sum": 1}}},
     ])
-    by_tier = [{"tier": (d["_id"] or "standard"), "count": d["count"]} async for d in tier_cursor]
+    raw_counts = {d["_id"]: d["count"] async for d in tier_cursor}
+    tier_names = {
+        t["id"]: t.get("name", "")
+        async for t in db.tiers.find(
+            {"id": {"$in": list(raw_counts.keys())}} if raw_counts else {"id": "__none__"},
+            {"_id": 0, "id": 1, "name": 1},
+        )
+    }
+    by_tier = [
+        {"tier": tier_names[tid], "count": cnt}
+        for tid, cnt in raw_counts.items()
+        if tid in tier_names  # drop dangling references to deleted tiers
+    ]
+    by_tier.sort(key=lambda r: (-r["count"], r["tier"]))
 
     # Member growth — last 6 calendar months
     growth = []
