@@ -16,6 +16,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AV — Iteration 52: Admin remove/update awards + multi-member grant + admin remove hours + ET event times (2026-06-19)
+Four admin/member-card improvements shipped in a single iteration:
+
+1. **Admin update/remove award grants** — new `PUT /api/awards/grants/{grant_id}` (accepts partial body `{granted_at?, reason?}`; date-only `YYYY-MM-DD` normalizes to ISO; empty body returns `{ok:true,no_change:true}`; invalid `granted_at` → 400) and `DELETE /api/awards/grants/{grant_id}` (admin-only, recalculates ordinal for surviving grants). Frontend `MemberCardDialog` renders `ribbon-edit-{id}` and `ribbon-remove-{id}` on each ribbon; `grant-edit-dialog` opens with `grant-edit-date`/`grant-edit-reason` inputs and `grant-edit-save` button. Remove fires a confirm() then DELETE.
+2. **Multi-member award granting** — new `POST /api/awards/{award_id}/grant-bulk` (`{user_ids: [...], reason?, granted_at?}`, dedupes IDs, caps at 200, returns `{ok, created, failed, total}`). Frontend `GrantAwardDialog` was rewritten with multi-select checkboxes (`grant-member-checkbox-{id}`, `grant-clear-selected`, member count badge). Button text auto-updates to "Grant to N members" when ≥2 selected; calls `/grant` for 1 user, `/grant-bulk` for ≥2.
+3. **Admin remove hours from member records** — new `DELETE /api/hours/{hours_id}` (admin can delete any user's hours; non-admin can only delete own). Approved-hours deletions correctly decrement `/me/hours/summary.total_approved` server-side. Frontend `Hours.jsx` Review queue surfaces `remove-hours-{id}` button next to Approve/Reject.
+4. **Eastern Time enforcement for event displays** — added `/app/frontend/src/lib/eventTime.js` (`fmtET`, `fmtETDate`, `fmtETTime` powered by `date-fns-tz`). Replaces every `format(parseISO(...))` call across `Events.jsx`, `EventDetail.jsx`, `Calendar.jsx`, `Profile.jsx`, `Admin.jsx` dashboard timestamps so dates always render as EST/EDT (e.g. `8:00 PM EDT`) regardless of the viewer's browser TZ.
+
+**Verification (iter52)**: testing_agent iteration_52.json — 15/15 backend pytest pass (5 update + 6 bulk-grant + 4 admin-delete-hours). Frontend ET labels confirmed live on `/events`, `/calendar`, `/admin`, `/events/{id}`. Main-agent visual smoke (this finalization pass) confirmed: multi-select grant dialog with "Grant to 2 members" button, member card showing 3 ribbons with Edit/REMOVE buttons, Hours Review queue rendering Remove button on a pending entry. New regression file at `/app/backend/tests/test_iteration52_admin_grant_hours.py`. No critical bugs; 4 low-priority review comments noted (e.g. `reason` type validation, chapter-scoped admin delete behavior) — left as documented future hardening.
+
+
+
 ### Phase AU — Iteration 51: Bulk RSVPs CSV + Hours CSV date parser fix (2026-06-19)
 Two items in one shot:
 
