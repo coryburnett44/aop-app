@@ -16,6 +16,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AW — Iteration 53: Admin dues-reminder summary email + Gear extraction (2026-06-19)
+Two-part shipment:
+
+1. **Admin dues-reminder summary email** — every time the daily dues-reminder cron fires, the existing `_send_dues_reminders(campaign)` (server.py) now collects each successful send into a `sent_records` list (`stage`, `stage_label`, `member_name`, `member_email`, `expires_at`). After the cycle finishes — and only if `total_sent > 0` — it dispatches a new transactional summary email via `_send_admin_dues_summary(campaign, sent_records)` to every admin (`role=admin`, valid email, `email_opt_out != True`). The summary email groups members by stage label (e.g. `30 days · 4 members`), and each row surfaces the member name + email + membership expiration date formatted as `Mon Day, YYYY`. Tagged `type=dues_admin_summary` / `campaign_id` for Resend deliverability tracking. Closes the audit loop: admins now know exactly who got pinged each cycle, including their renewal date.
+2. **Gear endpoints extracted to `routes/gear.py`** — moved 7 endpoints + 3 Pydantic models + the `gear_out` serializer out of `server.py` (~157 lines deleted) into a focused 202-line module. `register(api, db, admin_tab_dep, iso, now_utc, put_object, image_ext, mime_by_ext)` is invoked from server.py's bottom-of-file include block. `server.py` is now ~6755 lines (down from 6912 at iter52). All gear flows (list, get, create, edit, delete, gear-page, image upload) confirmed working post-extraction via curl smoke.
+
+**Verification (iter53)**:
+- `tests/test_iteration53_dues_admin_summary.py`: 6/6 pass — covers one-email-per-admin dispatch, empty-records no-op, no-admin no-op, RESEND_API_KEY no-op, multi-record stage grouping (e.g. `30 days · 2 members`), and HTML escaping of member names.
+- `tests/test_iteration52_admin_grant_hours.py`: 15/15 still pass — no regressions from the gear extraction.
+- Gear CRUD smoke (curl admin session): create → update price → fetch → delete → 404 — all green.
+
+
+
 ### Phase AV — Iteration 52: Admin remove/update awards + multi-member grant + admin remove hours + ET event times (2026-06-19)
 Four admin/member-card improvements shipped in a single iteration:
 

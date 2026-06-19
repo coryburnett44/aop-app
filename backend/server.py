@@ -3290,177 +3290,10 @@ async def meeting_card_image_upload(file: UploadFile = File(...), user: dict = D
 
 
 
-# ---------- AOP Gear (catalog) ----------
-class GearColorImage(BaseModel):
-    color: str
-    image_url: str = ""
-
-
-class GearItemIn(BaseModel):
-    name: str
-    name_html: str = ""  # Iter 38: optional rich-HTML version of the title (admin Quill output); when set, frontend renders this instead of `name`.
-    description: str = ""
-    price: float = 0.0
-    sizes: List[str] = []
-    colors: List[str] = []
-    color_images: List[GearColorImage] = []  # one image per color (admin tags)
-    cover_image: str = ""
-    images: List[str] = []
-    category: str = "apparel"
-    in_stock: bool = True
-    sku: str = ""
-    is_external_link: bool = False  # Iter 38: when True, the gear card becomes a clickable banner that opens external_url in a new tab.
-    external_url: str = ""
-
-class GearItemUpdateIn(BaseModel):
-    name: Optional[str] = None
-    name_html: Optional[str] = None
-    description: Optional[str] = None
-    price: Optional[float] = None
-    sizes: Optional[List[str]] = None
-    colors: Optional[List[str]] = None
-    color_images: Optional[List[GearColorImage]] = None
-    cover_image: Optional[str] = None
-    images: Optional[List[str]] = None
-    category: Optional[str] = None
-    in_stock: Optional[bool] = None
-    sku: Optional[str] = None
-    is_external_link: Optional[bool] = None
-    external_url: Optional[str] = None
-
-def gear_out(g: dict) -> dict:
-    return {
-        "id": g["id"],
-        "name": g["name"],
-        "name_html": g.get("name_html", ""),
-        "description": g.get("description", ""),
-        "price": g.get("price", 0.0),
-        "sizes": g.get("sizes", []),
-        "colors": g.get("colors", []),
-        "color_images": g.get("color_images", []),
-        "cover_image": g.get("cover_image", ""),
-        "images": g.get("images", []),
-        "category": g.get("category", "apparel"),
-        "in_stock": g.get("in_stock", True),
-        "sku": g.get("sku", ""),
-        "is_external_link": bool(g.get("is_external_link", False)),
-        "external_url": g.get("external_url", ""),
-        "created_at": g.get("created_at"),
-    }
-
-@api.get("/gear")
-async def list_gear(category: Optional[str] = None):
-    q = {}
-    if category:
-        q["category"] = category
-    items = await db.gear.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return [gear_out(g) for g in items]
-
-@api.get("/gear/{item_id}")
-async def get_gear(item_id: str):
-    g = await db.gear.find_one({"id": item_id}, {"_id": 0})
-    if not g:
-        raise HTTPException(status_code=404, detail="Gear item not found")
-    return gear_out(g)
-
-@api.post("/gear")
-async def create_gear(body: GearItemIn, _: dict = Depends(admin_tab_dep("gear"))):
-    doc = body.model_dump()
-    doc["id"] = str(uuid.uuid4())
-    doc["created_at"] = iso(now_utc())
-    await db.gear.insert_one(doc)
-    return gear_out(doc)
-
-@api.put("/gear/{item_id}")
-async def update_gear(item_id: str, body: GearItemUpdateIn, _: dict = Depends(admin_tab_dep("gear"))):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if updates:
-        await db.gear.update_one({"id": item_id}, {"$set": updates})
-    g = await db.gear.find_one({"id": item_id}, {"_id": 0})
-    if not g:
-        raise HTTPException(status_code=404, detail="Gear item not found")
-    return gear_out(g)
-
-@api.delete("/gear/{item_id}")
-async def delete_gear(item_id: str, _: dict = Depends(admin_tab_dep("gear"))):
-    await db.gear.delete_one({"id": item_id})
-    return {"ok": True}
-
-
-# ---------- Gear page settings (admin-editable hero/intro) ----------
-class GearPageIn(BaseModel):
-    hero_image: str = ""
-    title: str = ""
-    subtitle: str = ""
-    intro: str = ""
-
-
-@api.get("/gear-page")
-async def get_gear_page():
-    doc = await db.app_settings.find_one({"key": "gear_page"}, {"_id": 0})
-    if not doc:
-        return {"hero_image": "", "title": "", "subtitle": "", "intro": ""}
-    return {
-        "hero_image": doc.get("hero_image", ""),
-        "title": doc.get("title", ""),
-        "subtitle": doc.get("subtitle", ""),
-        "intro": doc.get("intro", ""),
-        "updated_at": doc.get("updated_at"),
-    }
-
-
-@api.put("/gear-page")
-async def set_gear_page(body: GearPageIn, admin: dict = Depends(admin_tab_dep("gear"))):
-    await db.app_settings.update_one(
-        {"key": "gear_page"},
-        {"$set": {
-            "key": "gear_page",
-            "hero_image": body.hero_image,
-            "title": body.title,
-            "subtitle": body.subtitle,
-            "intro": body.intro,
-            "updated_at": iso(now_utc()),
-            "updated_by": admin.get("name", ""),
-        }},
-        upsert=True,
-    )
-    return {"ok": True, **body.model_dump()}
-
-
-@api.post("/gear/upload")
-async def gear_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("gear"))):
-    """Admin uploads an image for a gear item (cover, gallery, or per-color photo)."""
-    chunks: list = []
-    total = 0
-    while True:
-        chunk = await file.read(1024 * 1024)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > 10 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Image must be under 10 MB")
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    fname = (file.filename or "gear.jpg").replace("/", "_")
-    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
-    if ext not in IMAGE_EXT:
-        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
-    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
-    file_id = str(uuid.uuid4())
-    storage_path = f"gear/{file_id}/{fname}"
-    await asyncio.to_thread(put_object, storage_path, data, content_type)
-    await db.chat_files.insert_one({
-        "id": file_id,
-        "filename": fname,
-        "storage_path": storage_path,
-        "content_type": content_type,
-        "size": total,
-        "kind": "image",
-        "uploaded_by": user["id"],
-        "is_deleted": False,
-        "created_at": iso(now_utc()),
-    })
-    return {"url": f"/api/files/{storage_path}", "size": total}
+# ---------- AOP Gear (catalog + page settings + uploads) ----------
+# Endpoints `/gear`, `/gear/{id}`, `/gear-page`, `/gear/upload` are registered
+# via `routes/gear.py` (see register call at bottom of this file). Keeping this
+# header here only so the chat/digest sections directly below stay readable.
 
 
 # ---------- Donations / Causes ----------
@@ -6335,15 +6168,133 @@ def _dues_reminder_email_html(
     return subject, body
 
 
+async def _send_admin_dues_summary(campaign: dict, sent_records: list[dict]) -> int:
+    """After a dues-reminder cycle, send each admin user a single transactional
+    summary email enumerating the members that just received a reminder. Each
+    row shows: member name · email · membership expiration date · stage label.
+
+    Admins are selected with role=admin, a valid email, and email_opt_out!=True.
+    Returns the number of admin recipients the summary was dispatched to."""
+    if not RESEND_API_KEY or not sent_records:
+        return 0
+    import html as _h
+    # Gather admin recipients.
+    admin_cursor = db.users.find(
+        {
+            "role": "admin",
+            "email": {"$exists": True, "$ne": ""},
+            "email_opt_out": {"$ne": True},
+        },
+        {"_id": 0, "id": 1, "name": 1, "email": 1},
+    )
+    admins = []
+    async for a in admin_cursor:
+        email = (a.get("email") or "").strip()
+        if email:
+            admins.append({"name": a.get("name", "") or email, "email": email})
+    if not admins:
+        logger.info("Dues reminder summary: no admin recipients to notify.")
+        return 0
+
+    # Group sent_records by stage_label so the email reads like a digest.
+    by_stage: dict[str, list[dict]] = {}
+    for r in sent_records:
+        by_stage.setdefault(r["stage_label"], []).append(r)
+
+    today_label = now_utc().strftime("%b %d, %Y")
+    rows_html_parts: list[str] = []
+    for label, items in by_stage.items():
+        rows_html_parts.append(
+            f'<tr><td colspan="3" style="background:#f7f5f0;padding:10px 14px;'
+            f'font-weight:700;color:#0A2463;border-bottom:1px solid #e7e5e0;'
+            f'text-transform:uppercase;letter-spacing:.08em;font-size:11px">'
+            f'{_h.escape(label)} · {len(items)} member{"s" if len(items) != 1 else ""}'
+            f'</td></tr>'
+        )
+        for item in items:
+            exp_iso = (item.get("expires_at") or "")[:10]
+            try:
+                exp_dt = datetime.strptime(exp_iso, "%Y-%m-%d")
+                exp_pretty = exp_dt.strftime("%b %d, %Y")
+            except Exception:
+                exp_pretty = exp_iso or "—"
+            rows_html_parts.append(
+                f'<tr>'
+                f'<td style="padding:10px 14px;border-bottom:1px solid #f0eee9;font-size:14px">'
+                f'<div style="font-weight:600;color:#0A2463">{_h.escape(item["member_name"])}</div>'
+                f'<div style="font-size:12px;color:#666">{_h.escape(item["member_email"])}</div>'
+                f'</td>'
+                f'<td style="padding:10px 14px;border-bottom:1px solid #f0eee9;font-size:13px;color:#444;white-space:nowrap">'
+                f'{_h.escape(exp_pretty)}'
+                f'</td>'
+                f'</tr>'
+            )
+
+    total = len(sent_records)
+    subject = f"AOP dues reminders — {total} sent on {today_label}"
+    body_html = f"""<div style="font-family:-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:24px;background:#f7f5f0">
+  <h1 style="color:#0A2463;margin:0 0 6px;font-size:22px">Dues Reminder Summary</h1>
+  <div style="height:3px;background:#C8102E;width:54px;margin-bottom:14px"></div>
+  <p style="color:#444;font-size:14px;margin:0 0 18px;line-height:1.5">
+    The automated dues-reminder campaign <strong>{_h.escape(campaign.get("name") or "Dues reminders")}</strong>
+    sent <strong>{total}</strong> email{"s" if total != 1 else ""} on {today_label}.
+    Each row lists the member's membership expiration date.
+  </p>
+  <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e5e0">
+    <thead>
+      <tr style="background:#0A2463;color:#fff">
+        <th style="text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.08em">Member</th>
+        <th style="text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.08em">Membership expires</th>
+      </tr>
+    </thead>
+    <tbody>
+      {''.join(rows_html_parts)}
+    </tbody>
+  </table>
+  <p style="font-size:11px;color:#999;margin-top:22px;border-top:1px solid #e7e5e0;padding-top:14px">
+    You're receiving this because you're an Alpha Omega Phi admin. Reminder stages: 30 days, 15 days, 5 days before expiration, and a 1-day grace notice.
+  </p>
+</div>"""
+
+    delivered = 0
+    for admin in admins:
+        try:
+            await asyncio.to_thread(resend_sdk.Emails.send, {
+                "from": RESEND_FROM,
+                "to": [admin["email"]],
+                "reply_to": RESEND_REPLY_TO,
+                "subject": subject,
+                "html": body_html,
+                "tags": [
+                    {"name": "type", "value": "dues_admin_summary"},
+                    {"name": "campaign_id", "value": campaign.get("id", "")},
+                ],
+            })
+            delivered += 1
+        except Exception as e:
+            logger.warning(f"Dues summary delivery failed for admin {admin['email']}: {e}")
+    logger.info(f"Dues reminder summary dispatched to {delivered}/{len(admins)} admins (total reminders={total}).")
+    return delivered
+
+
 async def _send_dues_reminders(campaign: dict) -> int:
     """Daily cadence — send each member at most one reminder per stage per dues
-    cycle. Stages: 30d / 15d / 5d before expiration + 1d grace notice."""
+    cycle. Stages: 30d / 15d / 5d before expiration + 1d grace notice.
+
+    After the run, dispatches a single summary email to every admin user
+    (with role=admin, valid email, not opted out) listing the members that
+    received a reminder this run — grouped by stage and including the member's
+    membership expiration date. The summary is suppressed if 0 reminders were
+    sent in this cycle."""
     if not RESEND_API_KEY:
         logger.info(f"Dues reminders '{campaign.get('name')}' skipped — no RESEND_API_KEY")
         return 0
     today = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
     stage_templates = campaign.get("stage_templates") or {}
     total_sent = 0
+    # (stage, stage_label, member_name, member_email, expires_iso) collected
+    # as we go so we can email an audit summary to admins at the end.
+    sent_records: list[dict] = []
     for stage_def in DUES_REMINDER_STAGES:
         offset = stage_def["offset_days"]
         stage = stage_def["stage"]
@@ -6398,11 +6349,25 @@ async def _send_dues_reminders(campaign: dict) -> int:
                     "stage": stage,
                     "sent_at": iso(now_utc()),
                 })
+                sent_records.append({
+                    "stage": stage,
+                    "stage_label": stage_def["label"],
+                    "member_name": u.get("name", "") or email,
+                    "member_email": email,
+                    "expires_at": expires,
+                })
                 total_sent += 1
                 logger.info(f"Dues reminder '{stage}' sent to {email} (exp {expires[:10]})")
             except Exception as e:
                 # Could be a duplicate-key from the unique index → benign.
                 logger.warning(f"Dues reminder {stage} failed/skipped for {email}: {e}")
+    # Notify admins with a single summary email per admin so they can audit
+    # which members were just messaged.
+    if total_sent > 0:
+        try:
+            await _send_admin_dues_summary(campaign, sent_records)
+        except Exception as e:
+            logger.warning(f"Admin dues summary email failed: {e}")
     return total_sent
 
 
@@ -6512,6 +6477,7 @@ from routes import applications as routes_applications  # noqa: E402
 from routes import hours as routes_hours  # noqa: E402
 from routes import reports as routes_reports  # noqa: E402
 from routes import rsvps as routes_rsvps  # noqa: E402
+from routes import gear as routes_gear  # noqa: E402
 
 routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
@@ -6519,6 +6485,16 @@ routes_ai.register(api, require_admin=require_admin)
 routes_news.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_chapters.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_tiers.register(api, db=db, admin_tab_dep=admin_tab_dep)
+routes_gear.register(
+    api,
+    db=db,
+    admin_tab_dep=admin_tab_dep,
+    iso=iso,
+    now_utc=now_utc,
+    put_object=put_object,
+    image_ext=IMAGE_EXT,
+    mime_by_ext=MIME_BY_EXT,
+)
 routes_payments.register(
     api,
     db=db,
