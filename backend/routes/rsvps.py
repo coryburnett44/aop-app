@@ -22,13 +22,21 @@ import base64
 import io
 import os
 import uuid
-from typing import Optional
+from typing import List, Optional
 
 import jwt
 import qrcode
 from fastapi import Depends, HTTPException
+from pydantic import BaseModel
 
 from models import EventRsvpIn, EventPaymentConfirmIn, GuestIn
+
+
+class AdminRsvpIn(BaseModel):
+    user_id: str
+    ticket_type: Optional[str] = "general"
+    guests: Optional[List[dict]] = None  # accepts strings or {name, ticket_type} dicts; normalized below
+    send_email: bool = True
 
 
 def register(
@@ -259,14 +267,12 @@ def register(
     @api.post("/events/{event_id}/admin-rsvp")
     async def admin_rsvp_event(
         event_id: str,
-        body: dict,
+        body: AdminRsvpIn,
         admin: dict = Depends(get_current_user),
     ):
         """Admin RSVPs a specific member to an event on their behalf, with
         optional guests. Used when a member is unreachable, RSVP'd verbally,
         or sent guest names to leadership via DM.
-
-        Body shape: { user_id: str, ticket_type?: str, guests?: [...], send_email?: bool }
 
         - Idempotent: if the member already has an RSVP for the event, returns
           409 with the current state so the admin can decide to delete + recreate.
@@ -276,7 +282,7 @@ def register(
         """
         if admin.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Only admins can RSVP on behalf of a member.")
-        target_user_id = (body or {}).get("user_id")
+        target_user_id = body.user_id
         if not target_user_id:
             raise HTTPException(status_code=400, detail="user_id is required")
         target = await db.users.find_one({"id": target_user_id}, {"_id": 0})
@@ -294,8 +300,8 @@ def register(
         if existing:
             raise HTTPException(status_code=409, detail=f"{target.get('name', 'Member')} already has an RSVP for this event.")
 
-        ticket_type = (body.get("ticket_type") or "general")
-        guests_in = body.get("guests") or []
+        ticket_type = (body.ticket_type or "general")
+        guests_in = body.guests or []
         # Coerce free-form guest dicts into Pydantic-shaped objects for the
         # shared helper. Allow either name strings or full {name, ticket_type} dicts.
         normalized_guests = []
@@ -307,7 +313,7 @@ def register(
                     "name": str(g["name"]).strip(),
                     "ticket_type": (g.get("ticket_type") or "general"),
                 })
-        send_email = bool(body.get("send_email", True))
+        send_email = bool(body.send_email)
 
         # If we don't want an email, monkey-patch the shared helper's email
         # task scheduling for this call only by short-circuiting the helper's

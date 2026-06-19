@@ -16,6 +16,16 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AT — Iteration 50: Admin RSVPs + member combined RSVP+guests email (2026-06-19)
+Two related event-RSVP improvements:
+
+1. **One combined email when members add guests** — previously a member RSVP fired a ticket email immediately, then adding guests via `PUT /rsvp/guests` fired a second email. Frontend `EventDetail.jsx` now drafts `pendingGuests` BEFORE the RSVP button, surfaces `GuestManager` in a new `pendingMode` (helper copy: "Bringing a +1? Add them now — you'll get one combined ticket email when you RSVP"), and includes the drafted guests in the single `POST /events/{id}/rsvp` call. RSVP button label updates to "RSVP — me + N guests".
+2. **Admins can RSVP members + guests** — new `POST /api/events/{event_id}/admin-rsvp` endpoint (admin-only, `AdminRsvpIn` model). Stamps `created_by_admin` / `created_by_admin_name` on the rsvp doc. `send_email` flag (default true) lets admins suppress the ticket email for historical back-fills. Returns 409 if the member already has an RSVP. Frontend `AdminRsvpForMemberDialog` (visible only to admins on event detail page → "Admin tools" section, `data-testid=admin-add-rsvp-btn`) provides a searchable member picker with radio selection (excludes members who already RSVPed), inline guest rows, ticket-type select (when event allows tickets), and the email-suppression toggle.
+
+**Verification (iter50)**: testing_agent iteration_50.json — 12/12 backend pytest + 11/11 frontend Playwright PASS. Network capture confirmed members now send a single POST with embedded guests (no follow-up PUT). Backend refactored after review to use a typed `AdminRsvpIn` Pydantic model instead of `dict` for proper OpenAPI/validation.
+
+
+
 ### Phase AS — Iteration 49: Clickable recipient counter on Awards Catalog (2026-06-19)
 - **Backend**: new `GET /api/awards/{award_id}/grants` (member-auth) returns up to 500 enriched grant rows sorted granted_at DESC. Each: `{user_id, member_name, avatar_url, granted_at, year, ordinal, reason}`. Falls back to stored `user_name` (then "Former member") if the user has been deleted since the grant.
 - **Frontend** (`Awards.jsx` `CatalogSection`): the "Granted to X members" footer on each catalog tile is now a button (with hover arrow affordance) when grants exist; tiles with 0 grants render "Not yet granted" as static text. Clicking opens `RecipientsDialog` which groups grants by year (newest first), showing avatar + name + ordinal pill (2×/3× for repeat awards) + Mon Day date. Rows clear on award switch so there's no stale-data flash.
