@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 51 — Validated (1) Hours CSV multi-format date parser and (2) new Bulk Import RSVPs from CSV admin endpoint + EventDetail UI dialog. All 22 backend tests passed and all frontend testids render with correct behaviour.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration51_bulk_rsvp_csv.py",
+    "/app/test_reports/pytest/iter51_results.xml"
+  ],
+  "tests_executed": {
+    "backend": {
+      "TestHoursCsvDateParser": "7/7 passed — ISO, MM/DD/YYYY (Excel default), M/D/YY, MM-DD-YYYY, DD-Mmm-YYYY all parse; unparseable + empty date both surface error message listing 'YYYY-MM-DD, MM/DD/YYYY, M/D/YY, 15-Jun-2026'.",
+      "TestAdminRsvpCsvTemplate": "2/2 passed — GET /events/{id}/admin-rsvp/csv/template returns text/csv with header 'member_email,ticket_type,guests,guest_ticket_types' + 2 sample rows; non-admin gets 403.",
+      "TestAdminRsvpCsvDryRun": "4/4 passed — valid+invalid email mix surfaces 'No member with email …' error and ready row with guest_names=['Alex Plus-one','Pat Friend'] seats=3; dry-run does NOT modify rsvp_count; duplicate email in same file errors as 'appears more than once'; capacity overflow returns 'Not enough seats — needs 3, only 2 left'.",
+      "TestAdminRsvpCsvConfirm": "1/1 passed — confirm with send_email=false persists N RSVPs with email_suppressed=true + created_by_admin + imported_from_csv set; event rsvp_count/guest_count incremented correctly; second dry-run on same file flags 'already has an RSVP' for both members.",
+      "TestAdminRsvpCsvRejects": "6/6 passed — non-.csv filename 400, missing member_email column 400, zero data rows 400, >500 rows 400, umbrella parent event 400 with 'umbrella' message, cancelled event 400, paid event 400.",
+      "TestAdminRsvpCsvAuthz": "1/1 passed — non-admin POST returns 403."
+    },
+    "frontend": {
+      "EventDetail admin RSVP CSV dialog": "admin-rsvp-csv-btn visible next to admin-add-rsvp-btn. Opens admin-rsvp-csv-form. admin-rsvp-csv-email-toggle defaults aria-checked=true, toggles to false on click. admin-rsvp-csv-download-template visible. File picker -> auto dry-run -> admin-rsvp-csv-preview renders with admin-rsvp-csv-ready '✅ 1 ready', admin-rsvp-csv-failed '⚠ 1 error', admin-rsvp-csv-preview-table with per-row testids (row-2 READY Maya Patel + 2 guest pills 'Alex Plus-one' 'Pat Friend'; row-3 ERROR 'No member with email nonexistent_xyz@example.com'). admin-rsvp-csv-confirm-btn shows 'Confirm import (1 RSVP)'.",
+      "Hours CSV help text": "Volunteer hours page → Import CSV dialog shows the new 'Date formats accepted: YYYY-MM-DD (e.g. 2026-06-15), MM/DD/YYYY (Excel default), M/D/YY, 15-Jun-2026.' line as designed."
+    }
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "rsvps.py admin_rsvp_csv send_email=true path: when _create_rsvp_and_email_ticket is called and then patched with created_by_admin via a second update_one, there's a window where the ticket email task may snapshot the rsvp_doc BEFORE the admin attribution is patched. The attribution stamping is post-insert/post-email-task-scheduling. Not a correctness bug for the email content (admin attribution isn't in the email body), but a subtle ordering quirk worth a comment.",
+    "rsvps.py: the dry_run + send_email kwargs are query params (per problem spec). UI/docs note this clearly. Good.",
+    "rsvps.py admin_rsvp_csv lacks the same row-cap message contract as hours.py (hours uses 'max 1000 rows', rsvp uses 'max 500 rows'). Documented in detail messages, but two different magic numbers — consider a shared constant.",
+    "hours.py _DATE_FORMATS includes %d-%b-%y / %d-%b-%Y but the user-facing DATE_FORMATS_FOR_HUMANS only lists 15-Jun-2026 (4-digit year). Minor — 2-digit-year DD-MMM-YY (e.g. 15-Jun-26) parses but isn't advertised."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration51_bulk_rsvp_csv.py (new)"
+  ],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "100% (all required testids + behaviours verified)"},
+  "test_credentials": "Admin: admin@clubhaven.app / Admin123! | Member: member@clubhaven.app / Member123!",
+  "seed_data_creation": "Each test that needed isolation created a fresh event via POST /events and deleted it in teardown. test_confirm_no_email_persists_with_attribution creates 'TEST_confirm_*' event, imports 2 RSVPs, then deletes the event. test_capacity_overflow creates 'TEST_cap_event_*' (capacity=2). test_cancelled_event_rejected/test_paid_event_rejected also create + delete their own events.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 51 — Bulk Import RSVPs (admin) and Hours CSV multi-format date parser. Backend test file /app/backend/tests/test_iteration51_bulk_rsvp_csv.py is reusable for regression. The happy-path event id 3a9ee2e9-7852-4586-9b3f-a94b3da8af84 (Iter35 Test Event) is now used in several tests; if it gets deleted, replace HAPPY_EVENT_ID at the top of the file. Umbrella-rejection test discovers the umbrella event dynamically by title ('Anniversary' / '10-Year').",
+  "rca of the issue": "N/A — both shipped features behave as specified."
+}

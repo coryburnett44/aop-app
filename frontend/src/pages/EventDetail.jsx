@@ -556,7 +556,7 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
     }
 
     return (
-        <div className="border-t border-dashed border-primary/40 pt-3 mt-1" data-testid="admin-rsvp-section">
+        <div className="border-t border-dashed border-primary/40 pt-3 mt-1 space-y-2" data-testid="admin-rsvp-section">
             <div className="text-[10px] uppercase tracking-widest font-bold text-primary mb-1.5">Admin tools</div>
             <Button
                 type="button"
@@ -567,6 +567,7 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
             >
                 <Plus className="h-4 w-4 mr-1.5" /> RSVP a member + guests
             </Button>
+            <AdminRsvpCsvDialog event={event} onImported={onAdded} />
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
@@ -647,6 +648,242 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
                 </DialogContent>
             </Dialog>
         </div>
+    );
+}
+
+
+/**
+ * Bulk RSVP importer dialog. Mirrors the dry-run preview pattern from the
+ * Hours CSV importer: select a file → auto-POST with dry_run=true → render
+ * a row-by-row preview → admin clicks "Confirm import" to actually persist.
+ *
+ * CSV columns:
+ *   - member_email          (required)
+ *   - ticket_type           (optional, default 'general')
+ *   - guests                (optional, semicolon-separated names)
+ *   - guest_ticket_types    (optional, parallel semicolon list)
+ */
+function AdminRsvpCsvDialog({ event, onImported }) {
+    const [open, setOpen] = useState(false);
+    const [file, setFile] = useState(null);
+    const [preview, setPreview] = useState(null);
+    const [previewing, setPreviewing] = useState(false);
+    const [importing, setImporting] = useState(false);
+    const [result, setResult] = useState(null);
+    const [sendEmail, setSendEmail] = useState(true);
+    const [errorBanner, setErrorBanner] = useState("");
+
+    async function downloadTemplate() {
+        try {
+            const { data } = await api.get(`/events/${event.id}/admin-rsvp/csv/template`, { responseType: "blob" });
+            const url = URL.createObjectURL(data);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "aop-rsvp-template.csv";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch { toast.error("Couldn't download template"); }
+    }
+
+    async function runPreview(f) {
+        if (!f) return;
+        setPreviewing(true);
+        setPreview(null); setResult(null); setErrorBanner("");
+        try {
+            const fd = new FormData();
+            fd.append("file", f);
+            const { data } = await api.post(`/events/${event.id}/admin-rsvp/csv?dry_run=true&send_email=${sendEmail}`, fd, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+            setPreview(data);
+        } catch (err) {
+            setErrorBanner(err.response?.data?.detail || "Could not preview CSV");
+        }
+        setPreviewing(false);
+    }
+
+    async function confirmImport() {
+        if (!file || !preview || preview.ready === 0) { toast.error("Nothing ready to import"); return; }
+        setImporting(true);
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            const { data } = await api.post(`/events/${event.id}/admin-rsvp/csv?send_email=${sendEmail}`, fd, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+            setResult(data);
+            if (data.created > 0) toast.success(`Imported ${data.created} RSVP${data.created === 1 ? "" : "s"} of ${data.total} row${data.total === 1 ? "" : "s"}`);
+            else toast.error("No RSVPs imported — see errors below");
+            onImported?.();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Import failed");
+        }
+        setImporting(false);
+    }
+
+    function reset() { setFile(null); setPreview(null); setResult(null); setErrorBanner(""); }
+
+    return (
+        <>
+            <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(true)}
+                className="w-full rounded-full border-primary text-primary hover:bg-primary hover:text-white"
+                data-testid="admin-rsvp-csv-btn"
+            >
+                Import RSVPs (CSV)
+            </Button>
+            <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading text-2xl">Bulk import RSVPs from CSV</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 mt-2" data-testid="admin-rsvp-csv-form">
+                        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-3 text-xs leading-relaxed">
+                            <div className="font-bold text-primary mb-1">CSV format</div>
+                            <div className="text-foreground/80">
+                                Required column: <code>member_email</code>.
+                                Optional: <code>ticket_type</code>, <code>guests</code> (semicolon-separated names like <code>Alex; Pat</code>),
+                                {" "}<code>guest_ticket_types</code> (parallel list to guests). Max 500 rows / 1&nbsp;MB.
+                            </div>
+                            <button
+                                type="button"
+                                onClick={downloadTemplate}
+                                className="mt-2 text-primary font-bold hover:underline"
+                                data-testid="admin-rsvp-csv-download-template"
+                            >
+                                ⬇ Download template
+                            </button>
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm" data-testid="admin-rsvp-csv-email-label">
+                            <input
+                                type="checkbox"
+                                checked={sendEmail}
+                                onChange={(e) => { setSendEmail(e.target.checked); setPreview(null); }}
+                                className="h-4 w-4 accent-primary"
+                                data-testid="admin-rsvp-csv-email-toggle"
+                            />
+                            <span>Email the digital ticket to each member <span className="text-xs text-muted-foreground">(uncheck for silent back-fills)</span></span>
+                        </label>
+
+                        {!result && (
+                            <div>
+                                <Label>CSV file</Label>
+                                <Input
+                                    type="file"
+                                    accept=".csv,text/csv"
+                                    onChange={(e) => {
+                                        const f = e.target.files?.[0] || null;
+                                        setFile(f); setPreview(null); setResult(null); setErrorBanner("");
+                                        if (f) runPreview(f);
+                                    }}
+                                    className="rounded-xl mt-1.5"
+                                    data-testid="admin-rsvp-csv-file-input"
+                                />
+                                {file && <div className="text-xs text-muted-foreground mt-1.5">Selected: <span className="font-mono">{file.name}</span> ({(file.size / 1024).toFixed(1)} KB){previewing && " — analyzing…"}</div>}
+                            </div>
+                        )}
+
+                        {errorBanner && (
+                            <div className="rounded-2xl border border-red-300 bg-red-50 text-red-800 text-sm p-3" data-testid="admin-rsvp-csv-error-banner">{errorBanner}</div>
+                        )}
+
+                        {preview && !result && (
+                            <div className="space-y-3" data-testid="admin-rsvp-csv-preview">
+                                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-3 text-sm">
+                                    <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Dry-run preview</span>
+                                    <span className="text-green-700 font-bold" data-testid="admin-rsvp-csv-ready">✅ {preview.ready} ready</span>
+                                    {preview.failed > 0 && <span className="text-red-700 font-bold" data-testid="admin-rsvp-csv-failed">⚠ {preview.failed} error{preview.failed === 1 ? "" : "s"}</span>}
+                                    <span className="text-muted-foreground text-xs">of {preview.total} row{preview.total === 1 ? "" : "s"}</span>
+                                </div>
+                                <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                                    <div className="max-h-80 overflow-auto" data-testid="admin-rsvp-csv-preview-table">
+                                        <table className="w-full text-xs">
+                                            <thead className="bg-muted/50 text-[10px] uppercase tracking-wider sticky top-0 z-10">
+                                                <tr>
+                                                    <th className="px-3 py-2 text-left font-bold w-12">Row</th>
+                                                    <th className="px-3 py-2 text-left font-bold">Status</th>
+                                                    <th className="px-3 py-2 text-left font-bold">Member</th>
+                                                    <th className="px-3 py-2 text-left font-bold">Ticket</th>
+                                                    <th className="px-3 py-2 text-left font-bold">Guests / Error</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {preview.preview.map((p) => (
+                                                    <tr key={p.row} className={`border-t border-border ${p.status === "error" ? "bg-red-50/60" : "bg-card"}`} data-testid={`admin-rsvp-csv-row-${p.row}`}>
+                                                        <td className="px-3 py-1.5 font-mono text-muted-foreground">{p.row}</td>
+                                                        <td className="px-3 py-1.5">
+                                                            {p.status === "ready"
+                                                                ? <span className="inline-block text-[10px] font-bold uppercase tracking-wider rounded-full px-2 py-0.5 bg-green-100 text-green-700">Ready</span>
+                                                                : <span className="inline-block text-[10px] font-bold uppercase tracking-wider rounded-full px-2 py-0.5 bg-red-100 text-red-700">Error</span>}
+                                                        </td>
+                                                        <td className="px-3 py-1.5">
+                                                            <div className="font-semibold truncate max-w-[160px]">{p.member_name || <span className="italic text-muted-foreground">unresolved</span>}</div>
+                                                            <div className="text-[11px] text-muted-foreground truncate max-w-[160px]">{p.email}</div>
+                                                        </td>
+                                                        <td className="px-3 py-1.5 font-mono">{p.ticket_type || "general"}</td>
+                                                        <td className="px-3 py-1.5">
+                                                            {p.status === "error"
+                                                                ? <span className="text-red-700">{p.message}</span>
+                                                                : (p.guest_names && p.guest_names.length > 0)
+                                                                    ? <div className="flex flex-wrap gap-1">{p.guest_names.map((g, i) => <span key={i} className="text-[10px] rounded-full bg-accent/40 px-2 py-0.5">{g}</span>)}</div>
+                                                                    : <span className="text-muted-foreground">—</span>}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <Button
+                                        type="button"
+                                        onClick={confirmImport}
+                                        disabled={importing || preview.ready === 0}
+                                        className="rounded-full bg-primary hover:bg-primary/90 flex-1 min-w-[200px]"
+                                        data-testid="admin-rsvp-csv-confirm-btn"
+                                    >
+                                        {importing ? "Importing…" : `Confirm import (${preview.ready} RSVP${preview.ready === 1 ? "" : "s"})`}
+                                    </Button>
+                                    <Button type="button" variant="outline" onClick={reset} disabled={importing} className="rounded-full" data-testid="admin-rsvp-csv-reset-btn">
+                                        Choose different file
+                                    </Button>
+                                </div>
+                                {preview.ready === 0 && <div className="text-xs text-red-700 italic">No rows are ready to import. Fix the errors above and re-upload.</div>}
+                            </div>
+                        )}
+
+                        {result && (
+                            <div className="rounded-2xl border border-border bg-muted/30 p-3 text-sm" data-testid="admin-rsvp-csv-result">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <span className="text-green-700 font-bold">✅ {result.created} imported</span>
+                                    {result.failed > 0 && <span className="text-red-700 font-bold">⚠ {result.failed} skipped</span>}
+                                    <span className="text-muted-foreground text-xs">of {result.total} row{result.total === 1 ? "" : "s"}</span>
+                                </div>
+                                {result.errors && result.errors.length > 0 && (
+                                    <div className="max-h-40 overflow-y-auto bg-card rounded-xl border border-red-200 p-2 text-xs space-y-1" data-testid="admin-rsvp-csv-errors">
+                                        <div className="font-bold text-red-700 uppercase text-[10px] tracking-wider">Errors</div>
+                                        {result.errors.map((err, i) => (
+                                            <div key={i} className="flex gap-2">
+                                                <span className="font-mono text-muted-foreground shrink-0">Row {err.row}:</span>
+                                                <span>{err.message}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <Button type="button" onClick={reset} variant="outline" className="rounded-full mt-3" data-testid="admin-rsvp-csv-import-another">
+                                    Import another file
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+        </>
     );
 }
 

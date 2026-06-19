@@ -27,6 +27,47 @@ from fastapi.responses import Response
 from models import HoursLogIn, HoursReviewIn, AdminHoursLogIn, AdminHoursBulkLogIn
 
 
+# Formats we try when parsing user-supplied CSV dates. Order matters — try the
+# unambiguous ISO forms first, then common US/Excel layouts. If a value can be
+# parsed by `_dt.fromisoformat` (handles ISO datetimes with time + offset) we
+# still get a usable date regardless.
+_DATE_FORMATS = (
+    "%Y-%m-%d",          # 2026-06-15
+    "%Y/%m/%d",          # 2026/06/15
+    "%m/%d/%Y",          # 06/15/2026, 6/15/2026  ← Excel default
+    "%m-%d-%Y",          # 06-15-2026
+    "%m/%d/%y",          # 6/15/26
+    "%m-%d-%y",          # 6-15-26
+    "%d-%b-%Y",          # 15-Jun-2026
+    "%d-%b-%y",          # 15-Jun-26
+    "%d %b %Y",          # 15 Jun 2026
+    "%d %B %Y",          # 15 June 2026
+    "%b %d, %Y",         # Jun 15, 2026
+    "%B %d, %Y",         # June 15, 2026
+)
+DATE_FORMATS_FOR_HUMANS = "YYYY-MM-DD, MM/DD/YYYY, M/D/YY, 15-Jun-2026"
+
+
+def _parse_csv_date(raw: str) -> _dt:
+    """Best-effort date parser for CSV imports. Tries ISO + common US/Excel
+    layouts. Raises ValueError with the accepted-formats list when nothing
+    matches so the error message bubbled back to the admin is actionable."""
+    raw = (raw or "").strip()
+    if not raw:
+        raise ValueError("date is empty")
+    # ISO datetime first — handles "2026-06-15T10:00:00Z" or with offset
+    try:
+        return _dt.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        pass
+    for fmt in _DATE_FORMATS:
+        try:
+            return _dt.strptime(raw, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid date '{raw}'. Accepted formats: {DATE_FORMATS_FOR_HUMANS}")
+
+
 def register(
     api,
     *,
@@ -178,7 +219,7 @@ def register(
     async def admin_csv_template(_: dict = Depends(admin_tab_dep("hours"))):
         """Returns a small CSV template so admins know which headers to use.
         Includes a single illustrative row that the admin should delete before
-        uploading."""
+        uploading, plus a comment line documenting accepted date formats."""
         headers = [
             "member_email", "hours", "date", "activity", "event_type",
             "agency_name", "host_name", "host_email", "host_phone",
@@ -313,18 +354,12 @@ def register(
                 add_error(idx, email_raw, target.get("name", ""), "Invalid hours value", raw_hours, raw_date, raw_activity)
                 continue
             if not raw_date:
-                add_error(idx, email_raw, target.get("name", ""), "Missing date", raw_hours, raw_date, raw_activity)
+                add_error(idx, email_raw, target.get("name", ""), f"Missing date — use {DATE_FORMATS_FOR_HUMANS}", raw_hours, raw_date, raw_activity)
                 continue
             try:
-                # Accept common shapes: 2026-06-15, 2026/06/15, 06/15/2026, ISO datetime
-                d_norm = raw_date.replace("/", "-")
-                if len(d_norm) == 10 and d_norm[2] == "-" and d_norm[5] == "-":
-                    # MM-DD-YYYY → flip
-                    mm, dd, yyyy = d_norm.split("-")
-                    d_norm = f"{yyyy}-{mm}-{dd}"
-                parsed_dt = _dt.fromisoformat(d_norm.replace("Z", ""))
-            except Exception:
-                add_error(idx, email_raw, target.get("name", ""), f"Invalid date '{raw_date}'", raw_hours, raw_date, raw_activity)
+                parsed_dt = _parse_csv_date(raw_date)
+            except ValueError as exc:
+                add_error(idx, email_raw, target.get("name", ""), str(exc), raw_hours, raw_date, raw_activity)
                 continue
             event_type = (opt(row, "event_type") or "aop_related").lower()
             if event_type not in ("aop_related", "other"):

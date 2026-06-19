@@ -361,6 +361,9 @@ function CsvImportDialog() {
                             <code>host_name</code>, <code>host_email</code>, <code>host_phone</code>.
                             Every imported row is <strong>auto-approved</strong>. Max 1,000 rows / 1&nbsp;MB.
                         </div>
+                        <div className="text-foreground/80 mt-1.5">
+                            <strong>Date formats accepted:</strong> <code>YYYY-MM-DD</code> (e.g. 2026-06-15), <code>MM/DD/YYYY</code> (Excel default), <code>M/D/YY</code>, <code>15-Jun-2026</code>.
+                        </div>
                         <button
                             type="button"
                             onClick={downloadTemplate}
