@@ -16,6 +16,16 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AU — Iteration 51: Bulk RSVPs CSV + Hours CSV date parser fix (2026-06-19)
+Two items in one shot:
+
+1. **Hours CSV date parsing** — admins were hitting "Invalid date" on common Excel default formats. Replaced the brittle length-based parser with a new `_parse_csv_date()` helper in `routes/hours.py` that tries ISO + multiple US/Excel layouts: `%Y-%m-%d`, `%Y/%m/%d`, `%m/%d/%Y`, `%m-%d-%Y`, `%m/%d/%y`, `%m-%d-%y`, `%d-%b-%Y`, `%d-%b-%y`, `%d %b %Y`, `%d %B %Y`, `%b %d, %Y`, `%B %d, %Y`. Error messages now include the accepted formats so the admin can fix the file without trial-and-error. Frontend Hours CSV dialog help text gained a "Date formats accepted:" line.
+2. **Bulk Import RSVPs** — new admin endpoints `GET /events/{id}/admin-rsvp/csv/template` and `POST /events/{id}/admin-rsvp/csv?dry_run=true|false&send_email=true|false`. CSV columns: `member_email` (required), `ticket_type` (optional), `guests` (semicolon-separated names), `guest_ticket_types` (parallel semicolon list). Rejects cancelled / paid / umbrella parent events with 400. Enforces capacity across the entire batch (running tally). Dedupes both DB-existing RSVPs and same-file duplicate emails. Frontend `AdminRsvpCsvDialog` mounted under "Admin tools" alongside the single-member admin RSVP dialog — reuses the dry-run preview UX (file selection → auto dry-run → row-by-row preview with READY/ERROR pills + guest pills → Confirm import). Email-suppression toggle for silent back-fills.
+
+**Verification (iter51)**: testing_agent iteration_51.json — 22/22 backend pytest + all frontend Playwright checks PASS. New regression file at `/app/backend/tests/test_iteration51_bulk_rsvp_csv.py`. No bugs. Applied 1 inline comment from review (ordering note for the send_email=true attribution patch).
+
+
+
 ### Phase AT — Iteration 50: Admin RSVPs + member combined RSVP+guests email (2026-06-19)
 Two related event-RSVP improvements:
 

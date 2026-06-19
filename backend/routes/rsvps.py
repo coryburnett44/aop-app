@@ -550,6 +550,10 @@ def register(
             for d in ready_docs:
                 target = d["target"]
                 if send_email:
+                    # Note: _create_rsvp_and_email_ticket schedules the email
+                    # task synchronously inside this call. We patch the admin
+                    # attribution afterwards — the email body doesn't include
+                    # the attribution so the ordering is harmless.
                     rsvp_doc = await _create_rsvp_and_email_ticket(
                         user=target,
                         event=e,
