@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { format, isSameDay, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, addMonths } from "date-fns";
+import { fmtET } from "../lib/eventTime";
 import { MapPin, Users, ChevronLeft, ChevronRight } from "lucide-react";
 
 export default function Events() {
@@ -27,7 +28,10 @@ export default function Events() {
     const eventsByDay = useMemo(() => {
         const map = {};
         events.forEach((e) => {
-            const key = format(parseISO(e.start_at), "yyyy-MM-dd");
+            // Group by ET date so events display on the correct day for members
+            // outside Eastern time (a 9pm ET event would otherwise group into
+            // the *next* day for a member browsing from Hawaii).
+            const key = fmtET(e.start_at, "yyyy-MM-dd");
             (map[key] = map[key] || []).push(e);
         });
         return map;
@@ -56,13 +60,13 @@ export default function Events() {
                             <div className="bg-secondary/30 rounded-xl aspect-square grid place-items-center text-center">
                                 <div>
                                     <div className="text-xs font-semibold uppercase tracking-wider text-primary">
-                                        {format(parseISO(e.start_at), "MMM")}
+                                        {fmtET(e.start_at, "MMM")}
                                     </div>
                                     <div className="font-heading text-3xl font-black leading-none mt-1">
-                                        {format(parseISO(e.start_at), "d")}
+                                        {fmtET(e.start_at, "d")}
                                     </div>
                                     <div className="text-xs mt-2 text-muted-foreground">
-                                        {format(parseISO(e.start_at), "h:mm a")}
+                                        {fmtET(e.start_at, "h:mm a zzz")}
                                     </div>
                                 </div>
                             </div>

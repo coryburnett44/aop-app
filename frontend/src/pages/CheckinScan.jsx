@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
 import { CheckCircle2, AlertCircle, Loader2, Ticket, Calendar, MapPin, ArrowLeft, RefreshCw } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { fmtET } from "../lib/eventTime";
 import { toast } from "sonner";
 
 const NAVY = "#0A2463";
@@ -94,7 +95,7 @@ export default function CheckinScan() {
                     </h1>
                     {event && (
                         <div className="text-sm text-slate-600 mt-2 flex flex-wrap items-center gap-4">
-                            <span className="inline-flex items-center gap-1"><Calendar className="h-4 w-4" />{format(parseISO(event.start_at), "EEE, MMM d · h:mm a")}</span>
+                            <span className="inline-flex items-center gap-1"><Calendar className="h-4 w-4" />{fmtET(event.start_at, "EEE, MMM d · h:mm a zzz")}</span>
                             {event.location && <span className="inline-flex items-center gap-1"><MapPin className="h-4 w-4" />{event.location}</span>}
                         </div>
                     )}

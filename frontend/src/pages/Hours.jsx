@@ -639,6 +639,17 @@ function ReviewQueue() {
         }
     }
 
+    async function remove(h) {
+        if (!confirm(`Permanently remove ${h.hours} hour${h.hours === 1 ? "" : "s"} from ${h.user_name}? This cannot be undone.`)) return;
+        try {
+            await api.delete(`/hours/${h.id}`);
+            toast.success("Hours removed");
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not remove");
+        }
+    }
+
     return (
         <div>
             <div className="flex gap-2 mb-4 flex-wrap">
@@ -660,7 +671,7 @@ function ReviewQueue() {
                 <div className="space-y-3">
                     {entries.map((h) => (
                         <HoursCard key={h.id} h={h}>
-                            <AdminHoursActions h={h} onReview={review} />
+                            <AdminHoursActions h={h} onReview={review} onRemove={remove} />
                         </HoursCard>
                     ))}
                 </div>
@@ -700,7 +711,7 @@ function StatusBadge({ status }) {
  * tweak the value in place and the audit trail (hours_adjusted_by_name +
  * hours_adjusted_at) gets stamped server-side.
  */
-function AdminHoursActions({ h, onReview }) {
+function AdminHoursActions({ h, onReview, onRemove }) {
     const [editing, setEditing] = useState(false);
     const [val, setVal] = useState(String(h.hours));
 
@@ -752,6 +763,17 @@ function AdminHoursActions({ h, onReview }) {
                         <X className="h-4 w-4 mr-1" /> Reject
                     </Button>
                 </div>
+            )}
+            {onRemove && !editing && (
+                <button
+                    type="button"
+                    onClick={() => onRemove(h)}
+                    className="text-[11px] text-destructive hover:underline font-semibold"
+                    data-testid={`remove-hours-${h.id}`}
+                    title="Permanently delete this entry"
+                >
+                    🗑 Remove
+                </button>
             )}
             {h.hours_adjusted_by_name && (
                 <div className="text-[10px] text-muted-foreground italic">adjusted by {h.hours_adjusted_by_name}</div>

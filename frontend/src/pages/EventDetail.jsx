@@ -8,6 +8,7 @@ import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { format, parseISO } from "date-fns";
+import { fmtET } from "../lib/eventTime";
 import { MapPin, Users, Calendar, ArrowLeft, UserCheck, Trash2, Plus, X, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import PaidEventCheckout from "../components/PaidEventCheckout";
@@ -133,10 +134,10 @@ export default function EventDetail() {
                     <div className="flex items-start gap-3">
                         <Calendar className="h-5 w-5 mt-0.5 text-primary" />
                         <div>
-                            <div className="font-medium">{format(parseISO(event.start_at), "EEEE, MMM d")}</div>
+                            <div className="font-medium">{fmtET(event.start_at, "EEEE, MMM d")}</div>
                             <div className="text-sm text-muted-foreground">
-                                {format(parseISO(event.start_at), "h:mm a")}
-                                {event.end_at && ` – ${format(parseISO(event.end_at), "h:mm a")}`}
+                                {fmtET(event.start_at, "h:mm a zzz")}
+                                {event.end_at && ` – ${fmtET(event.end_at, "h:mm a zzz")}`}
                             </div>
                         </div>
                     </div>
@@ -413,7 +414,7 @@ function SubEventCard({ sub, isAdmin, onChange }) {
                 <div className="text-xs uppercase tracking-wider font-semibold text-primary mb-1">{sub.category}</div>
                 <div className="font-heading text-lg font-bold leading-tight">{sub.title}</div>
                 <div className="text-xs text-muted-foreground mt-1.5">
-                    {format(parseISO(sub.start_at), "EEE, MMM d · h:mm a")}
+                    {fmtET(sub.start_at, "EEE, MMM d · h:mm a zzz")}
                 </div>
                 <div className="text-xs mt-2 flex items-center gap-3">
                     <span><Users className="h-3 w-3 inline mr-1" />{sub.rsvp_count} going{sub.guest_count > 0 ? ` +${sub.guest_count} guests` : ""}</span>
@@ -1023,7 +1024,7 @@ function CheckInPanel({ eventId, eventTitle, allowsTickets }) {
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="font-medium truncate">{c.user_name}</div>
-                                <div className="text-xs text-muted-foreground">{format(parseISO(c.checked_in_at), "MMM d · h:mm a")} · by {c.checked_in_by_name}</div>
+                                <div className="text-xs text-muted-foreground">{fmtET(c.checked_in_at, "MMM d · h:mm a zzz")} · by {c.checked_in_by_name}</div>
                             </div>
                             <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2.5 py-1 bg-card border">
                                 {c.ticket_type}

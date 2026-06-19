@@ -1329,6 +1329,101 @@ async def revoke_award(grant_id: str, _: dict = Depends(admin_tab_dep("awards"))
         raise HTTPException(status_code=404, detail="Grant not found")
     return {"ok": True}
 
+
+@api.put("/awards/grants/{grant_id}")
+async def update_award_grant(grant_id: str, body: dict, _: dict = Depends(admin_tab_dep("awards"))):
+    """Admin edit of an existing grant — change the reason or back-date it.
+    Only `reason` and `granted_at` are editable; the member, award, and
+    ordinal are immutable so audit history stays trustworthy."""
+    grant = await db.award_grants.find_one({"id": grant_id}, {"_id": 0})
+    if not grant:
+        raise HTTPException(status_code=404, detail="Grant not found")
+    update_doc: dict = {}
+    if "reason" in body:
+        update_doc["reason"] = (body.get("reason") or "").strip()
+    if "granted_at" in body and body["granted_at"]:
+        # Accept either an ISO string or a date-only "YYYY-MM-DD".
+        gd = str(body["granted_at"])
+        if len(gd) == 10 and gd[4] == "-":
+            gd = gd + "T00:00:00"
+        try:
+            datetime.fromisoformat(gd.replace("Z", "+00:00"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid granted_at — use ISO or YYYY-MM-DD")
+        update_doc["granted_at"] = gd
+    if not update_doc:
+        return {"ok": True, "no_change": True}
+    await db.award_grants.update_one({"id": grant_id}, {"$set": update_doc})
+    updated = await db.award_grants.find_one({"id": grant_id}, {"_id": 0})
+    return updated
+
+
+@api.post("/awards/{award_id}/grant-bulk")
+async def grant_award_bulk(award_id: str, body: dict, admin: dict = Depends(admin_tab_dep("awards"))):
+    """Grant the same award to many members in one shot. Each member gets
+    their own grant row with its own ordinal — repeat grants (same award to
+    same member) are still allowed and the ordinal increments correctly.
+
+    Body: {user_ids: [str], reason?: str, granted_at?: ISO string}
+    Returns {created, failed, total, results: [{user_id, name, ok, ordinal?, error?}]}
+    """
+    award = await db.awards.find_one({"id": award_id}, {"_id": 0})
+    if not award:
+        raise HTTPException(status_code=404, detail="Award not found")
+    user_ids = list(dict.fromkeys((body or {}).get("user_ids") or []))
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="user_ids is required")
+    if len(user_ids) > 200:
+        raise HTTPException(status_code=400, detail="Max 200 members per bulk grant")
+    reason = ((body or {}).get("reason") or "").strip()
+    granted_at = (body or {}).get("granted_at") or iso(now_utc())
+
+    # Look up all targets and prior counts in two round-trips.
+    targets: dict = {}
+    async for u in db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1}):
+        targets[u["id"]] = u
+    # Count prior grants of this award per user — needed to compute the new ordinal.
+    prior_counts: dict = {}
+    async for d in db.award_grants.aggregate([
+        {"$match": {"award_id": award_id, "user_id": {"$in": user_ids}}},
+        {"$group": {"_id": "$user_id", "n": {"$sum": 1}}},
+    ]):
+        prior_counts[d["_id"]] = d["n"]
+
+    docs: list[dict] = []
+    results: list[dict] = []
+    for uid in user_ids:
+        target = targets.get(uid)
+        if not target:
+            results.append({"user_id": uid, "ok": False, "error": "Member not found"})
+            continue
+        ordinal = prior_counts.get(uid, 0) + 1
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "award_id": award_id,
+            "award_name": award["name"],
+            "award_icon": award.get("icon", "trophy"),
+            "award_color": award.get("color", "#F9D466"),
+            "user_id": uid,
+            "user_name": target.get("name", ""),
+            "reason": reason,
+            "granted_by": admin["id"],
+            "granted_by_name": admin.get("name", "Admin"),
+            "granted_at": granted_at,
+            "ordinal": ordinal,
+        })
+        results.append({"user_id": uid, "name": target.get("name", ""), "ok": True, "ordinal": ordinal})
+
+    if docs:
+        await db.award_grants.insert_many(docs)
+    ok_count = sum(1 for r in results if r["ok"])
+    return {
+        "created": ok_count,
+        "failed": len(results) - ok_count,
+        "total": len(results),
+        "results": results,
+    }
+
 @api.get("/members/{user_id}/awards")
 async def member_awards(user_id: str):
     """Returns every award grant for the user, with each entry carrying its

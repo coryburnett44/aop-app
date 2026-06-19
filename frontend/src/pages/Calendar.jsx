@@ -5,6 +5,7 @@ import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { ChevronLeft, ChevronRight, Calendar as CalIcon, MapPin } from "lucide-react";
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameMonth, isSameDay, addMonths, subMonths } from "date-fns";
+import { fmtET } from "../lib/eventTime";
 
 const NAVY = "#0A2463";
 const RED = "#C8102E";
@@ -102,13 +103,13 @@ export default function CalendarPage() {
                         {events.map((e) => (
                             <Link key={e.id} to={`/events/${e.id}`} className="flex items-center gap-4 p-4 bg-white rounded-2xl border border-slate-200 hover:border-slate-400 transition-colors" data-testid={`cal-event-${e.id}`}>
                                 <div className="text-center px-3 py-1 rounded-xl text-white font-bold shrink-0" style={{ backgroundColor: NAVY }}>
-                                    <div className="text-[10px] uppercase">{format(parseISO(e.start_at), "MMM")}</div>
-                                    <div className="text-xl font-black -mt-1">{format(parseISO(e.start_at), "d")}</div>
+                                    <div className="text-[10px] uppercase">{fmtET(e.start_at, "MMM")}</div>
+                                    <div className="text-xl font-black -mt-1">{fmtET(e.start_at, "d")}</div>
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <div className="font-heading font-bold" style={{ color: NAVY }}>{e.title}</div>
                                     <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-3 flex-wrap">
-                                        <span><CalIcon className="h-3 w-3 inline" /> {format(parseISO(e.start_at), "h:mm a")}</span>
+                                        <span><CalIcon className="h-3 w-3 inline" /> {fmtET(e.start_at, "h:mm a zzz")}</span>
                                         {e.location && <span><MapPin className="h-3 w-3 inline" /> {e.location}</span>}
                                         <span>{e.rsvp_count || 0} RSVPs</span>
                                         {e.checkin_count > 0 && <span>· {e.checkin_count} checked in</span>}
@@ -131,7 +132,7 @@ export default function CalendarPage() {
                         {dayEvents.map((e) => (
                             <Link key={e.id} to={`/events/${e.id}`} className="block p-4 rounded-xl bg-slate-50 hover:bg-slate-100">
                                 <div className="font-bold" style={{ color: NAVY }}>{e.title}</div>
-                                <div className="text-xs text-slate-500 mt-1">{format(parseISO(e.start_at), "h:mm a")} · {e.location || "TBA"}</div>
+                                <div className="text-xs text-slate-500 mt-1">{fmtET(e.start_at, "h:mm a zzz")} · {e.location || "TBA"}</div>
                             </Link>
                         ))}
                     </div>

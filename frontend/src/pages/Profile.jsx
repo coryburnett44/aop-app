@@ -11,6 +11,7 @@ import { Button } from "../components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { format, parseISO, differenceInDays } from "date-fns";
+import { fmtET } from "../lib/eventTime";
 import { toast } from "sonner";
 import {
     Calendar, MapPin, Trophy, Clock, Medal, Star, Heart, GraduationCap, Sparkles,
@@ -590,7 +591,7 @@ export default function Profile() {
                         <Link key={e.id} to={`/events/${e.id}`} className="block bg-card rounded-2xl p-5 border border-border hover:shadow-warm transition-all" data-testid={`my-event-${e.id}`}>
                             <div className="font-heading font-semibold text-lg">{e.title}</div>
                             <div className="mt-2 flex items-center gap-5 text-sm text-muted-foreground">
-                                <span className="inline-flex items-center gap-1.5"><Calendar className="h-4 w-4" /> {format(parseISO(e.start_at), "EEE, MMM d · h:mm a")}</span>
+                                <span className="inline-flex items-center gap-1.5"><Calendar className="h-4 w-4" /> {fmtET(e.start_at, "EEE, MMM d · h:mm a zzz")}</span>
                                 <span className="inline-flex items-center gap-1.5"><MapPin className="h-4 w-4" /> {e.location}</span>
                             </div>
                         </Link>

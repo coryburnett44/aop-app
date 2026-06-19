@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { Users, Calendar, DollarSign, TrendingUp, AlertCircle, Newspaper, FileText, Sparkles, Clock, Trophy, Image as ImageIcon, Inbox, Check, X, UserPlus, AlertTriangle } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { fmtET } from "../lib/eventTime";
 import { toast } from "sonner";
 import {
     ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip,
@@ -162,7 +163,7 @@ export default function AdminDashboard() {
                                 <div className="flex-1 min-w-0">
                                     <div className="font-medium truncate">{e.title}</div>
                                     <div className="text-xs text-muted-foreground">
-                                        {format(parseISO(e.start_at), "MMM d")} · {e.location || "TBA"}
+                                        {fmtET(e.start_at, "MMM d zzz")} · {e.location || "TBA"}
                                     </div>
                                 </div>
                                 <div className="text-sm font-heading font-bold">{e.rsvp_count}</div>
@@ -219,17 +220,17 @@ export default function AdminDashboard() {
                                     <div className="w-14 h-14 rounded-xl bg-secondary/30 grid place-items-center text-center shrink-0">
                                         <div>
                                             <div className="text-[10px] font-semibold uppercase text-primary">
-                                                {format(parseISO(e.start_at), "MMM")}
+                                                {fmtET(e.start_at, "MMM")}
                                             </div>
                                             <div className="font-heading text-lg font-black leading-none">
-                                                {format(parseISO(e.start_at), "d")}
+                                                {fmtET(e.start_at, "d")}
                                             </div>
                                         </div>
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="font-medium truncate">{e.title}</div>
                                         <div className="text-xs text-muted-foreground">
-                                            {format(parseISO(e.start_at), "h:mm a")} · {e.location || "TBA"}
+                                            {fmtET(e.start_at, "h:mm a zzz")} · {e.location || "TBA"}
                                         </div>
                                     </div>
                                     <div className="text-xs text-muted-foreground">{e.rsvp_count} going</div>

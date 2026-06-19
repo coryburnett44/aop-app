@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
+import { fmtET } from "../lib/eventTime";
 import AdminDashboard from "./AdminDashboard";
 import Reports from "./Reports";
 import RichEditor from "../components/RichEditor";
@@ -114,7 +115,7 @@ function EventsAdmin() {
                     <div key={e.id} className="bg-card border border-border rounded-2xl p-5 flex items-center justify-between" data-testid={`admin-event-${e.id}`}>
                         <div>
                             <div className="font-heading font-semibold text-lg">{e.title}</div>
-                            <div className="text-sm text-muted-foreground mt-1">{format(parseISO(e.start_at), "EEE, MMM d · h:mm a")} · {e.rsvp_count} RSVPs</div>
+                            <div className="text-sm text-muted-foreground mt-1">{fmtET(e.start_at, "EEE, MMM d · h:mm a zzz")} · {e.rsvp_count} RSVPs</div>
                         </div>
                         <div className="flex gap-2">
                             <EventDialog event={e} onSaved={load} trigger={<Button variant="outline" className="rounded-full" data-testid={`edit-event-${e.id}`}>Edit</Button>} />
@@ -1893,45 +1894,101 @@ function AwardDialog({ award, onSaved, trigger }) {
 
 function GrantAwardDialog({ award, members, onSaved }) {
     const [open, setOpen] = useState(false);
-    const [userId, setUserId] = useState("");
+    const [selectedIds, setSelectedIds] = useState([]);
+    const [memberQuery, setMemberQuery] = useState("");
     const [reason, setReason] = useState("");
     const [grantedAt, setGrantedAt] = useState("");
+    const [busy, setBusy] = useState(false);
+
+    function toggle(id) {
+        setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+    }
+
     async function grant() {
-        if (!userId) { toast.error("Pick a member"); return; }
+        if (selectedIds.length === 0) { toast.error("Pick at least one member"); return; }
+        setBusy(true);
         try {
-            const payload = { user_id: userId, reason };
-            if (grantedAt) payload.granted_at = new Date(grantedAt).toISOString();
-            await api.post(`/awards/${award.id}/grant`, payload);
-            toast.success(`${award.name} granted`);
+            const granted_at = grantedAt ? new Date(grantedAt).toISOString() : undefined;
+            if (selectedIds.length === 1) {
+                const payload = { user_id: selectedIds[0], reason };
+                if (granted_at) payload.granted_at = granted_at;
+                await api.post(`/awards/${award.id}/grant`, payload);
+                toast.success(`${award.name} granted`);
+            } else {
+                const payload = { user_ids: selectedIds, reason };
+                if (granted_at) payload.granted_at = granted_at;
+                const { data } = await api.post(`/awards/${award.id}/grant-bulk`, payload);
+                toast.success(`${award.name} granted to ${data.created} member${data.created === 1 ? "" : "s"}`);
+            }
             setOpen(false);
-            setUserId(""); setReason(""); setGrantedAt("");
+            setSelectedIds([]); setReason(""); setGrantedAt(""); setMemberQuery("");
             onSaved();
         } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+        setBusy(false);
     }
+
+    const filtered = memberQuery.trim()
+        ? members.filter((m) => {
+            const q = memberQuery.trim().toLowerCase();
+            return (m.name || "").toLowerCase().includes(q) || (m.email || "").toLowerCase().includes(q);
+        })
+        : members;
+
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
                 <Button size="sm" className="rounded-full bg-primary/10 text-primary hover:bg-primary/20" data-testid={`grant-btn-${award.id}`}>Grant</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">Grant "{award.name}"</DialogTitle></DialogHeader>
                 <div className="space-y-3 mt-2">
                     <div>
-                        <Label>Member</Label>
-                        <Select value={userId} onValueChange={setUserId}>
-                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="grant-member-select"><SelectValue placeholder="Choose a member…" /></SelectTrigger>
-                            <SelectContent className="max-h-72">
-                                {members.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} — {m.email}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
+                        <Label>Members * <span className="text-xs font-normal text-muted-foreground">({selectedIds.length} selected)</span></Label>
+                        <Input
+                            placeholder="Search members…"
+                            value={memberQuery}
+                            onChange={(e) => setMemberQuery(e.target.value)}
+                            className="rounded-xl mt-1.5"
+                            data-testid="grant-member-search"
+                        />
+                        {selectedIds.length > 0 && (
+                            <div className="mt-2 flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground">{selectedIds.length} member{selectedIds.length === 1 ? "" : "s"} selected</span>
+                                <button type="button" onClick={() => setSelectedIds([])} className="text-primary font-semibold hover:underline" data-testid="grant-clear-selected">Clear</button>
+                            </div>
+                        )}
+                        <div className="mt-1.5 max-h-48 overflow-y-auto rounded-xl border border-border bg-card divide-y divide-border" data-testid="grant-member-list">
+                            {filtered.length === 0 ? (
+                                <div className="px-3 py-4 text-xs text-muted-foreground italic">No members match.</div>
+                            ) : filtered.map((m) => {
+                                const checked = selectedIds.includes(m.id);
+                                return (
+                                    <label key={m.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-sm hover:bg-muted/40 ${checked ? "bg-primary/5" : ""}`} data-testid={`grant-member-row-${m.id}`}>
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() => toggle(m.id)}
+                                            className="h-4 w-4 accent-primary shrink-0"
+                                            data-testid={`grant-member-checkbox-${m.id}`}
+                                        />
+                                        <span className="font-medium truncate">{m.name}</span>
+                                        {m.email && <span className="text-xs text-muted-foreground truncate">· {m.email}</span>}
+                                    </label>
+                                );
+                            })}
+                        </div>
                     </div>
                     <div>
                         <Label>Date granted <span className="text-xs text-muted-foreground font-normal">(defaults to today)</span></Label>
                         <Input type="date" value={grantedAt} onChange={(e) => setGrantedAt(e.target.value)} className="rounded-xl mt-1.5" data-testid="grant-date-input" />
                     </div>
-                    <div><Label>Reason (optional)</Label><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="rounded-xl mt-1.5" /></div>
+                    <div><Label>Reason (optional)</Label><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="rounded-xl mt-1.5" data-testid="grant-reason-input" /></div>
                 </div>
-                <DialogFooter><Button onClick={grant} className="rounded-full bg-primary hover:bg-primary/90" data-testid="grant-confirm-btn">Grant award</Button></DialogFooter>
+                <DialogFooter>
+                    <Button onClick={grant} disabled={busy || selectedIds.length === 0} className="rounded-full bg-primary hover:bg-primary/90" data-testid="grant-confirm-btn">
+                        {busy ? "Granting…" : (selectedIds.length > 1 ? `Grant to ${selectedIds.length} members` : "Grant award")}
+                    </Button>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );
@@ -1954,17 +2011,30 @@ function StatusPill({ status }) {
 }
 
 function MemberCardDialog({ member, chapters, tiers, trigger }) {
+    const { user: currentUser } = useAuth();
+    const isAdmin = currentUser?.role === "admin";
     const [open, setOpen] = useState(false);
     const [details, setDetails] = useState(member);
     const [grants, setGrants] = useState([]);
+    const [editingGrant, setEditingGrant] = useState(null);
+    const loadGrants = () => api.get(`/members/${member.id}/awards`).then(({ data }) => setGrants(data || [])).catch(() => setGrants([]));
     useEffect(() => {
         if (open) {
             api.get(`/members/${member.id}`).then(({ data }) => setDetails(data)).catch(() => {});
-            api.get(`/members/${member.id}/awards`).then(({ data }) => setGrants(data || [])).catch(() => setGrants([]));
+            loadGrants();
         }
     }, [open, member.id]);
     const chapter = chapters?.find((c) => c.id === details.chapter_id);
     const tier = tiers?.find((t) => t.id === details.tier_id);
+
+    async function removeGrant(g) {
+        if (!confirm(`Revoke "${g.award_name || 'this award'}" from ${details.name}? This cannot be undone.`)) return;
+        try {
+            await api.delete(`/awards/grants/${g.id}`);
+            toast.success("Award revoked");
+            loadGrants();
+        } catch (e) { toast.error(e.response?.data?.detail || "Could not revoke"); }
+    }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
@@ -2024,21 +2094,34 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                         {grants.length === 0 ? (
                             <div className="text-xs text-muted-foreground italic">No ribbons earned yet.</div>
                         ) : (
-                            <div className="flex flex-wrap gap-2" data-testid={`member-card-${member.id}-ribbons`}>
+                            <div className="space-y-2" data-testid={`member-card-${member.id}-ribbons`}>
                                 {grants.map((g) => (
-                                    <div
-                                        key={g.id}
-                                        title={g.granted_at ? format(parseISO(g.granted_at), "MMM d, yyyy") : ""}
-                                        className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold bg-primary/10 text-primary border border-primary/20"
-                                        data-testid={`ribbon-${g.id}`}
-                                    >
-                                        <span className="w-2 h-2 rounded-full bg-primary"></span>
-                                        {g.award_name || g.name || "Ribbon"}
+                                    <div key={g.id} className="flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2" data-testid={`ribbon-${g.id}`}>
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: g.award_color || "#F9D466" }}></span>
+                                            <div className="min-w-0">
+                                                <div className="font-semibold text-sm truncate">{g.award_name || g.name || "Ribbon"} {g.ordinal > 1 && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-primary/10 text-primary ml-1">{g.ordinal}×</span>}</div>
+                                                <div className="text-[11px] text-muted-foreground truncate">
+                                                    {g.granted_at ? format(parseISO(g.granted_at), "MMM d, yyyy") : ""}{g.reason ? ` · ${g.reason}` : ""}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {isAdmin && (
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                <button onClick={() => setEditingGrant(g)} className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-1 border border-primary text-primary hover:bg-primary hover:text-white transition-colors" data-testid={`ribbon-edit-${g.id}`}>
+                                                    Edit
+                                                </button>
+                                                <button onClick={() => removeGrant(g)} className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-1 border border-destructive text-destructive hover:bg-destructive hover:text-white transition-colors" data-testid={`ribbon-remove-${g.id}`}>
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
                         )}
                     </div>
+                    <GrantEditDialog grant={editingGrant} onClose={() => setEditingGrant(null)} onSaved={() => { setEditingGrant(null); loadGrants(); }} />
                     <div className="pt-2 text-[10px] text-muted-foreground italic">
                         Secure data (passwords, payment methods, transactions) is intentionally hidden.
                     </div>
@@ -2055,6 +2138,59 @@ function DetailRow({ label, value }) {
             <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground w-32 shrink-0 pt-0.5">{label}</div>
             <div className="text-sm flex-1 break-words">{value}</div>
         </div>
+    );
+}
+
+function GrantEditDialog({ grant, onClose, onSaved }) {
+    const [reason, setReason] = useState("");
+    const [grantedAt, setGrantedAt] = useState("");
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        if (grant) {
+            setReason(grant.reason || "");
+            setGrantedAt(grant.granted_at ? grant.granted_at.slice(0, 10) : "");
+        }
+    }, [grant]);
+
+    if (!grant) return null;
+    async function save() {
+        setBusy(true);
+        try {
+            await api.put(`/awards/grants/${grant.id}`, { reason, granted_at: grantedAt });
+            toast.success("Award updated");
+            onSaved?.();
+        } catch (e) { toast.error(e.response?.data?.detail || "Could not update"); }
+        setBusy(false);
+    }
+    return (
+        <Dialog open={!!grant} onOpenChange={(v) => { if (!v) onClose?.(); }}>
+            <DialogContent className="max-w-md" data-testid="grant-edit-dialog">
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl">Edit award grant</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div className="rounded-xl bg-muted/40 p-3 text-sm" data-testid="grant-edit-award-name">
+                        <span className="font-semibold">{grant.award_name}</span>
+                        {grant.ordinal > 1 && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-primary/10 text-primary ml-2">{grant.ordinal}×</span>}
+                    </div>
+                    <div>
+                        <Label>Date granted</Label>
+                        <Input type="date" value={grantedAt} onChange={(e) => setGrantedAt(e.target.value)} className="rounded-xl mt-1.5" data-testid="grant-edit-date" />
+                    </div>
+                    <div>
+                        <Label>Reason</Label>
+                        <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="rounded-xl mt-1.5" data-testid="grant-edit-reason" />
+                    </div>
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={onClose} className="rounded-full">Cancel</Button>
+                    <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90" data-testid="grant-edit-save">
+                        {busy ? "Saving…" : "Save changes"}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }
 
