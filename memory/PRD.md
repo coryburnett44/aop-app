@@ -16,6 +16,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AR — Iteration 48: Tier chart correctness + Awards reports + Card photos (2026-06-19)
+Three admin/member-facing fixes:
+
+1. **"By Membership Tier" dashboard chart** — was showing the legacy `users.membership_tier` string column which defaulted to `"standard"` and surfaced `"lifetime"` for life members, even though neither is a real tier. Fixed by re-aggregating: group by `users.tier_id` → join `db.tiers` → return display name. Members with no `tier_id` or pointing to a deleted tier are excluded. New empty-state card (`tier-chart-empty`) renders a friendly 🏷️ "No members assigned to a tier yet" placeholder.
+2. **Admin → Reports → Awards sub-tab** — new tab with two enriched audit tables:
+   - **Award grants** (`/api/reports/award-grants`): every ribbon/medal grant sorted granted_at DESC, with current member name/email/avatar/chapter, award color dot, ordinal pill (3×, 2×) for repeat grants, granted-by, reason. Searchable client-side + year filter + CSV export.
+   - **Of-The-Year winners** (`/api/reports/of-the-year`): year/category sorted, with human-readable `category_label` ("Chapter of the Year", "Member of the Year", etc.) — driven by a local `_OTY_LABELS` dict mirrored from `routes/of_the_year.CATEGORY_LABELS`. Year filter + CSV export.
+3. **Member Card photo cropping** — `Directory.jsx` grid card photos used `object-cover` (crops tall portraits at the top/bottom). Switched to `object-contain` inside the `aspect-[4/3]` frame so the entire uploaded picture is visible; letterboxing falls into the muted background. The 80×80 round detail-modal avatar (`<Avatar>`) is intentionally left as cover — it's a thumbnail identifier, not a card.
+
+**Verification (iter48)**: testing_agent iteration_48.json — 11/11 backend pytest + 9/9 frontend Playwright PASS. No regressions. The legend on the dashboard now shows `Honorary Member`, `Regular Member`, `Silver Life Member` (real tier names from db.tiers). Awards report renders Riley Chen's 3 Life Membership Ribbon grants with ordinal pills.
+
+
+
 ### Phase AQ — Iteration 47: Member-facing Email preferences (2026-06-18)
 Members can now self-manage which AOP emails they receive from Profile → Notifications without needing the email footer link:
 
