@@ -16,6 +16,35 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BF — Iteration 62: Chat email digest extraction (2026-06-21)
+Last big extraction off the P1 list. Moved the chat-email-digest service out of `server.py` into its own module and fixed a latent runtime bug along the way.
+
+1. **`/app/backend/routes/chat_digest.py`** (new, 212 lines) owns:
+   - Constants: `CHAT_DIGEST_DELAY_SECONDS` (15-min debounce).
+   - Public: `queue_chat_notifications(conv, message, sender)` — called by `routes/chat.py::send_message` on every new message; `start_chat_digest_loop()` — idempotent task starter.
+   - Private: `_send_chat_digest_email`, `_send_chat_digest_sms`, `_chat_digest_loop` (60-second tick), `_html_escape`.
+   - Module-level `_db, _iso, _now_utc, _RESEND_API_KEY, _RESEND_FROM, _resend_sdk, _send_sms, _logger` populated via `register(...)` at app startup.
+2. **`server.py`**: 6221 → 6085 lines (~140 lines moved). The old block is replaced by a 4-line stub that re-exports `queue_chat_notifications` + `CHAT_DIGEST_DELAY_SECONDS` for legacy callsites. The startup task block now calls `routes_chat_digest.register(...)` followed by `start_chat_digest_loop()`.
+3. **Latent bug fix**: the pre-extraction code referenced an undefined `_now_iso()` at three call sites inside `queue_chat_notifications` and `_chat_digest_loop`. Those would have raised `NameError` the first time the loop iterated or a chat message was actually queued for digest. Replaced with the configured `_iso(_now_utc())` calls.
+
+**Verification (iter62)**:
+- Curl smoke (admin → member DM, single message):
+  - `queue_chat_notifications` wrote 1 pending row with the correct `due_at` (created_at + 15 min)
+  - Member `/conversations/{cid}/read` flipped the row status from `pending` → `cancelled` (this read-receipt cancellation was the path most affected by the latent NameError bug — now provably working).
+- Pytest: 90/91 pass across iter5*+iter6* (1 pre-existing test bug in iter50 RSVPs unrelated to chat: asserts `400` but FastAPI returns Pydantic's `422` for missing required field).
+- Server.py size milestone: **6085 lines** (down from 6912 at session start — −827 lines across iter53/55/60/62 extractions).
+
+### server.py size progression (since session start)
+| iter | event | size | delta |
+|------|-------|------|-------|
+| 51 (start) | — | 6912 | — |
+| 53 | gear → routes/gear.py | 6755 | −157 |
+| 55 | chat REST + WS → routes/chat.py | 6323 | −432 |
+| 60 | donations/causes → routes/donations.py | 6220 | −103 |
+| **62** | **chat digest → routes/chat_digest.py** | **6085** | **−135** |
+
+
+
 ### Phase BE — Iteration 61: Donations report mirrors Hours report (2026-06-21)
 Made the admin Donations report structurally identical to the Hours report — same filters, same view pills, same totals strip — so the muscle memory transfers and admins can answer "how much has this member donated?" in one click.
 
