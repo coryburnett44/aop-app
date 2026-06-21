@@ -56,7 +56,7 @@ export default function Navbar() {
                     <img
                         src="https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png"
                         alt="Alpha Omega Phi"
-                        className="h-9 w-9 rounded-2xl object-cover shadow-warm group-hover:rotate-6 transition-transform"
+                        className="h-9 w-9 rounded-2xl object-contain shadow-warm group-hover:rotate-6 transition-transform"
                     />
                     <span className="font-heading font-bold text-xl tracking-tight leading-tight whitespace-nowrap">
                         Alpha<span className="text-[#D62828]"> Omega Phi</span>

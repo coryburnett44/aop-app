@@ -334,7 +334,7 @@ export default function Profile() {
                             <Label>Profile photo</Label>
                             <div className="flex items-center gap-3 mt-1.5">
                                 {form.avatar_url ? (
-                                    <img src={form.avatar_url} alt="" className="h-16 w-16 rounded-full object-cover border border-border" />
+                                    <img src={form.avatar_url} alt="" className="h-16 w-16 rounded-full object-contain border border-border" />
                                 ) : (
                                     <div className="h-16 w-16 rounded-full border-2 border-dashed border-border grid place-items-center text-[10px] text-muted-foreground">
                                         No photo

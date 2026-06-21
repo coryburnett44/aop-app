@@ -50,7 +50,7 @@ function CauseCard({ cause, canPledge, onPledged }) {
     return (
         <div className="bg-white rounded-2xl overflow-hidden border-2 border-slate-200 shadow-warm flex flex-col" data-testid={`cause-${cause.id}`}>
             <div className="aspect-[2/1] bg-slate-100 overflow-hidden">
-                {cause.cover_image && <img src={cause.cover_image} alt={cause.title} className="w-full h-full object-cover" />}
+                {cause.cover_image && <img src={cause.cover_image} alt={cause.title} className="w-full h-full object-contain" />}
             </div>
             <div className="p-6 flex-1 flex flex-col">
                 <div className="text-[10px] uppercase tracking-widest font-bold" style={{ color: RED }}>{cause.category}</div>

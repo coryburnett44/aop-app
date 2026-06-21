@@ -863,7 +863,7 @@ function BriefBody({ b }) {
             {/* Header — photo + title + name + line + email + phone */}
             <div className="flex items-start gap-4 border-b border-border pb-4">
                 {m.avatar_url ? (
-                    <img src={mediaUrl(m.avatar_url)} alt="" className="w-20 h-20 rounded-lg object-cover border border-border" />
+                    <img src={mediaUrl(m.avatar_url)} alt="" className="w-20 h-20 rounded-lg object-contain border border-border" />
                 ) : (
                     <div className="w-20 h-20 rounded-lg bg-primary/15 text-primary grid place-items-center font-heading font-black text-3xl shrink-0">
                         {(m.name || m.email)[0]?.toUpperCase()}
@@ -1535,7 +1535,7 @@ function AwardGrantsTable() {
                                 <td className="px-4 py-2.5">
                                     <div className="flex items-center gap-2">
                                         {r.user_avatar_url ? (
-                                            <img src={mediaUrl(r.user_avatar_url)} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
+                                            <img src={mediaUrl(r.user_avatar_url)} alt="" className="w-7 h-7 rounded-full object-contain border border-border" />
                                         ) : (
                                             <div className="w-7 h-7 rounded-full bg-primary/15 text-primary grid place-items-center text-[10px] font-bold">{(r.current_user_name || "?").charAt(0).toUpperCase()}</div>
                                         )}
@@ -1638,7 +1638,7 @@ function OfTheYearTable() {
                                 <td className="px-4 py-2.5">
                                     <div className="flex items-center gap-2">
                                         {r.user_avatar_url || r.chapter_logo_url ? (
-                                            <img src={mediaUrl(r.user_avatar_url || r.chapter_logo_url)} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
+                                            <img src={mediaUrl(r.user_avatar_url || r.chapter_logo_url)} alt="" className="w-7 h-7 rounded-full object-contain border border-border" />
                                         ) : (
                                             <div className="w-7 h-7 rounded-full bg-primary/15 text-primary grid place-items-center text-[10px] font-bold">{((r.current_user_name || r.chapter_name || "?").charAt(0) || "?").toUpperCase()}</div>
                                         )}

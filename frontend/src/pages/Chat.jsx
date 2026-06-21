@@ -672,7 +672,7 @@ function NewChatDialog({ onCreated }) {
                                 <div className="flex items-center gap-3 mt-1.5">
                                     <div className="h-14 w-14 rounded-full overflow-hidden border-2 border-slate-200 shrink-0 grid place-items-center bg-slate-100">
                                         {avatarUrl ? (
-                                            <img src={(process.env.REACT_APP_BACKEND_URL || "") + avatarUrl} alt="Group" className="w-full h-full object-cover" />
+                                            <img src={(process.env.REACT_APP_BACKEND_URL || "") + avatarUrl} alt="Group" className="w-full h-full object-contain" />
                                         ) : (
                                             <Camera className="h-5 w-5 text-slate-400" />
                                         )}

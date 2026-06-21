@@ -125,7 +125,7 @@ function DonorRow({ rank, title, subtitle, amount, icon, avatar, testid }) {
             </div>
 
             {avatar ? (
-                <img src={mediaUrl(avatar)} alt="" className="w-9 h-9 sm:w-11 sm:h-11 rounded-full object-cover bg-slate-100 shrink-0" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                <img src={mediaUrl(avatar)} alt="" className="w-9 h-9 sm:w-11 sm:h-11 rounded-full object-contain bg-slate-100 shrink-0" onError={(e) => { e.currentTarget.style.display = "none"; }} />
             ) : icon ? (
                 <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full grid place-items-center shrink-0" style={{ backgroundColor: NAVY, color: "#fff" }}>{icon}</div>
             ) : null}

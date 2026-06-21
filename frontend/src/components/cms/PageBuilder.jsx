@@ -212,7 +212,7 @@ function BlockEditor({ block, onChange, onRemove }) {
                 <div className="space-y-2">
                     <div className="flex gap-2 items-center">
                         {p.url ? (
-                            <img src={p.url.startsWith("/api/") ? p.url : p.url} alt="" className="h-16 w-16 object-cover rounded-lg border border-slate-200" />
+                            <img src={p.url.startsWith("/api/") ? p.url : p.url} alt="" className="h-16 w-16 object-contain rounded-lg border border-slate-200" />
                         ) : (
                             <div className="h-16 w-16 rounded-lg border-2 border-dashed border-slate-300 grid place-items-center text-[10px] text-slate-400">
                                 No image

@@ -258,7 +258,7 @@ export default function Home() {
                                             return (
                                                 <li key={m.id} className="py-3 flex items-center gap-3" data-testid={`new-member-${m.id}`}>
                                                     <div className="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style={{ backgroundColor: NAVY }}>
-                                                        {m.avatar_url ? <img src={mediaUrl(m.avatar_url)} alt="" className="w-full h-full rounded-full object-cover" /> : initials}
+                                                        {m.avatar_url ? <img src={mediaUrl(m.avatar_url)} alt="" className="w-full h-full rounded-full object-contain" /> : initials}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <div className="font-semibold text-sm truncate" style={{ color: NAVY }}>{m.name}</div>
@@ -297,7 +297,7 @@ export default function Home() {
                                             return (
                                                 <li key={m.id} className="py-3 flex items-center gap-3" data-testid={`birthday-${m.id}`}>
                                                     <div className="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style={{ backgroundColor: RED }}>
-                                                        {m.avatar_url ? <img src={mediaUrl(m.avatar_url)} alt="" className="w-full h-full rounded-full object-cover" /> : initials}
+                                                        {m.avatar_url ? <img src={mediaUrl(m.avatar_url)} alt="" className="w-full h-full rounded-full object-contain" /> : initials}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <div className="font-semibold text-sm truncate" style={{ color: NAVY }}>{m.name}</div>
@@ -350,7 +350,7 @@ export default function Home() {
                             >
                                 <div className="aspect-[16/10] overflow-hidden bg-slate-100">
                                     {e.cover_image && (
-                                        <img src={mediaUrl(e.cover_image)} alt={e.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                                        <img src={mediaUrl(e.cover_image)} alt={e.title} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
                                     )}
                                 </div>
                                 <div className="p-6">
@@ -391,7 +391,7 @@ export default function Home() {
                             >
                                 <div className="w-40 shrink-0 bg-slate-100 overflow-hidden">
                                     {n.cover_image && (
-                                        <img src={mediaUrl(n.cover_image)} alt={n.title} className="w-full h-full object-cover" />
+                                        <img src={mediaUrl(n.cover_image)} alt={n.title} className="w-full h-full object-contain" />
                                     )}
                                 </div>
                                 <div className="py-5 pr-5">

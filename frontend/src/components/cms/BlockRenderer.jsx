@@ -44,7 +44,7 @@ export function BlockRenderer({ block }) {
                     <img
                         src={mediaUrl(p.url) || p.url}
                         alt={p.alt || ""}
-                        className="w-full rounded-2xl object-cover"
+                        className="w-full rounded-2xl object-contain"
                         style={{ maxHeight: p.max_height ? `${p.max_height}px` : undefined }}
                         loading="lazy"
                     />
@@ -100,7 +100,7 @@ export function BlockRenderer({ block }) {
                     {(p.items || []).map((it, idx) => (
                         <div key={idx} className="bg-white border border-slate-200 rounded-2xl p-5">
                             {it.image ? (
-                                <img src={mediaUrl(it.image) || it.image} alt="" className="w-full aspect-video object-cover rounded-xl mb-3" />
+                                <img src={mediaUrl(it.image) || it.image} alt="" className="w-full aspect-video object-contain rounded-xl mb-3" />
                             ) : null}
                             {it.title ? <h4 className="font-heading font-bold text-lg mb-2" style={{ color: "#0A2463" }}>{it.title}</h4> : null}
                             {it.body ? <p className="text-sm text-slate-600 whitespace-pre-wrap">{it.body}</p> : null}

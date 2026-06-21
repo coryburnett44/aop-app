@@ -22,7 +22,7 @@ export default function News() {
                     >
                         <div className="aspect-[16/10] overflow-hidden bg-muted">
                             {n.cover_image && (
-                                <img src={n.cover_image} alt={n.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                                <img src={n.cover_image} alt={n.title} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
                             )}
                         </div>
                         <div className="p-6">

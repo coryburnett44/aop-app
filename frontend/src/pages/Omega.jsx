@@ -200,8 +200,8 @@ function TributeCard({ item, isAdmin, onChanged }) {
 function CoverOrAvatar({ src, alt, initials, bg, size = "h-20 w-20", shape = "round" }) {
     if (src) {
         const cls = shape === "rect"
-            ? `${size} rounded-2xl object-cover border-4 border-white shadow-warm`
-            : `${size} rounded-full object-cover border-4 border-white shadow-warm`;
+            ? `${size} rounded-2xl object-contain border-4 border-white shadow-warm`
+            : `${size} rounded-full object-contain border-4 border-white shadow-warm`;
         return <img src={mediaUrl(src)} alt={alt} className={cls} />;
     }
     const fallbackShape = shape === "rect" ? "rounded-2xl" : "";
@@ -479,7 +479,7 @@ function TributeBuilder({ trigger, existing, presetUserId, onSaved }) {
                                         <img
                                             src={mediaUrl(form.cover_image)}
                                             alt="Tribute photo preview"
-                                            className="w-full h-56 object-cover"
+                                            className="w-full h-56 object-contain"
                                             onError={(e) => { e.currentTarget.style.opacity = '0.3'; }}
                                         />
                                     </div>

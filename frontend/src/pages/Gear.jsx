@@ -62,7 +62,7 @@ export default function Gear() {
         <div className="bg-slate-50 min-h-screen">
             <section className="border-b-2 relative overflow-hidden" style={{ borderColor: NAVY, backgroundColor: page.hero_image ? "transparent" : "#FFFFFF" }}>
                 {page.hero_image && (
-                    <img src={mediaUrl(page.hero_image)} alt="Gear store banner" className="absolute inset-0 w-full h-full object-cover" />
+                    <img src={mediaUrl(page.hero_image)} alt="Gear store banner" className="absolute inset-0 w-full h-full object-contain" />
                 )}
                 {page.hero_image && <div className="absolute inset-0 bg-gradient-to-r from-black/55 to-black/10" />}
                 <div className={`max-w-6xl mx-auto px-6 lg:px-10 py-12 relative ${page.hero_image ? "text-white" : ""}`}>
@@ -171,7 +171,7 @@ function GearCard({ item, isAdmin, onOpen, onEdit, onChanged }) {
                 data-testid={`gear-item-${item.id}`}
             >
                 <div className="aspect-square bg-slate-100 overflow-hidden">
-                    {item.cover_image && <img src={mediaUrl(item.cover_image)} alt={item.name} className="w-full h-full object-cover" />}
+                    {item.cover_image && <img src={mediaUrl(item.cover_image)} alt={item.name} className="w-full h-full object-contain" />}
                 </div>
                 <div className="p-5">
                     <div className="flex items-start justify-between gap-3">
@@ -242,7 +242,7 @@ function GearCheckout({ item, user, onClose }) {
     return (
         <div className="flex flex-col sm:grid sm:grid-cols-2 overflow-y-auto flex-1 min-h-0" data-testid={`gear-dialog-${item.id}`}>
             <div className="w-full h-52 sm:h-auto sm:aspect-auto sm:sticky sm:top-0 sm:max-h-full bg-slate-100 overflow-hidden shrink-0">
-                {activeImage && <img src={mediaUrl(activeImage)} alt={item.name} className="w-full h-full object-cover" />}
+                {activeImage && <img src={mediaUrl(activeImage)} alt={item.name} className="w-full h-full object-contain" />}
             </div>
             <div className="p-5 sm:p-6 overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl" style={{ color: NAVY }}>{item.name}</DialogTitle></DialogHeader>
@@ -623,7 +623,7 @@ function GearEditor({ item, onSaved, onClose }) {
                                                     />
                                                 </label>
                                             </div>
-                                            {img && <img src={mediaUrl(img)} alt={c} className="mt-2 w-24 h-24 rounded-xl object-cover border border-border" />}
+                                            {img && <img src={mediaUrl(img)} alt={c} className="mt-2 w-24 h-24 rounded-xl object-contain border border-border" />}
                                             {!img && <p className="text-xs text-muted-foreground mt-1.5 inline-flex items-center gap-1"><ImageIcon className="h-3 w-3" /> No photo — checkout will fall back to the cover photo for this color.</p>}
                                         </div>
                                         <button
@@ -689,14 +689,14 @@ function GearPageEditor({ page, onSaved, onClose }) {
             <div className="space-y-4 mt-3">
                 {form.hero_image && (
                     <div className="rounded-xl overflow-hidden border border-border">
-                        <img src={mediaUrl(form.hero_image)} alt="Banner preview" className="w-full max-h-56 object-cover" />
+                        <img src={mediaUrl(form.hero_image)} alt="Banner preview" className="w-full max-h-56 object-contain" />
                     </div>
                 )}
                 <div>
                     <Label>Banner image</Label>
                     <div className="flex items-center gap-3 mt-1.5" data-testid="gear-page-hero-block">
                         {form.hero_image ? (
-                            <img src={form.hero_image} alt="" className="h-16 w-24 object-cover rounded-lg border border-slate-200" />
+                            <img src={form.hero_image} alt="" className="h-16 w-24 object-contain rounded-lg border border-slate-200" />
                         ) : (
                             <div className="h-16 w-24 rounded-lg border-2 border-dashed border-slate-300 grid place-items-center text-[10px] text-slate-400">
                                 No image

@@ -19,7 +19,7 @@ export default function Chapters() {
                                 <img
                                     src={mediaUrl(c.logo_url)}
                                     alt={`${c.name} logo`}
-                                    className="w-16 h-16 rounded-2xl object-cover border-2 border-border shrink-0"
+                                    className="w-16 h-16 rounded-2xl object-contain border-2 border-border shrink-0"
                                     data-testid={`chapter-logo-${c.id}`}
                                 />
                             ) : (

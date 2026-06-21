@@ -25,7 +25,7 @@ export default function NewsDetail() {
             </div>
             {item.cover_image && (
                 <div className="mt-8 rounded-2xl overflow-hidden">
-                    <img src={item.cover_image} alt={item.title} className="w-full h-auto object-cover" />
+                    <img src={item.cover_image} alt={item.title} className="w-full h-auto object-contain" />
                 </div>
             )}
             <div className="mt-8 text-base leading-relaxed whitespace-pre-wrap text-foreground/85">{item.body}</div>

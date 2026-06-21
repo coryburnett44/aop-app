@@ -1424,7 +1424,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                             <Label>Profile photo</Label>
                             <div className="flex items-center gap-3 mt-1.5">
                                 {form.avatar_url ? (
-                                    <img src={form.avatar_url} alt="" className="h-14 w-14 rounded-full object-cover border border-border" />
+                                    <img src={form.avatar_url} alt="" className="h-14 w-14 rounded-full object-contain border border-border" />
                                 ) : (
                                     <div className="h-14 w-14 rounded-full border-2 border-dashed border-border grid place-items-center text-[10px] text-muted-foreground">
                                         No photo
@@ -1568,7 +1568,7 @@ function ChaptersAdmin() {
                 {items.map((c) => (
                     <div key={c.id} className="bg-card border border-border rounded-2xl p-5" data-testid={`admin-chapter-${c.id}`}>
                         <div className="flex items-start gap-3">
-                            {c.logo_url && <img src={mediaUrl(c.logo_url)} alt={c.name} className="w-12 h-12 rounded-xl object-cover border border-border shrink-0" />}
+                            {c.logo_url && <img src={mediaUrl(c.logo_url)} alt={c.name} className="w-12 h-12 rounded-xl object-contain border border-border shrink-0" />}
                             <div className="flex-1 min-w-0">
                                 <div className="font-heading font-semibold text-lg">{c.name}</div>
                                 <div className="text-sm text-muted-foreground">
@@ -1657,7 +1657,7 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
                             </label>
                         </div>
                         {form.logo_url && (
-                            <img src={mediaUrl(form.logo_url)} alt="Logo preview" className="mt-2 w-24 h-24 rounded-2xl object-cover border border-border" />
+                            <img src={mediaUrl(form.logo_url)} alt="Logo preview" className="mt-2 w-24 h-24 rounded-2xl object-contain border border-border" />
                         )}
                     </div>
                 </div>
@@ -2044,7 +2044,7 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                 <DialogHeader><DialogTitle className="font-heading text-2xl">Member card</DialogTitle></DialogHeader>
                 <div className="flex items-center gap-4 mt-1">
                     {details.avatar_url ? (
-                        <img src={details.avatar_url} alt={details.name} className="w-20 h-20 rounded-full object-cover border-2 border-white shadow-warm" data-testid={`member-card-${member.id}-avatar`} />
+                        <img src={details.avatar_url} alt={details.name} className="w-20 h-20 rounded-full object-contain border-2 border-white shadow-warm" data-testid={`member-card-${member.id}-avatar`} />
                     ) : (
                         <div className="w-20 h-20 rounded-full bg-primary/15 text-primary grid place-items-center font-heading font-black text-2xl">
                             {(details.name || details.email)[0]?.toUpperCase()}
@@ -2216,7 +2216,7 @@ function GearAdmin() {
                 {items.map((g) => (
                     <div key={g.id} className="bg-card border border-border rounded-2xl overflow-hidden" data-testid={`admin-gear-${g.id}`}>
                         <div className="aspect-video bg-muted overflow-hidden">
-                            {g.cover_image && <img src={g.cover_image} alt={g.name} className="w-full h-full object-cover" />}
+                            {g.cover_image && <img src={g.cover_image} alt={g.name} className="w-full h-full object-contain" />}
                         </div>
                         <div className="p-4">
                             <div className="flex items-start justify-between gap-3">
@@ -2328,7 +2328,7 @@ function GearDialog({ item, onSaved, trigger }) {
                         <Label>Cover image</Label>
                         <div className="flex items-center gap-3 mt-1.5">
                             {form.cover_image ? (
-                                <img src={form.cover_image} alt="" className="h-16 w-24 object-cover rounded-lg border border-border" />
+                                <img src={form.cover_image} alt="" className="h-16 w-24 object-contain rounded-lg border border-border" />
                             ) : (
                                 <div className="h-16 w-24 rounded-lg border-2 border-dashed border-border grid place-items-center text-[10px] text-muted-foreground">
                                     No image
@@ -2409,7 +2409,7 @@ function CausesAdmin() {
                     const pct = c.goal_amount > 0 ? Math.min(100, Math.round((c.raised_amount / c.goal_amount) * 100)) : 0;
                     return (
                         <div key={c.id} className="bg-card border border-border rounded-2xl overflow-hidden" data-testid={`admin-cause-${c.id}`}>
-                            {c.cover_image && <div className="aspect-[3/1] bg-muted overflow-hidden"><img src={c.cover_image} alt={c.title} className="w-full h-full object-cover" /></div>}
+                            {c.cover_image && <div className="aspect-[3/1] bg-muted overflow-hidden"><img src={c.cover_image} alt={c.title} className="w-full h-full object-contain" /></div>}
                             <div className="p-5">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>

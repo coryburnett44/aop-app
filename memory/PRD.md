@@ -16,6 +16,20 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BG — Iteration 63: Show full photo everywhere (object-contain sweep) (2026-06-21)
+Per user request — every uploaded photo across the site now displays in full (no cropping). Sweeping global change: replaced `object-cover` with `object-contain` on every `<img>` across the React frontend (40 occurrences in 19 files: pages Gear, News, NewsDetail, Donations, Documents, Chapters, Photos, Omega, Home, Profile, Admin, Reports, Chat + components TopDonorsLeaderboard, CommunityServiceLeaderboard, AvatarUploader preview image, Navbar logo, PageBuilder, BlockRenderer).
+
+Kept `object-cover` ONLY on the live webcam `<video>` preview inside `AvatarUploader.jsx` — that's a camera feed, not an uploaded photo, and stretching the live frame would distort it during capture.
+
+**Verification (iter63)**:
+- Grep guarantee: only 1 remaining `object-cover` reference site-wide (the webcam video).
+- UI smoke `/gear`: 8/8 product images now render `object-contain`, 0 `object-cover`. Visually confirmed — Blazer Depot logo, AOP gold seal, and apparel photos all show edge-to-edge inside their tiles with neutral letterboxing where aspect ratios don't match.
+- No backend changes; no test regression.
+
+**Note**: with `object-contain` the cards may show empty letterbox bars when an uploaded photo's aspect ratio doesn't match the tile. If that becomes visually distracting on specific surfaces, we can revisit per-surface (e.g. keep avatar circles cropped while leaving Gear/News cards in contain mode).
+
+
+
 ### Phase BF — Iteration 62: Chat email digest extraction (2026-06-21)
 Last big extraction off the P1 list. Moved the chat-email-digest service out of `server.py` into its own module and fixed a latent runtime bug along the way.
 
