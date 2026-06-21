@@ -49,14 +49,17 @@ export default function Transactions() {
     const [items, setItems] = useState([]);
     const [type, setType] = useState("all");
     const [status, setStatus] = useState("all");
+    const [year, setYear] = useState("all");
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        api.get("/me/transactions")
+        setLoading(true);
+        const params = year === "all" ? {} : { year: Number(year) };
+        api.get("/me/transactions", { params })
             .then(({ data }) => setItems(data))
             .catch(() => toast.error("Couldn't load your transactions"))
             .finally(() => setLoading(false));
-    }, []);
+    }, [year]);
 
     const filtered = useMemo(() => {
         return items.filter((t) => {
@@ -109,7 +112,7 @@ export default function Transactions() {
 
             <div className="bg-card rounded-2xl border border-border p-5 mb-4">
                 <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
-                <div className="grid sm:grid-cols-2 gap-3">
+                <div className="grid sm:grid-cols-3 gap-3">
                     <div>
                         <label className="text-xs uppercase tracking-wider font-semibold text-muted-foreground">Type</label>
                         <Select value={type} onValueChange={setType}>
@@ -133,6 +136,19 @@ export default function Transactions() {
                                 <SelectItem value="pending">Pending</SelectItem>
                                 <SelectItem value="refunded">Refunded</SelectItem>
                                 <SelectItem value="failed">Failed</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div>
+                        <label className="text-xs uppercase tracking-wider font-semibold text-muted-foreground">Year</label>
+                        <Select value={year} onValueChange={setYear}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="tx-filter-year"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All years</SelectItem>
+                                {Array.from({ length: new Date().getFullYear() - 2017 + 1 }).map((_, i) => {
+                                    const y = new Date().getFullYear() - i;
+                                    return <SelectItem key={y} value={String(y)}>{y}</SelectItem>;
+                                })}
                             </SelectContent>
                         </Select>
                     </div>

@@ -16,6 +16,20 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BC — Iteration 59: Donations filter parity with hours + member year filter (2026-06-21)
+Closed the loop on donation visibility — admins can now slice donations by the same axes as volunteer hours, members can scope their receipts to any single year.
+
+1. **`/api/reports/donations`** gained `user_id`, `chapter_id`, `year`, `quarter`, `month`, `from_date`, `to_date` query params (mirroring `/reports/hours`). Date range filtering happens on `created_at`; chapter scope expands to all member ids of the chapter and intersects with any explicit `user_id`. Chapter-scoped admins still get their automatic restriction.
+2. **`/api/me/transactions`** accepts an optional `year={YYYY}` query param. Omit it for the lifetime list (existing default).
+3. **Admin → Reports → Donations UI** (`Reports.jsx::DonationsReport`): grid now exposes Cause / Status / Member / Chapter / Year filters; Year picks descend from current year back to 2017 (or "All years"). New `causeDisplay(t, causes)` helper resolves the **Cause column**: cause title when linked, `"<label> (unallocated)"` when only `cause_label` is present (CSV-imported, no matching cause), `—` otherwise. CSV export of the report uses the same resolver. Empty result row added.
+4. **Member receipts (`Transactions.jsx`)**: third filter "Year" added alongside Type and Status. State change triggers a fresh `/me/transactions?year=…` fetch (server-side filter, not just a client filter — keeps the 500-row API limit honest).
+
+**Verification (iter59)**:
+- `tests/test_iteration59_donations_filters.py`: 6/6 pass — filter by user_id, chapter_id, year (positive + negative case), quarter+month, /me/transactions year filter, cause_label round-trips on unmatched CSV imports.
+- UI smoke: Admin Reports → Donations renders the 5 filters with proper data sources; member /transactions exposes the year picker.
+
+
+
 ### Phase BB — Iteration 58: Donations CSV — cause truly optional + free-text label preserved (2026-06-21)
 Hotfix on iter56's bulk donations importer based on user feedback ("Make the cause optional").
 

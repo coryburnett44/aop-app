@@ -306,16 +306,54 @@ def register(
     async def report_donations(
         cause_id: Optional[str] = None,
         status_filter: Optional[str] = None,
+        user_id: Optional[str] = None,
+        chapter_id: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        year: Optional[int] = None,
+        quarter: Optional[int] = None,
+        month: Optional[int] = None,
         admin: dict = Depends(admin_tab_dep("reports")),
     ):
+        """Donations report — same filter set as `/reports/hours`:
+        cause_id, status, user_id, chapter_id, from_date/to_date, year/quarter/month.
+        Date filtering is applied against `created_at` (transactions don't have a
+        separate `date` field). Returns the raw transactions (still serialized
+        without `_id`) so the admin UI keeps the existing column shape.
+        """
         q: dict = {"type": "donation"}
         if cause_id:
             q["cause_id"] = cause_id
         if status_filter:
             q["status"] = status_filter
+        if user_id:
+            q["user_id"] = user_id
+        if chapter_id:
+            chapter_user_ids = [u["id"] async for u in db.users.find({"chapter_id": chapter_id}, {"id": 1, "_id": 0})]
+            # Intersect with any explicit user_id filter so both narrow together
+            if "user_id" in q and not isinstance(q["user_id"], dict):
+                q["user_id"] = q["user_id"] if q["user_id"] in chapter_user_ids else "__no_match__"
+            else:
+                q["user_id"] = {"$in": chapter_user_ids or [None]}
+        period_from, period_to = period_to_range(year, quarter, month)
+        eff_from = from_date or period_from
+        eff_to = to_date or period_to
+        if eff_from or eff_to:
+            q["created_at"] = {}
+            if eff_from:
+                q["created_at"]["$gte"] = eff_from
+            if eff_to:
+                # period_to_range returns end-of-day; for from_date/to_date the
+                # admin passes a YYYY-MM-DD that we widen to end-of-day so the
+                # whole day is included.
+                q["created_at"]["$lte"] = eff_to if "T" in eff_to else f"{eff_to}T23:59:59"
         if is_chapter_scoped(admin):
-            ids = await chapter_scope_user_ids(admin)
-            q["user_id"] = {"$in": ids or []}
+            scope_ids = await chapter_scope_user_ids(admin)
+            if "user_id" in q and isinstance(q["user_id"], dict):
+                current = set(q["user_id"].get("$in", []))
+                q["user_id"] = {"$in": list(current & set(scope_ids or []))}
+            else:
+                q["user_id"] = {"$in": scope_ids or []}
         items = await db.transactions.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
         return items
 

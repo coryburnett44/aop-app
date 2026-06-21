@@ -479,15 +479,20 @@ function HoursReport() {
 function DonationsReport() {
     const [rows, setRows] = useState([]);
     const [causes, setCauses] = useState([]);
-    const [filters, setFilters] = useState({ cause_id: "", status_filter: "" });
+    const [members, setMembers] = useState([]);
+    const [chapters, setChapters] = useState([]);
+    const [filters, setFilters] = useState({ cause_id: "", status_filter: "", user_id: "", chapter_id: "", year: "" });
 
     async function run() {
         const params = Object.fromEntries(Object.entries(filters).filter(([_, v]) => v));
+        if (params.year) params.year = Number(params.year);
         const { data } = await api.get("/reports/donations", { params });
         setRows(data);
     }
     useEffect(() => {
         api.get("/causes").then(({ data }) => setCauses(data)).catch(() => {});
+        api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
+        api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
         run();
     }, []); // eslint-disable-line
 
@@ -496,7 +501,7 @@ function DonationsReport() {
             { label: "Date", get: (t) => t.created_at?.slice(0, 10) || "" },
             { label: "Member", get: (t) => t.user_name },
             { label: "Amount", get: (t) => t.amount },
-            { label: "Cause", get: (t) => causes.find((c) => c.id === t.cause_id)?.title || "" },
+            { label: "Cause", get: (t) => causeDisplay(t, causes) },
             { label: "Status", get: (t) => t.status },
             { label: "Note", get: (t) => t.description },
         ]));
@@ -512,6 +517,15 @@ function DonationsReport() {
                     <FilterSelect label="Status" value={filters.status_filter} onChange={(v) => setFilters({ ...filters, status_filter: v })} options={[
                         { value: "", label: "Any" }, { value: "completed", label: "Completed" }, { value: "pending", label: "Pending" }, { value: "refunded", label: "Refunded" },
                     ]} testid="donations-filter-status" />
+                    <FilterSelect label="Member" value={filters.user_id} onChange={(v) => setFilters({ ...filters, user_id: v })} options={[{ value: "", label: "Any" }, ...members.map((m) => ({ value: m.id, label: `${m.name} — ${m.email}` }))]} testid="donations-filter-member" />
+                    <FilterSelect label="Chapter" value={filters.chapter_id} onChange={(v) => setFilters({ ...filters, chapter_id: v })} options={[{ value: "", label: "Any" }, ...chapters.map((c) => ({ value: c.id, label: c.name }))]} testid="donations-filter-chapter" />
+                    <FilterSelect label="Year" value={filters.year} onChange={(v) => setFilters({ ...filters, year: v })} options={[
+                        { value: "", label: "All years" },
+                        ...Array.from({ length: new Date().getFullYear() - 2017 + 1 }).map((_, i) => {
+                            const y = new Date().getFullYear() - i;
+                            return { value: String(y), label: String(y) };
+                        }),
+                    ]} testid="donations-filter-year" />
                     <div className="flex items-end gap-2">
                         <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="donations-report-run">Run</Button>
                         <Button onClick={exportCSV} variant="outline" className="rounded-full"><Download className="h-4 w-4 mr-1.5" />CSV</Button>
@@ -526,19 +540,34 @@ function DonationsReport() {
                     </thead>
                     <tbody>
                         {rows.map((t) => (
-                            <tr key={t.id} className="border-t border-border">
+                            <tr key={t.id} className="border-t border-border" data-testid={`donations-row-${t.id}`}>
                                 <td className="px-4 py-2.5 text-muted-foreground">{t.created_at && format(parseISO(t.created_at), "MMM d, yyyy")}</td>
                                 <td className="px-4 py-2.5">{t.user_name || (t.anonymous ? "Anonymous" : "—")}</td>
                                 <td className="px-4 py-2.5 font-bold">${t.amount?.toFixed(2)}</td>
-                                <td className="px-4 py-2.5 text-muted-foreground">{causes.find((c) => c.id === t.cause_id)?.title || "—"}</td>
+                                <td className="px-4 py-2.5 text-muted-foreground">{causeDisplay(t, causes)}</td>
                                 <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{t.status}</td>
                             </tr>
                         ))}
+                        {rows.length === 0 && <tr><td colSpan={5} className="text-center text-muted-foreground py-6">No donations match these filters.</td></tr>}
                     </tbody>
                 </table>
             </div>
         </div>
     );
+}
+
+/** Resolve the cause column for a donation row.
+ *   1. If linked → the cause's title.
+ *   2. Else if a free-text cause_label was preserved (CSV import) → "<label> (unallocated)".
+ *   3. Else → "—".
+ */
+function causeDisplay(t, causes) {
+    if (t.cause_id) {
+        const c = causes.find((x) => x.id === t.cause_id);
+        if (c) return c.title;
+    }
+    if (t.cause_label) return `${t.cause_label} (unallocated)`;
+    return "—";
 }
 
 function PersonnelBriefSection() {

@@ -254,7 +254,13 @@ def register(api, *, db, get_current_user, require_admin, is_chapter_scoped, cha
         return {"ok": True}
 
     @api.get("/me/transactions")
-    async def my_transactions(user: dict = Depends(get_current_user)):
-        cursor = db.transactions.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(500)
+    async def my_transactions(year: Optional[int] = None, user: dict = Depends(get_current_user)):
+        """A member's own transaction history. Optional `year` filter narrows
+        to a single calendar year (created_at) for the receipts page picker;
+        leave unset for all years."""
+        q: dict = {"user_id": user["id"]}
+        if year:
+            q["created_at"] = {"$gte": f"{year}-01-01T00:00:00", "$lte": f"{year}-12-31T23:59:59"}
+        cursor = db.transactions.find(q, {"_id": 0}).sort("created_at", -1).limit(500)
         items = await cursor.to_list(500)
         return [tx_out(t) for t in items]
