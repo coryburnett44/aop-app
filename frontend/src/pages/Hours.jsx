@@ -671,7 +671,7 @@ function ReviewQueue() {
                 <div className="space-y-3">
                     {entries.map((h) => (
                         <HoursCard key={h.id} h={h}>
-                            <AdminHoursActions h={h} onReview={review} onRemove={remove} />
+                            <AdminHoursActions h={h} onReview={review} onRemove={remove} onSaved={load} />
                         </HoursCard>
                     ))}
                 </div>
@@ -711,7 +711,7 @@ function StatusBadge({ status }) {
  * tweak the value in place and the audit trail (hours_adjusted_by_name +
  * hours_adjusted_at) gets stamped server-side.
  */
-function AdminHoursActions({ h, onReview, onRemove }) {
+function AdminHoursActions({ h, onReview, onRemove, onSaved }) {
     const [editing, setEditing] = useState(false);
     const [val, setVal] = useState(String(h.hours));
 
@@ -736,6 +736,7 @@ function AdminHoursActions({ h, onReview, onRemove }) {
                         ✏️ Edit hrs
                     </button>
                 )}
+                {!editing && <FullEditHoursDialog h={h} onSaved={onSaved} />}
             </div>
             {editing && (
                 <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-full px-2 py-1">
@@ -779,5 +780,236 @@ function AdminHoursActions({ h, onReview, onRemove }) {
                 <div className="text-[10px] text-muted-foreground italic">adjusted by {h.hours_adjusted_by_name}</div>
             )}
         </div>
+    );
+}
+
+
+/**
+ * Full-edit dialog — admins can update every field on an existing hours
+ * record (activity, agency, host details, event type, hours, date, status,
+ * description, note). Posts to `PUT /api/hours/{id}` which writes only the
+ * fields that actually changed and stamps the appropriate audit columns.
+ */
+function FullEditHoursDialog({ h, onSaved }) {
+    const [open, setOpen] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [form, setForm] = useState({});
+
+    useEffect(() => {
+        if (!open) return;
+        const d = h.date ? h.date.slice(0, 10) : "";
+        setForm({
+            activity: h.activity || "",
+            description: h.description || "",
+            event_type: h.event_type || "other",
+            agency_name: h.agency_name || "",
+            host_name: h.host_name || "",
+            host_email: h.host_email || "",
+            host_phone: h.host_phone || "",
+            hours: String(h.hours ?? ""),
+            date: d,
+            status: h.status || "pending",
+            note: h.note || "",
+        });
+    }, [open, h]);
+
+    function set(field, value) {
+        setForm((prev) => ({ ...prev, [field]: value }));
+    }
+
+    async function save() {
+        const hoursNum = Number(form.hours);
+        if (!hoursNum || hoursNum <= 0 || hoursNum > 1000) {
+            toast.error("Hours must be between 0 and 1000");
+            return;
+        }
+        if (!form.activity || form.activity.trim().length < 2) {
+            toast.error("Activity is required (min 2 chars)");
+            return;
+        }
+        setBusy(true);
+        try {
+            const payload = {
+                activity: form.activity.trim(),
+                description: form.description.trim(),
+                event_type: form.event_type,
+                agency_name: form.agency_name.trim(),
+                host_name: form.host_name.trim(),
+                host_email: form.host_email.trim(),
+                host_phone: form.host_phone.trim(),
+                hours: hoursNum,
+                status: form.status,
+                note: form.note.trim(),
+            };
+            if (form.date) {
+                payload.date = new Date(`${form.date}T00:00:00`).toISOString();
+            }
+            await api.put(`/hours/${h.id}`, payload);
+            toast.success("Hours entry updated");
+            setOpen(false);
+            if (onSaved) await onSaved();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not save");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <button
+                type="button"
+                onClick={() => setOpen(true)}
+                className="text-[11px] text-primary hover:underline font-semibold"
+                data-testid={`edit-all-${h.id}`}
+                title="Edit every field on this entry"
+            >
+                ⚙ Edit all
+            </button>
+            <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto" data-testid={`edit-all-dialog-${h.id}`}>
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl">Edit hours entry</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3 mt-2">
+                    {h.user_name && (
+                        <div className="rounded-xl bg-muted/40 p-3 text-sm">
+                            <span className="text-muted-foreground">Member: </span>
+                            <span className="font-semibold">{h.user_name}</span>
+                        </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <Label>Hours *</Label>
+                            <Input
+                                type="number"
+                                min="0"
+                                max="1000"
+                                step="0.25"
+                                value={form.hours || ""}
+                                onChange={(e) => set("hours", e.target.value)}
+                                className="rounded-xl mt-1.5"
+                                data-testid={`edit-all-hours-${h.id}`}
+                            />
+                        </div>
+                        <div>
+                            <Label>Date *</Label>
+                            <Input
+                                type="date"
+                                value={form.date || ""}
+                                onChange={(e) => set("date", e.target.value)}
+                                className="rounded-xl mt-1.5"
+                                data-testid={`edit-all-date-${h.id}`}
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <Label>Activity *</Label>
+                        <Input
+                            value={form.activity || ""}
+                            onChange={(e) => set("activity", e.target.value)}
+                            className="rounded-xl mt-1.5"
+                            data-testid={`edit-all-activity-${h.id}`}
+                        />
+                    </div>
+                    <div>
+                        <Label>Description</Label>
+                        <Textarea
+                            rows={2}
+                            value={form.description || ""}
+                            onChange={(e) => set("description", e.target.value)}
+                            className="rounded-xl mt-1.5"
+                            data-testid={`edit-all-description-${h.id}`}
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <Label>Event type *</Label>
+                            <Select value={form.event_type || "other"} onValueChange={(v) => set("event_type", v)}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid={`edit-all-event-type-${h.id}`}>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="aop_related">AOP event</SelectItem>
+                                    <SelectItem value="other">Other</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <Label>Status</Label>
+                            <Select value={form.status || "pending"} onValueChange={(v) => set("status", v)}>
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid={`edit-all-status-${h.id}`}>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="pending">Pending</SelectItem>
+                                    <SelectItem value="approved">Approved</SelectItem>
+                                    <SelectItem value="rejected">Rejected</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                    <div>
+                        <Label>Agency / organization</Label>
+                        <Input
+                            value={form.agency_name || ""}
+                            onChange={(e) => set("agency_name", e.target.value)}
+                            className="rounded-xl mt-1.5"
+                            data-testid={`edit-all-agency-${h.id}`}
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <Label>Host name</Label>
+                            <Input
+                                value={form.host_name || ""}
+                                onChange={(e) => set("host_name", e.target.value)}
+                                className="rounded-xl mt-1.5"
+                                data-testid={`edit-all-host-name-${h.id}`}
+                            />
+                        </div>
+                        <div>
+                            <Label>Host phone</Label>
+                            <Input
+                                value={form.host_phone || ""}
+                                onChange={(e) => set("host_phone", e.target.value)}
+                                className="rounded-xl mt-1.5"
+                                data-testid={`edit-all-host-phone-${h.id}`}
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <Label>Host email</Label>
+                        <Input
+                            type="email"
+                            value={form.host_email || ""}
+                            onChange={(e) => set("host_email", e.target.value)}
+                            className="rounded-xl mt-1.5"
+                            data-testid={`edit-all-host-email-${h.id}`}
+                        />
+                    </div>
+                    <div>
+                        <Label>Admin note <span className="text-xs text-muted-foreground font-normal">(visible to admins only)</span></Label>
+                        <Textarea
+                            rows={2}
+                            value={form.note || ""}
+                            onChange={(e) => set("note", e.target.value)}
+                            className="rounded-xl mt-1.5"
+                            data-testid={`edit-all-note-${h.id}`}
+                        />
+                    </div>
+                </div>
+                <div className="flex justify-end gap-2 mt-4">
+                    <Button variant="outline" onClick={() => setOpen(false)} className="rounded-full">Cancel</Button>
+                    <Button
+                        onClick={save}
+                        disabled={busy}
+                        className="rounded-full bg-primary hover:bg-primary/90"
+                        data-testid={`edit-all-save-${h.id}`}
+                    >
+                        {busy ? "Saving…" : "Save changes"}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }

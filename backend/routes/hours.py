@@ -24,7 +24,7 @@ import uuid
 from fastapi import Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 
-from models import HoursLogIn, HoursReviewIn, AdminHoursLogIn, AdminHoursBulkLogIn
+from models import HoursLogIn, HoursReviewIn, AdminHoursLogIn, AdminHoursBulkLogIn, AdminHoursEditIn
 
 
 # Formats we try when parsing user-supplied CSV dates. Order matters — try the
@@ -460,6 +460,54 @@ def register(
         if body.event_type:
             update_doc["event_type"] = body.event_type
         await db.volunteer_hours.update_one({"id": hours_id}, {"$set": update_doc})
+        h = await db.volunteer_hours.find_one({"id": hours_id}, {"_id": 0})
+        return hours_out(h)
+
+    @api.put("/hours/{hours_id}")
+    async def admin_edit_hours(hours_id: str, body: AdminHoursEditIn, admin: dict = Depends(admin_tab_dep("hours"))):
+        """Admin-only full edit of an existing hours record.
+
+        Every field is optional — only keys explicitly supplied in the body are
+        written. Status changes accepted here so admins can use a single
+        dialog to fix and re-approve. `hours_adjusted_by/_at` is stamped when
+        `hours` changes; `reviewed_by/_at` is stamped when `status` changes.
+        Returns the fully-refreshed entry."""
+        existing = await db.volunteer_hours.find_one({"id": hours_id})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Hours entry not found")
+        patch = body.model_dump(exclude_unset=True)
+        if not patch:
+            return hours_out(existing)
+        update_doc: dict = {}
+        now_iso = iso(now_utc())
+
+        # Hours value change → stamp adjustment audit fields.
+        if "hours" in patch and patch["hours"] is not None and float(patch["hours"]) != float(existing.get("hours", 0)):
+            update_doc["hours"] = float(patch["hours"])
+            update_doc["hours_adjusted_by"] = admin["id"]
+            update_doc["hours_adjusted_by_name"] = admin.get("name", "Admin")
+            update_doc["hours_adjusted_at"] = now_iso
+
+        # Status change → stamp review audit fields (same as /review).
+        if "status" in patch and patch["status"] and patch["status"] != existing.get("status"):
+            update_doc["status"] = patch["status"]
+            update_doc["reviewed_by"] = admin["id"]
+            update_doc["reviewed_by_name"] = admin.get("name", "Admin")
+            update_doc["reviewed_at"] = now_iso
+
+        # Date — Pydantic gives us a datetime; persist as ISO string to match
+        # the rest of the collection.
+        if "date" in patch and patch["date"] is not None:
+            update_doc["date"] = iso(patch["date"])
+
+        # Free-text and enum fields — copy through if explicitly supplied.
+        for key in ("activity", "description", "event_type", "agency_name",
+                    "host_name", "host_email", "host_phone", "event_id", "note"):
+            if key in patch and patch[key] is not None:
+                update_doc[key] = patch[key]
+
+        if update_doc:
+            await db.volunteer_hours.update_one({"id": hours_id}, {"$set": update_doc})
         h = await db.volunteer_hours.find_one({"id": hours_id}, {"_id": 0})
         return hours_out(h)
 

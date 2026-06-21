@@ -16,6 +16,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AX — Iteration 54: Admin full-edit of submitted hours (2026-06-21)
+Admins now have a complete edit surface for every field on an existing volunteer-hours record — not just the hours value.
+
+1. **Backend**: New `PUT /api/hours/{id}` admin-only endpoint backed by a new `AdminHoursEditIn` Pydantic model (every field optional). Only fields actually supplied (`exclude_unset=True`) are written. Hours-value changes stamp `hours_adjusted_by/_at`; status flips stamp `reviewed_by/_at`. Date is normalized through ISO before persistence. The existing `/hours/{id}/review` endpoint remains unchanged for the quick approve/reject flow.
+2. **Frontend** (`Hours.jsx`): New `FullEditHoursDialog` component opened by a "⚙ Edit all" link next to the existing "✏️ Edit hrs" inline quick-fix in the admin Review queue. Surfaces every editable field (Hours, Date, Activity, Description, Event type, Status, Agency, Host name/phone/email, Admin note). Saves via `PUT /hours/{id}`, then reloads the queue. Testids: `edit-all-{id}`, `edit-all-dialog-{id}`, plus one per input (`edit-all-activity-{id}`, `edit-all-event-type-{id}`, `edit-all-save-{id}`, etc.).
+
+**Verification (iter54)**:
+- `tests/test_iteration54_admin_edit_hours.py`: 7/7 pass — every-field edit, partial-edit (no clobber), hours-only stamps adjustment audit, status-only stamps review audit, non-admin 403, unknown id 404, empty body no-op.
+- UI smoke: dialog opened on Riley Chen's approved entry; every form field (Hours, Date, Activity, Description, Event type, Status, Agency, Host name/phone/email, Admin note, Save) rendered with correct prefilled values.
+
+
+
 ### Phase AW — Iteration 53: Admin dues-reminder summary email + Gear extraction (2026-06-19)
 Two-part shipment:
 

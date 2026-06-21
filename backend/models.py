@@ -515,6 +515,26 @@ class HoursReviewIn(BaseModel):
     event_type: Optional[Literal["aop_related", "other"]] = None
 
 
+class AdminHoursEditIn(BaseModel):
+    """Admin patch model for an existing hours record. Every field optional —
+    only the keys actually present (and non-None) are written. Use this when
+    admins need to correct after-the-fact details on a submitted entry without
+    flipping its approval status (status changes still go through /review).
+    """
+    hours: Optional[float] = Field(None, gt=0, le=1000)
+    activity: Optional[str] = None
+    description: Optional[str] = None
+    event_type: Optional[Literal["aop_related", "other"]] = None
+    agency_name: Optional[str] = None
+    host_name: Optional[str] = None
+    host_email: Optional[str] = None
+    host_phone: Optional[str] = None
+    date: Optional[datetime] = None
+    event_id: Optional[str] = None
+    note: Optional[str] = None
+    status: Optional[Literal["pending", "approved", "rejected"]] = None
+
+
 class AssignChapterIn(BaseModel):
     chapter_id: Optional[str] = None
 
