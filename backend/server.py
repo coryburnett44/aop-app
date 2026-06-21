@@ -2460,6 +2460,7 @@ async def startup():
     await seed_default_photo_albums()
     await seed_builtin_automated_emails()
     await seed_builtin_dues_reminders()
+    await seed_builtin_email_templates()
     await _ensure_site_settings()
     # Start background tasks
     from routes import chat_digest as _routes_chat_digest
@@ -3828,6 +3829,60 @@ def _bulk_email_text_footer(unsubscribe_url: str) -> str:
     )
 
 
+def _normalize_email_images(html: str) -> str:
+    """Rewrite <img> tags for email-client compatibility:
+      • Resolve relative /api/... URLs to absolute (FRONTEND_URL) so the image
+        loads outside the app's origin (Gmail/Outlook proxies need absolute).
+      • Strip `class=` attributes — email clients (Gmail in particular) drop
+        most CSS classes, so any styling must be inline.
+      • Ensure inline style sets max-width:100% and height:auto so wide images
+        don't blow past the email column width.
+    Idempotent: safe to call on already-normalized HTML.
+    """
+    import re
+    if not html:
+        return html
+    base = (os.environ.get("FRONTEND_URL", "") or "").rstrip("/")
+
+    def fix(match: "re.Match[str]") -> str:
+        tag = match.group(0)
+        # Absolute URL rewrite (handles single and double quotes)
+        if base:
+            tag = re.sub(
+                r'(src\s*=\s*)(["\'])(/api/[^"\']+)\2',
+                lambda m: f'{m.group(1)}{m.group(2)}{base}{m.group(3)}{m.group(2)}',
+                tag,
+            )
+        # Strip class attribute (CSS classes don't work in email clients)
+        tag = re.sub(r'\s+class\s*=\s*"[^"]*"', "", tag)
+        tag = re.sub(r"\s+class\s*=\s*'[^']*'", "", tag)
+        # Ensure responsive sizing inline
+        m = re.search(r'style\s*=\s*"([^"]*)"', tag)
+        if m:
+            existing = m.group(1)
+            additions = []
+            if "max-width" not in existing:
+                additions.append("max-width:100%")
+            if "height" not in existing.lower():
+                additions.append("height:auto")
+            if additions:
+                new_style = existing.rstrip(";").strip()
+                if new_style:
+                    new_style += ";" + ";".join(additions)
+                else:
+                    new_style = ";".join(additions)
+                tag = tag.replace(m.group(0), f'style="{new_style}"')
+        else:
+            tag = tag.replace(
+                "<img",
+                '<img style="max-width:100%;height:auto;display:inline-block"',
+                1,
+            )
+        return tag
+
+    return re.sub(r"<img\b[^>]*>", fix, html)
+
+
 async def send_bulk_email(
     *,
     to_email: str,
@@ -3847,8 +3902,9 @@ async def send_bulk_email(
         return {"ok": False, "skipped": "RESEND_API_KEY not set"}
 
     unsub_url = _unsubscribe_url_for(recipient_id)
-    html_full = html_body + _bulk_email_html_footer(unsub_url)
-    text_full = _html_to_text(html_body) + _bulk_email_text_footer(unsub_url)
+    safe_html = _normalize_email_images(html_body)
+    html_full = safe_html + _bulk_email_html_footer(unsub_url)
+    text_full = _html_to_text(safe_html) + _bulk_email_text_footer(unsub_url)
 
     headers = {
         "List-Unsubscribe": f"<{unsub_url}>, <mailto:{RESEND_REPLY_TO}?subject=unsubscribe>",
@@ -4154,6 +4210,7 @@ def template_out(t: dict) -> dict:
         "subject": t["subject"],
         "body_html": t["body_html"],
         "description": t.get("description", ""),
+        "is_builtin": bool(t.get("is_builtin", False)),
         "created_at": t.get("created_at"),
     }
 
@@ -4229,7 +4286,7 @@ async def email_preview(body: EmailBlastIn, user: dict = Depends(admin_tab_dep("
     """Render the blast for the current admin user as preview (no send)."""
     recipients = await resolve_segment(body)
     sample = recipients[0] if recipients else user
-    html = render_template(body.body_html, sample)
+    html = _normalize_email_images(render_template(body.body_html, sample))
     return {
         "subject": body.subject.replace("{{name}}", sample.get("name", "")),
         "html": html,
@@ -4356,6 +4413,7 @@ async def update_my_email_preferences(body: EmailPreferencesIn, user: dict = Dep
 
 
 
+@api.get("/email/blasts")
 async def list_email_blasts(_: dict = Depends(admin_tab_dep("email"))):
     items = await db.email_blasts.find({}, {"_id": 0}).sort("sent_at", -1).limit(100).to_list(100)
     return items
@@ -5699,6 +5757,137 @@ async def _automated_email_loop():
         except Exception as e:
             logger.warning(f"Automated email loop error: {e}")
         await asyncio.sleep(300)
+
+
+# ---------- Email Template Starters (idempotent) ----------
+BUILTIN_EMAIL_TEMPLATES = [
+    {
+        "id": "builtin_tpl_announcement",
+        "name": "General Announcement",
+        "subject": "Important update from Alpha Omega Phi",
+        "description": "Clean, brand-styled layout for any organization-wide announcement.",
+        "body_html": """<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
+  <div style="background:#0A2463;color:#ffffff;padding:20px 28px">
+    <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;opacity:.8">Alpha Omega Phi</div>
+    <h1 style="margin:4px 0 0;font-size:24px;line-height:1.25">Announcement</h1>
+  </div>
+  <div style="padding:28px;color:#1f2937;font-size:15px;line-height:1.6">
+    <p>Hi {{first_name}},</p>
+    <p>Write your announcement here. Keep it short, share the headline first, and finish with a clear call to action.</p>
+    <p style="margin:24px 0">
+      <a href="https://aop-app.org" style="background:#C8102E;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:600;display:inline-block">Take action</a>
+    </p>
+    <p style="color:#6b7280;font-size:13px">In service,<br><strong>The AOP Team</strong></p>
+  </div>
+</div>""",
+    },
+    {
+        "id": "builtin_tpl_event_reminder",
+        "name": "Event Reminder",
+        "subject": "Reminder: Your AOP event is coming up",
+        "description": "Eye-catching reminder for upcoming chapter events and meetings.",
+        "body_html": """<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;background:#f7f5f0;padding:28px">
+  <div style="background:#ffffff;border-radius:12px;padding:28px;border:1px solid #e5e7eb">
+    <div style="display:inline-block;background:#C8102E;color:#fff;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;border-radius:999px">Event reminder</div>
+    <h1 style="font-size:26px;color:#0A2463;margin:14px 0 6px">Hi {{first_name}}, see you there!</h1>
+    <p style="color:#4b5563;font-size:15px;line-height:1.6">Don't forget — our upcoming event is right around the corner. Add the details below to your calendar so you don't miss it.</p>
+    <table style="margin:18px 0;border-collapse:collapse;width:100%">
+      <tr><td style="padding:8px 0;color:#6b7280;font-size:13px;width:90px">When</td><td style="padding:8px 0;font-weight:600">Friday, Date · 7:00 PM</td></tr>
+      <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Where</td><td style="padding:8px 0;font-weight:600">Add location here</td></tr>
+      <tr><td style="padding:8px 0;color:#6b7280;font-size:13px">Bring</td><td style="padding:8px 0;font-weight:600">Add gear / attire</td></tr>
+    </table>
+    <p style="margin:24px 0 0"><a href="https://aop-app.org/events" style="background:#0A2463;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:600;display:inline-block">View event details</a></p>
+  </div>
+</div>""",
+    },
+    {
+        "id": "builtin_tpl_dues_reminder",
+        "name": "Dues Reminder",
+        "subject": "Time to renew your AOP membership",
+        "description": "Friendly nudge for members whose dues are approaching renewal.",
+        "body_html": """<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
+  <div style="background:linear-gradient(135deg,#0A2463 0%,#C8102E 100%);color:#fff;padding:28px;text-align:center">
+    <h1 style="margin:0;font-size:24px">Keep your AOP membership active</h1>
+    <p style="margin:6px 0 0;opacity:.9;font-size:14px">Your annual dues renewal is coming up</p>
+  </div>
+  <div style="padding:28px;color:#1f2937;font-size:15px;line-height:1.6">
+    <p>Hi {{first_name}},</p>
+    <p>Your continued membership keeps every chapter event, volunteer hour, and brotherhood/sisterhood tradition running. Renewing only takes a minute.</p>
+    <ul style="padding-left:18px;color:#4b5563">
+      <li>Voting privileges in chapter business</li>
+      <li>Access to gear store, events, and member directory</li>
+      <li>Volunteer hours tracking & awards eligibility</li>
+    </ul>
+    <p style="margin:24px 0;text-align:center"><a href="https://aop-app.org/dashboard" style="background:#C8102E;color:#fff;text-decoration:none;padding:14px 28px;border-radius:999px;font-weight:700;display:inline-block">Renew dues now</a></p>
+    <p style="color:#6b7280;font-size:13px">Questions? Reply directly to this email — we read every one.</p>
+  </div>
+</div>""",
+    },
+    {
+        "id": "builtin_tpl_welcome",
+        "name": "Welcome New Member",
+        "subject": "Welcome to Alpha Omega Phi, {{first_name}}!",
+        "description": "First-touch welcome message for newly inducted members.",
+        "body_html": """<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;background:#ffffff">
+  <div style="background:#0A2463;color:#fff;padding:32px 28px;text-align:center;border-radius:12px 12px 0 0">
+    <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;opacity:.8">Alpha Omega Phi</div>
+    <h1 style="margin:8px 0 0;font-size:30px">Welcome aboard</h1>
+  </div>
+  <div style="padding:32px 28px;color:#1f2937;font-size:15px;line-height:1.7;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 12px 12px">
+    <p>{{first_name}},</p>
+    <p>It's official — you're a member of Alpha Omega Phi. We're proud to have you in the line and excited to see what you'll bring to the chapter.</p>
+    <p style="font-weight:600;margin-top:20px">Here's how to get started:</p>
+    <ol style="padding-left:18px">
+      <li>Log in to <a href="https://aop-app.org" style="color:#C8102E">aop-app.org</a> and finish your profile.</li>
+      <li>Browse upcoming events and RSVP to your first one.</li>
+      <li>Say hi in the chapter chat — we're already talking about you.</li>
+    </ol>
+    <p style="margin:28px 0 0">In brotherhood/sisterhood,<br><strong>Your AOP Family</strong></p>
+  </div>
+</div>""",
+    },
+    {
+        "id": "builtin_tpl_newsletter",
+        "name": "Monthly Newsletter",
+        "subject": "AOP Monthly · What you missed",
+        "description": "Sectioned newsletter template — drop your monthly highlights inside.",
+        "body_html": """<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:680px;margin:0 auto;background:#f7f5f0;padding:24px">
+  <div style="background:#ffffff;border-radius:14px;padding:32px;border:1px solid #e5e7eb">
+    <div style="border-bottom:3px solid #C8102E;padding-bottom:14px;margin-bottom:20px">
+      <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6b7280">The AOP Monthly</div>
+      <h1 style="margin:6px 0 0;font-size:28px;color:#0A2463">This month at Alpha Omega Phi</h1>
+    </div>
+    <p style="color:#374151;font-size:15px;line-height:1.7">Hi {{first_name}}, here's everything that happened — and what's coming next.</p>
+    <h2 style="font-size:18px;color:#0A2463;border-left:4px solid #C8102E;padding-left:10px;margin-top:28px">Recent wins</h2>
+    <p style="color:#374151;font-size:14px;line-height:1.7">Replace this with a quick recap of community service hours, fundraising totals, or chapter milestones.</p>
+    <h2 style="font-size:18px;color:#0A2463;border-left:4px solid #C8102E;padding-left:10px;margin-top:28px">Coming up</h2>
+    <p style="color:#374151;font-size:14px;line-height:1.7">List your next 1–3 events with date, location, and a short why-you-should-come.</p>
+    <h2 style="font-size:18px;color:#0A2463;border-left:4px solid #C8102E;padding-left:10px;margin-top:28px">Spotlight</h2>
+    <p style="color:#374151;font-size:14px;line-height:1.7">Feature a member, chapter, or initiative. Photos welcome — drag into the editor.</p>
+    <p style="margin:28px 0 0;text-align:center"><a href="https://aop-app.org" style="background:#0A2463;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;display:inline-block">Visit the portal</a></p>
+  </div>
+</div>""",
+    },
+]
+
+
+async def seed_builtin_email_templates():
+    """Insert starter email templates if they don't exist yet.
+    Idempotent — uses a stable id per template so re-runs are no-ops.
+    Admins can still edit / delete these (they're not protected)."""
+    for tpl in BUILTIN_EMAIL_TEMPLATES:
+        existing = await db.email_templates.find_one({"id": tpl["id"]})
+        if existing:
+            continue
+        doc = {
+            **tpl,
+            "is_builtin": True,
+            "created_at": iso(now_utc()),
+        }
+        await db.email_templates.insert_one(doc)
+        logger.info(f"Seeded built-in email template: {tpl['name']}")
+
+
 
 
 async def seed_builtin_automated_emails():

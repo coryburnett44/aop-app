@@ -1,6 +1,6 @@
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
+import ResizableImage from "./ResizableImage";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
@@ -20,7 +20,7 @@ export default function RichEditor({ value, onChange, placeholder = "Write your 
     const editor = useEditor({
         extensions: [
             StarterKit.configure({ heading: { levels: [2, 3] } }),
-            Image.configure({ inline: false, allowBase64: false, HTMLAttributes: { class: "rounded-lg my-2 max-w-full" } }),
+            ResizableImage.configure({ inline: false, allowBase64: false }),
             Link.configure({ openOnClick: false, HTMLAttributes: { class: "underline text-primary" } }),
             Placeholder.configure({ placeholder }),
             TextAlign.configure({ types: ["heading", "paragraph"] }),
@@ -82,7 +82,7 @@ export default function RichEditor({ value, onChange, placeholder = "Write your 
             const { data } = await api.post("/email/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
             const base = process.env.REACT_APP_BACKEND_URL || "";
             const fullUrl = data.url.startsWith("http") ? data.url : base + data.url;
-            editor.chain().focus().setImage({ src: fullUrl, alt: data.filename }).run();
+            editor.chain().focus().setImage({ src: fullUrl, alt: data.filename, width: 400, align: "center" }).run();
         } catch (e) {
             toast.error(e.response?.data?.detail || "Image upload failed");
         }
