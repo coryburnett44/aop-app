@@ -16,6 +16,42 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BH — Iteration 64: Email Blast Composer overhaul (2026-06-21)
+Three improvements for admin email blasts: resizable images, reliable email rendering, and pre-built templates.
+
+1. **Resizable images in TipTap RichEditor**
+   - New `/app/frontend/src/components/ResizableImage.jsx` — TipTap node extension extending the default Image with:
+     - `width` (int) + `align` ("left"|"center"|"right") attributes.
+     - React NodeView with drag handles on all 4 corners (`ri-handle-tl/tr/bl/br`) for visual resize (60–1200px clamp).
+     - Floating toolbar on selection (`ri-toolbar`): alignment (`ri-align-left/center/right`), size presets `S=200` / `M=400` / `L=600` / `Full` (`ri-size-s/m/l/full`), and a remove button (`ri-remove`).
+     - Live width label badge shows current px while resizing.
+     - Renders email-safe HTML: `<div data-image-align="..."><img src="..." width=... style="max-width:100%;height:auto;display:inline-block;border-radius:8px;width:Xpx"></div>`.
+   - `/app/frontend/src/components/RichEditor.jsx` now uses `ResizableImage` (replaces `@tiptap/extension-image`); inserts new images at `width=400, align="center"` by default.
+
+2. **Email image normalization** (`/app/backend/server.py` `_normalize_email_images`)
+   - Rewrites relative `/api/...` URLs to absolute via `FRONTEND_URL` env (Gmail/Outlook proxies need absolute).
+   - Strips `class=` attributes on `<img>` tags (email clients ignore CSS classes; Tailwind classes leak from old blasts → broken render).
+   - Ensures every img has inline `max-width:100%` + `height:auto`.
+   - Idempotent — safe to call repeatedly.
+   - Applied in both `send_bulk_email` (real send) and `email_preview` (admin's live preview matches recipient view).
+
+3. **Pre-built email templates** (`/app/backend/server.py` `seed_builtin_email_templates`)
+   - 5 starter templates seeded on startup with stable ids and `is_builtin=true`:
+     - `builtin_tpl_announcement` — General Announcement
+     - `builtin_tpl_event_reminder` — Event Reminder
+     - `builtin_tpl_dues_reminder` — Dues Reminder
+     - `builtin_tpl_welcome` — Welcome New Member
+     - `builtin_tpl_newsletter` — Monthly Newsletter
+   - Each is brand-styled (#C8102E / #0A2463), inline-styled (no CSS classes), and uses `{{first_name}}` variable.
+   - Admins can edit and delete them via the existing Templates tab (full CRUD).
+   - `template_out` now includes `is_builtin` flag in API response.
+
+4. **Bug fix bonus**: Restored the missing `@api.get("/email/blasts")` decorator on `list_email_blasts` — endpoint was returning 404 since a previous refactor removed the route line.
+
+5. **Regression**: `/app/backend/tests/test_iteration64_email_composer.py` (10 tests) + `/app/backend/tests/test_iteration64_email_extra.py` (6 tests, added by testing agent). All 16 pass. Frontend smoke verified all data-testids resolve and resize/align/preset interactions work.
+
+
+
 ### Phase BG — Iteration 63: Show full photo everywhere (object-contain sweep) (2026-06-21)
 Per user request — every uploaded photo across the site now displays in full (no cropping). Sweeping global change: replaced `object-cover` with `object-contain` on every `<img>` across the React frontend (40 occurrences in 19 files: pages Gear, News, NewsDetail, Donations, Documents, Chapters, Photos, Omega, Home, Profile, Admin, Reports, Chat + components TopDonorsLeaderboard, CommunityServiceLeaderboard, AvatarUploader preview image, Navbar logo, PageBuilder, BlockRenderer).
 
