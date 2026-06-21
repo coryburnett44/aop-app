@@ -1,0 +1,115 @@
+name: Backend pytest
+
+# Triggers: on every push to any branch + every pull request. Cancel any
+# in-flight run for the same ref so the workflow doesn't queue forever when
+# pushes land in quick succession.
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: Backend pytest (FastAPI + MongoDB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # MongoDB 7 sidecar — fresh, empty db per CI run.
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        # health-check so subsequent steps don't race the startup
+        options: >-
+          --health-cmd "echo 'db.runCommand({ping:1})' | mongosh --quiet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # FastAPI runtime
+      MONGO_URL: mongodb://localhost:27017
+      DB_NAME: clubhaven_ci
+      JWT_SECRET: ci-test-jwt-secret-do-not-use-in-prod
+      CORS_ORIGINS: "*"
+      # `tests/test_iteration5*` and `tests/test_iteration6*` hit a live URL
+      REACT_APP_BACKEND_URL: http://localhost:8001
+      # Disable optional integrations — code paths are guarded behind these
+      RESEND_API_KEY: ""
+      TWILIO_ACCOUNT_SID: ""
+      TWILIO_AUTH_TOKEN: ""
+      PAYPAL_CLIENT_ID: ""
+      EMERGENT_OBJECT_STORAGE_BUCKET: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          # emergentintegrations lives on a private index — install it first
+          # so the requirements.txt resolve doesn't fail on it.
+          pip install emergentintegrations --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ || true
+          pip install -r requirements.txt
+
+      - name: Boot FastAPI (background)
+        working-directory: backend
+        run: |
+          # Start uvicorn in the background; logs stream to ./uvicorn.log so
+          # a failed boot prints diagnostics later.
+          nohup uvicorn server:app --host 0.0.0.0 --port 8001 > uvicorn.log 2>&1 &
+          echo $! > uvicorn.pid
+          # Poll the auth endpoint until it responds (max 60s).
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Content-Type: application/json" \
+              -d '{"email":"x","password":"y"}' \
+              http://localhost:8001/api/auth/login || true)
+            if [ "$code" = "401" ] || [ "$code" = "200" ] || [ "$code" = "422" ]; then
+              echo "Backend is up (code=$code after ${i}s)"
+              break
+            fi
+            sleep 1
+          done
+          # Final check — fail loudly if still not up
+          final_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/api/auth/me || echo "000")
+          if [ "$final_code" = "000" ] || [ "$final_code" = "" ]; then
+            echo "BACKEND BOOT FAILED — uvicorn log:"
+            cat uvicorn.log
+            exit 1
+          fi
+          echo "Backend reachable (final probe code=$final_code)"
+
+      - name: Run pytest
+        working-directory: backend
+        run: |
+          pytest tests/ -v --tb=short --color=yes
+
+      - name: Dump backend log on failure
+        if: failure()
+        working-directory: backend
+        run: |
+          echo "::group::uvicorn.log"
+          cat uvicorn.log || true
+          echo "::endgroup::"
+
+      - name: Stop uvicorn
+        if: always()
+        working-directory: backend
+        run: |
+          if [ -f uvicorn.pid ]; then
+            kill "$(cat uvicorn.pid)" 2>/dev/null || true
+          fi
