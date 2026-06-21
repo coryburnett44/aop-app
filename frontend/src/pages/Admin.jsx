@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api, mediaUrl } from "../lib/api";
+import { api, mediaUrl, formatApiError } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Input } from "../components/ui/input";
@@ -3125,9 +3125,9 @@ function EmailTemplates() {
         try {
             const { data } = await api.post("/email/test-send", { template_id: t.id });
             if (data.ok) toast.success(`Test "${t.name}" sent to ${data.to || "you"} — check your inbox`);
-            else toast.error(`Resend rejected: ${data.detail || "unknown error"}`, { duration: 10000 });
+            else toast.error(`Resend rejected: ${formatApiError(data.detail) || "unknown error"}`, { duration: 10000 });
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Test send failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Test send failed");
         } finally {
             setTestingId("");
         }

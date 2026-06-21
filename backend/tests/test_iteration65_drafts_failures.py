@@ -130,6 +130,11 @@ def test_template_test_send_uses_admin_email_when_omitted(admin):
     # Explicit to_email path always works
     r = admin.post(f"{API}/email/test-send", json={"to_email": ADMIN_EMAIL, "template_id": builtin["id"]}, timeout=20)
     assert r.status_code == 200, r.text
+    # Omitted to_email falls back to admin's own email — this is the path the
+    # Templates "Send test to me" button uses.
+    r2 = admin.post(f"{API}/email/test-send", json={"template_id": builtin["id"]}, timeout=20)
+    assert r2.status_code == 200, r2.text
+    assert r2.json().get("to") == ADMIN_EMAIL or "ok" in r2.json()
 
 
 # ------------------------------------------------------------

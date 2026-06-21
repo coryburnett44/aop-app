@@ -4711,7 +4711,7 @@ async def email_deliverability(_: dict = Depends(admin_tab_dep("email"))):
 
 
 class EmailTestSendIn(BaseModel):
-    to_email: str
+    to_email: Optional[str] = None
     subject: Optional[str] = None
     body_html: Optional[str] = None
     template_id: Optional[str] = None
@@ -4722,8 +4722,10 @@ async def email_test_send(body: EmailTestSendIn, admin: dict = Depends(admin_tab
     """Send a one-off test email so admins can validate Resend deliverability
     without having to approve a real applicant or queue a blast. If template_id
     is provided, the template's subject + body_html are used (with {{variables}}
-    rendered against the admin's own profile as the sample recipient)."""
-    to_email = (body.to_email or "").strip()
+    rendered against the admin's own profile as the sample recipient). When
+    `to_email` is omitted, the email is sent to the admin's own address — used
+    by the per-template "Send test to me" button on the Templates tab."""
+    to_email = (body.to_email or "").strip() or (admin.get("email") or "").strip()
     if not to_email or "@" not in to_email:
         raise HTTPException(status_code=400, detail="A valid recipient email is required.")
     if not RESEND_API_KEY:

@@ -1,0 +1,31 @@
+{
+  "summary": "Iter66 retest PASS. The CRITICAL crash from iter65 is fully fixed. Clicking 'Send test to me' on builtin_tpl_announcement now returns HTTP 200 with body {ok:true, detail:'Test email accepted by Resend.', to:'admin@clubhaven.app'}, the success toast 'Test \"General Announcement\" sent to admin@clubhaven.app — check your inbox' is rendered, NO React 'Objects are not valid as a React child' overlay, and Admin remains fully interactive (Members tab clickable, Compose autosave works, History expandable failed-rows still work). No regressions detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration65_drafts_failures.py"
+  ],
+  "verifications_performed": [
+    "Login as admin@clubhaven.app via /api/auth/login -> 200, session cookie set",
+    "curl POST /api/email/test-send {template_id:'builtin_tpl_announcement'} WITHOUT to_email -> 200, ok:true, to:admin@clubhaven.app (confirms backend EmailTestSendIn.to_email Optional fix)",
+    "UI: Admin > Email > Templates > click [data-testid=template-test-send-builtin_tpl_announcement] -> network 200, success toast string rendered, body.innerText does NOT contain 'Objects are not valid as a React child'",
+    "UI: After click, clicked Members tab -> renders PENDING APPLICATIONS list (page not stuck)",
+    "UI: Compose tab -> drafts-picker + save-draft-btn visible; typing subject triggers autosave -> draft-status becomes 'Saved at 3:25 PM' within ~3.5s",
+    "UI: History tab -> 6 blast-failed-toggle-* present; first toggle expands to render blast-failed-detail-* and blast-copy-failed-* button; refresh-setup-failures-btn visible"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix is correctly applied: backend server.py L4714 EmailTestSendIn.to_email is now Optional[str]=None with admin-email fallback at L4728; frontend Admin.jsx L2 imports formatApiError from ../lib/api and L3128/L3130 sendTestToMe both pass detail through formatApiError(...) before toast.error. Pattern is sound.",
+    "Recommendation still standing from iter65: ~30+ remaining toast.error(e.response?.data?.detail || ...) call sites across Admin.jsx are not yet wrapped in formatApiError — any future endpoint returning a 422 will reproduce the same React-child crash. Suggest a sweep replacement (or a small toastError(err, fallback) helper).",
+    "server.py is still 6482 lines — split-into-routers suggestion carries over."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@clubhaven.app / Admin123! (worked)",
+  "seed_data_creation": "None new. Autosave draft slot for admin user was upserted (single row, expected behavior).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "Selector note for future runs: Email sub-tabs use [data-testid=email-tab-{compose|templates|signatures|history|test-send|automated|deliverability}] (NOT email-subtab-*). Login button is [data-testid=login-submit-btn] (NOT login-submit-button). After admin login the redirect target is '/' (home), so explicitly navigate to /admin to reach the console. The Email > Templates > 'Send test to me' bug fix is verified working — backend returns 200 with admin's email auto-filled, frontend renders the success toast cleanly, no crash. All other flows (drafts, autosave, history expandable failed rows, password-setup-failures) verified non-regressed.",
+  "rca of the issue": "Iter65 root cause was two-pronged: (1) backend EmailTestSendIn.to_email was required, so POST {template_id} alone returned 422 with a FastAPI validation-error array; (2) frontend sendTestToMe passed the array directly to react-hot-toast which tried to render objects as React children, throwing the runtime error and covering the page with the dev error overlay. Both legs fixed: (a) server.py made to_email Optional with admin email fallback (returns 200), (b) Admin.jsx imports formatApiError from lib/api and coerces detail to string before toast.error. Verified via both curl (backend) and Playwright UI (frontend) — no crash, success toast renders, page stays interactive."
+}
