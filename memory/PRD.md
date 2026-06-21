@@ -16,6 +16,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BA — Iteration 57: Per-cause payment processor (PayPal vs Zeffy) (2026-06-21)
+Admins can now route funds for each individual cause through either PayPal (in-app checkout) or Zeffy (external link).
+
+1. **Backend** (`server.py`): `CauseIn` and `CauseUpdateIn` gain two new fields — `payment_processor: Literal["paypal","zeffy"] = "paypal"` and `zeffy_url: str = ""`. `cause_out` exposes both fields on every read. Invalid processor values get a 422 from Pydantic. Existing causes default to PayPal because the model's default is `"paypal"`.
+2. **Frontend (Admin `CauseDialog`)**: New "Receive funds via" section with two pill buttons (`cause-processor-paypal`, `cause-processor-zeffy`). When Zeffy is selected, a `cause-zeffy-url-input` Input + helper hint appear with a Zeffy placeholder. `emptyCause()` initializes the new fields.
+3. **Frontend (`Donations.jsx` `CauseCard`)**: If `cause.payment_processor === "zeffy"` AND a `zeffy_url` is set, the Donate button becomes an `<a target="_blank">` link (`zeffy-donate-{id}`) that opens the admin-supplied Zeffy form in a new tab. Otherwise the existing `PledgeDialog` (in-app PayPal checkout) is used.
+
+**Verification (iter57)**:
+- `tests/test_iteration57_cause_processor.py`: 8/8 pass — Zeffy create/persist, paypal default, invalid processor → 422, processor flip + zeffy_url clear, list endpoint surfaces new fields, non-admin 403 on create/update, partial update preserves processor + url.
+- UI smoke: Admin Causes → New cause dialog renders both pills, switching to Zeffy reveals the URL input with the right placeholder; preserved settings reflected on save.
+
+
+
 ### Phase AZ — Iteration 56: Bulk donations CSV + Top Donors leaderboard (2026-06-21)
 Two coordinated changes around donations:
 

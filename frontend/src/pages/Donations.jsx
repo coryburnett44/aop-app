@@ -73,7 +73,20 @@ function CauseCard({ cause, canPledge, onPledged }) {
 
                 <div className="mt-6 flex gap-2">
                     {canPledge ? (
-                        <PledgeDialog cause={cause} onPledged={onPledged} />
+                        cause.payment_processor === "zeffy" && cause.zeffy_url ? (
+                            <Button
+                                asChild
+                                className="flex-1 rounded-full text-white shadow-warm hover:opacity-90"
+                                style={{ backgroundColor: RED }}
+                                data-testid={`zeffy-donate-${cause.id}`}
+                            >
+                                <a href={cause.zeffy_url} target="_blank" rel="noopener noreferrer">
+                                    <Heart className="h-4 w-4 mr-1.5 inline" /> Donate via Zeffy
+                                </a>
+                            </Button>
+                        ) : (
+                            <PledgeDialog cause={cause} onPledged={onPledged} />
+                        )
                     ) : (
                         <Button asChild className="flex-1 rounded-full text-white shadow-warm" style={{ backgroundColor: RED }}>
                             <a href="/login">Log in to donate</a>

@@ -2497,6 +2497,43 @@ function CauseDialog({ cause, onSaved, trigger }) {
                     <label className="flex items-center gap-2 text-sm">
                         <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} /> Active
                     </label>
+
+                    {/* Payment routing — admins pick PayPal (in-app checkout) or Zeffy (external link) */}
+                    <div className="border-t pt-3">
+                        <Label className="text-xs uppercase tracking-wider font-bold text-slate-500">Receive funds via</Label>
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                            {[
+                                { value: "paypal", title: "PayPal", desc: "In-app checkout; funds + donor are tracked automatically." },
+                                { value: "zeffy", title: "Zeffy", desc: "Opens your Zeffy form in a new tab; reconcile via CSV import." },
+                            ].map((opt) => (
+                                <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => setForm({ ...form, payment_processor: opt.value })}
+                                    className={`rounded-xl border-2 px-3 py-2 text-left transition-all ${form.payment_processor === opt.value ? "border-primary bg-primary/5" : "border-slate-200 hover:border-slate-300"}`}
+                                    data-testid={`cause-processor-${opt.value}`}
+                                >
+                                    <div className="text-sm font-bold" style={{ color: "#0A2463" }}>{opt.title}</div>
+                                    <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{opt.desc}</div>
+                                </button>
+                            ))}
+                        </div>
+                        {form.payment_processor === "zeffy" && (
+                            <div className="mt-3">
+                                <Label>Zeffy donation URL</Label>
+                                <Input
+                                    value={form.zeffy_url || ""}
+                                    onChange={(e) => setForm({ ...form, zeffy_url: e.target.value })}
+                                    placeholder="https://www.zeffy.com/en-US/donation-form/your-form"
+                                    className="rounded-xl mt-1.5"
+                                    data-testid="cause-zeffy-url-input"
+                                />
+                                <div className="text-[11px] text-slate-500 mt-1">
+                                    Members will be sent to this URL to complete their gift. Track receipts manually via the bulk CSV importer.
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="cause-save-btn">Save</Button></DialogFooter>
             </DialogContent>
@@ -2504,7 +2541,7 @@ function CauseDialog({ cause, onSaved, trigger }) {
     );
 }
 function emptyCause() {
-    return { title: "", description: "", goal_amount: 0, cover_image: "", category: "general", is_active: true };
+    return { title: "", description: "", goal_amount: 0, cover_image: "", category: "general", is_active: true, payment_processor: "paypal", zeffy_url: "" };
 }
 
 /* -------- Email Blast Admin (Resend) -------- */

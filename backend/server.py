@@ -3305,6 +3305,11 @@ class CauseIn(BaseModel):
     is_active: bool = True
     deadline: Optional[str] = None
     category: str = "general"
+    # Donation routing: paypal renders the in-app checkout; zeffy opens the
+    # admin-supplied external Zeffy form in a new tab (admins reconcile via
+    # the bulk-donations CSV importer).
+    payment_processor: Literal["paypal", "zeffy"] = "paypal"
+    zeffy_url: str = ""
 
 class CauseUpdateIn(BaseModel):
     title: Optional[str] = None
@@ -3314,6 +3319,8 @@ class CauseUpdateIn(BaseModel):
     is_active: Optional[bool] = None
     deadline: Optional[str] = None
     category: Optional[str] = None
+    payment_processor: Optional[Literal["paypal", "zeffy"]] = None
+    zeffy_url: Optional[str] = None
 
 class PledgeIn(BaseModel):
     amount: float = Field(gt=0)
@@ -3332,6 +3339,8 @@ def cause_out(c: dict) -> dict:
         "is_active": c.get("is_active", True),
         "deadline": c.get("deadline"),
         "category": c.get("category", "general"),
+        "payment_processor": c.get("payment_processor", "paypal"),
+        "zeffy_url": c.get("zeffy_url", ""),
         "created_at": c.get("created_at"),
     }
 
