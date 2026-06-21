@@ -357,6 +357,142 @@ def register(
         items = await db.transactions.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
         return items
 
+    # ---------- /reports/donations/summary ----------
+    @api.get("/reports/donations/summary")
+    async def report_donations_summary(
+        year: Optional[int] = None,
+        quarter: Optional[int] = None,
+        month: Optional[int] = None,
+        chapter_id: Optional[str] = None,
+        cause_id: Optional[str] = None,
+        status_filter: Optional[str] = None,
+        group_by: str = "member",
+        admin: dict = Depends(admin_tab_dep("reports")),
+    ):
+        """Aggregated donations report — mirrors `/reports/hours/summary` but
+        sums `amount` instead of `hours`. Returns:
+          - `totals`: completed / pending / refunded $ + count buckets
+          - `rows`: rows grouped by member, chapter, or month/quarter/year
+          - `period`: the date window in effect
+        """
+        period_from, period_to = period_to_range(year, quarter, month)
+        # Status filter applies to the listed rows, NOT to the totals block —
+        # we want the totals to surface every donation bucket regardless of
+        # which status the admin happens to be focused on right now.
+        base_q: dict = {"type": "donation"}
+        if cause_id:
+            base_q["cause_id"] = cause_id
+        if period_from:
+            base_q["created_at"] = {
+                "$gte": period_from,
+                "$lte": period_to if "T" in period_to else f"{period_to}T23:59:59",
+            }
+        user_filter_ids = None
+        if chapter_id:
+            user_filter_ids = [u["id"] async for u in db.users.find({"chapter_id": chapter_id}, {"id": 1, "_id": 0})]
+            base_q["user_id"] = {"$in": user_filter_ids or [None]}
+        if is_chapter_scoped(admin):
+            scope_ids = await chapter_scope_user_ids(admin)
+            if user_filter_ids is not None:
+                base_q["user_id"] = {"$in": list(set(user_filter_ids) & set(scope_ids or []))}
+            else:
+                base_q["user_id"] = {"$in": scope_ids or []}
+
+        totals_items = await db.transactions.find(base_q, {"_id": 0}).to_list(20000)
+        totals = {
+            "completed_amount": round(sum(t.get("amount", 0) for t in totals_items if t.get("status") == "completed"), 2),
+            "pending_amount": round(sum(t.get("amount", 0) for t in totals_items if t.get("status") == "pending"), 2),
+            "refunded_amount": round(sum(t.get("amount", 0) for t in totals_items if t.get("status") == "refunded"), 2),
+            "completed_count": sum(1 for t in totals_items if t.get("status") == "completed"),
+            "pending_count": sum(1 for t in totals_items if t.get("status") == "pending"),
+            "refunded_count": sum(1 for t in totals_items if t.get("status") == "refunded"),
+            "donor_count": len({t.get("user_id") for t in totals_items if t.get("status") == "completed" and t.get("user_id")}),
+        }
+
+        # For grouped rows we default to status=completed unless the admin
+        # explicitly asks for a different status (e.g. drill into pending).
+        rows_q = {**base_q, "status": status_filter or "completed"}
+        raw_items = await db.transactions.find(rows_q, {"_id": 0}).to_list(10000)
+        rows: list = []
+        if group_by == "member":
+            groups: dict = {}
+            for t in raw_items:
+                uid = t.get("user_id")
+                if not uid:
+                    continue
+                groups.setdefault(uid, {"amount": 0.0, "count": 0, "user_name": t.get("user_name", "")})
+                groups[uid]["amount"] += t.get("amount", 0)
+                groups[uid]["count"] += 1
+            uids = list(groups.keys())
+            user_docs = await db.users.find({"id": {"$in": uids}}, {"id": 1, "chapter_id": 1, "name": 1, "_id": 0}).to_list(len(uids)) if uids else []
+            users_by_id = {u["id"]: u for u in user_docs}
+            chap_ids = list({u.get("chapter_id") for u in user_docs if u.get("chapter_id")})
+            chap_docs = await db.chapters.find({"id": {"$in": chap_ids}}, {"id": 1, "name": 1, "_id": 0}).to_list(len(chap_ids)) if chap_ids else []
+            chaps_by_id = {c["id"]: c for c in chap_docs}
+            for uid, g in groups.items():
+                udoc = users_by_id.get(uid, {})
+                cid = udoc.get("chapter_id")
+                rows.append({
+                    "user_id": uid,
+                    "user_name": udoc.get("name") or g["user_name"] or "Anonymous",
+                    "chapter_id": cid,
+                    "chapter_name": chaps_by_id.get(cid, {}).get("name", "") if cid else "",
+                    "amount": round(g["amount"], 2),
+                    "count": g["count"],
+                })
+            rows.sort(key=lambda r: r["amount"], reverse=True)
+        elif group_by == "chapter":
+            uids = list({t.get("user_id") for t in raw_items if t.get("user_id")})
+            user_docs = await db.users.find({"id": {"$in": uids}}, {"id": 1, "chapter_id": 1, "_id": 0}).to_list(len(uids)) if uids else []
+            uid_to_chap = {u["id"]: u.get("chapter_id") for u in user_docs}
+            groups2: dict = {}
+            for t in raw_items:
+                cid = uid_to_chap.get(t.get("user_id")) or "unassigned"
+                groups2.setdefault(cid, {"amount": 0.0, "count": 0, "members": set()})
+                groups2[cid]["amount"] += t.get("amount", 0)
+                groups2[cid]["count"] += 1
+                if t.get("user_id"):
+                    groups2[cid]["members"].add(t["user_id"])
+            chap_ids = [cid for cid in groups2.keys() if cid and cid != "unassigned"]
+            chap_docs = await db.chapters.find({"id": {"$in": chap_ids}}, {"id": 1, "name": 1, "_id": 0}).to_list(len(chap_ids)) if chap_ids else []
+            chaps_by_id = {c["id"]: c for c in chap_docs}
+            for cid, g in groups2.items():
+                rows.append({
+                    "chapter_id": cid if cid != "unassigned" else None,
+                    "chapter_name": chaps_by_id.get(cid, {}).get("name", "") if cid != "unassigned" else "Unassigned",
+                    "amount": round(g["amount"], 2),
+                    "count": g["count"],
+                    "member_count": len(g["members"]),
+                })
+            rows.sort(key=lambda r: r["amount"], reverse=True)
+        else:
+            # group_by="month" (default for time-bucket view)
+            buckets: dict = {}
+            for t in raw_items:
+                ds = (t.get("created_at") or "")[:10]
+                try:
+                    dt = _dt.fromisoformat(ds.replace("Z", ""))
+                except Exception:
+                    continue
+                if group_by == "quarter":
+                    qn = (dt.month - 1) // 3 + 1
+                    key = f"{dt.year:04d}-Q{qn}"
+                    label = key
+                elif group_by == "year":
+                    key = f"{dt.year:04d}"
+                    label = key
+                else:
+                    key = f"{dt.year:04d}-{dt.month:02d}"
+                    label = dt.strftime("%b %Y")
+                buckets.setdefault(key, {"label": label, "amount": 0.0, "count": 0})
+                buckets[key]["amount"] += t.get("amount", 0)
+                buckets[key]["count"] += 1
+            rows = [
+                {"period_label": v["label"], "period_key": k, "amount": round(v["amount"], 2), "count": v["count"]}
+                for k, v in sorted(buckets.items())
+            ]
+        return {"totals": totals, "rows": rows, "period": {"year": year, "quarter": quarter, "month": month, "from": period_from, "to": period_to}, "group_by": group_by}
+
     # ---------- Personnel Brief data helper ----------
     async def personnel_brief_data(user_id: str) -> dict:
         u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})

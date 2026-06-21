@@ -16,6 +16,27 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BE — Iteration 61: Donations report mirrors Hours report (2026-06-21)
+Made the admin Donations report structurally identical to the Hours report — same filters, same view pills, same totals strip — so the muscle memory transfers and admins can answer "how much has this member donated?" in one click.
+
+1. **Backend** (`routes/reports.py`): new `GET /reports/donations/summary` mirroring `/reports/hours/summary`.
+   - Filters: `year`, `quarter`, `month`, `chapter_id`, `cause_id`, `status_filter`.
+   - `group_by` ∈ {`member`, `chapter`, `month`, `quarter`, `year`} — sums `amount`, counts gifts.
+   - `totals` block: `completed_amount`, `pending_amount`, `refunded_amount`, `*_count`, plus `donor_count` (unique completed-donation user_ids).
+   - Chapter scope still auto-applied for chapter-scoped admins.
+2. **Frontend** (`Reports.jsx::DonationsReport`): rebuilt as a clone of `HoursReport`.
+   - **Filters**: Year (back to 2017), Period (Entire year / Q1-Q4 / Jan-Dec), Chapter, Status, Cause.
+   - **View pills**: Individual entries · By member · By chapter · By period.
+   - **Totals strip**: Completed / Donors / Pending / Refunded (only when grouped view is active, identical to Hours).
+   - **Tables**: per-view headers matching Hours conventions — "By member" exposes the at-a-glance per-donor total (`Total donated` column + `Gifts` count) sorted descending. CSV export per view.
+   - Testids: `donations-report`, `donations-filter-{year,period,chapter,status,cause}`, `donations-view-{entries,by-member,by-chapter,by-period}`, `donations-by-member-row-{user_id}`, `donations-by-chapter-row-{cid}`, `donations-by-period-row-{key}`, `donations-totals`.
+
+**Verification (iter61)**:
+- `tests/test_iteration61_donations_summary.py`: 7/7 pass — group_by=member sums + sorts desc, group_by=chapter shape, group_by=month buckets sorted ascending, totals block keys, quarter filter, month filter, non-admin 403. Plus all 6 iter59 filter tests continue to pass.
+- UI smoke: opened all 4 view pills on /admin → Reports → Donations and confirmed each renders the right header set + totals strip + filter row.
+
+
+
 ### Phase BD — Iteration 60: Donations/Causes extraction (2026-06-21)
 P1 modularization continued — the entire donations + causes block left server.py.
 

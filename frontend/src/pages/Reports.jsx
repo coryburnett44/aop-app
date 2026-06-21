@@ -477,80 +477,221 @@ function HoursReport() {
 }
 
 function DonationsReport() {
-    const [rows, setRows] = useState([]);
-    const [causes, setCauses] = useState([]);
-    const [members, setMembers] = useState([]);
+    const now = new Date();
+    const [view, setView] = useState("entries"); // entries | by_member | by_chapter | by_period
     const [chapters, setChapters] = useState([]);
-    const [filters, setFilters] = useState({ cause_id: "", status_filter: "", user_id: "", chapter_id: "", year: "" });
+    const [causes, setCauses] = useState([]);
+    const [year, setYear] = useState(now.getFullYear());
+    const [period, setPeriod] = useState("all"); // all | q1..q4 | m1..m12
+    const [chapterId, setChapterId] = useState("");
+    const [causeId, setCauseId] = useState("");
+    const [status, setStatus] = useState("");
+    const [rows, setRows] = useState([]);
+    const [summary, setSummary] = useState(null);
+
+    useEffect(() => {
+        api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
+        api.get("/causes").then(({ data }) => setCauses(data)).catch(() => {});
+    }, []);
+
+    function buildParams() {
+        const p = { year };
+        if (period.startsWith("q")) p.quarter = period.slice(1);
+        else if (period.startsWith("m")) p.month = period.slice(1);
+        if (chapterId) p.chapter_id = chapterId;
+        if (causeId) p.cause_id = causeId;
+        if (status) p.status_filter = status;
+        return p;
+    }
 
     async function run() {
-        const params = Object.fromEntries(Object.entries(filters).filter(([_, v]) => v));
-        if (params.year) params.year = Number(params.year);
-        const { data } = await api.get("/reports/donations", { params });
-        setRows(data);
+        const params = buildParams();
+        if (view === "entries") {
+            const { data } = await api.get("/reports/donations", { params });
+            setRows(data); setSummary(null);
+        } else {
+            const groupBy = view === "by_member" ? "member" : view === "by_chapter" ? "chapter" : "month";
+            const { data } = await api.get("/reports/donations/summary", { params: { ...params, group_by: groupBy } });
+            setRows(data.rows || []); setSummary(data);
+        }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
-        api.get("/causes").then(({ data }) => setCauses(data)).catch(() => {});
-        api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
-        api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
+        setRows([]);
         run();
-    }, []); // eslint-disable-line
+    }, [view, year, period, chapterId, causeId, status]);
 
     function exportCSV() {
-        downloadCSV(`donations-${new Date().toISOString().slice(0, 10)}.csv`, csvify(rows, [
-            { label: "Date", get: (t) => t.created_at?.slice(0, 10) || "" },
-            { label: "Member", get: (t) => t.user_name },
-            { label: "Amount", get: (t) => t.amount },
-            { label: "Cause", get: (t) => causeDisplay(t, causes) },
-            { label: "Status", get: (t) => t.status },
-            { label: "Note", get: (t) => t.description },
-        ]));
+        let headers;
+        const fname = `donations-${view}-${year}${period !== "all" ? "-" + period : ""}.csv`;
+        if (view === "entries") {
+            headers = [
+                { label: "Date", get: (t) => t.created_at?.slice(0, 10) || "" },
+                { label: "Member", get: (t) => t.user_name || (t.anonymous ? "Anonymous" : "") },
+                { label: "Amount", get: (t) => t.amount },
+                { label: "Cause", get: (t) => causeDisplay(t, causes) },
+                { label: "Status", get: (t) => t.status },
+                { label: "Note", get: (t) => t.description },
+            ];
+        } else if (view === "by_member") {
+            headers = [
+                { label: "Member", get: (r) => r.user_name },
+                { label: "Chapter", get: (r) => r.chapter_name || "Unassigned" },
+                { label: "Total donated", get: (r) => r.amount },
+                { label: "Gifts", get: (r) => r.count },
+            ];
+        } else if (view === "by_chapter") {
+            headers = [
+                { label: "Chapter", get: (r) => r.chapter_name },
+                { label: "Total donated", get: (r) => r.amount },
+                { label: "Gifts", get: (r) => r.count },
+                { label: "Distinct donors", get: (r) => r.member_count },
+            ];
+        } else {
+            headers = [
+                { label: "Period", get: (r) => r.period_label },
+                { label: "Total donated", get: (r) => r.amount },
+                { label: "Gifts", get: (r) => r.count },
+            ];
+        }
+        downloadCSV(fname, csvify(rows, headers));
     }
 
-    const total = rows.filter((t) => t.status === "completed").reduce((s, t) => s + (t.amount || 0), 0);
+    const years = (() => {
+        const cy = now.getFullYear();
+        const list = [];
+        for (let y = cy; y >= 2017; y--) list.push(y);
+        return list;
+    })();
+    const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const fmtMoney = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     return (
-        <div>
+        <div data-testid="donations-report">
             <div className="bg-card rounded-2xl border p-5 mb-4">
-                <div className="grid sm:grid-cols-3 gap-3">
-                    <FilterSelect label="Cause" value={filters.cause_id} onChange={(v) => setFilters({ ...filters, cause_id: v })} options={[{ value: "", label: "Any" }, ...causes.map((c) => ({ value: c.id, label: c.title }))]} testid="donations-filter-cause" />
-                    <FilterSelect label="Status" value={filters.status_filter} onChange={(v) => setFilters({ ...filters, status_filter: v })} options={[
-                        { value: "", label: "Any" }, { value: "completed", label: "Completed" }, { value: "pending", label: "Pending" }, { value: "refunded", label: "Refunded" },
-                    ]} testid="donations-filter-status" />
-                    <FilterSelect label="Member" value={filters.user_id} onChange={(v) => setFilters({ ...filters, user_id: v })} options={[{ value: "", label: "Any" }, ...members.map((m) => ({ value: m.id, label: `${m.name} — ${m.email}` }))]} testid="donations-filter-member" />
-                    <FilterSelect label="Chapter" value={filters.chapter_id} onChange={(v) => setFilters({ ...filters, chapter_id: v })} options={[{ value: "", label: "Any" }, ...chapters.map((c) => ({ value: c.id, label: c.name }))]} testid="donations-filter-chapter" />
-                    <FilterSelect label="Year" value={filters.year} onChange={(v) => setFilters({ ...filters, year: v })} options={[
-                        { value: "", label: "All years" },
-                        ...Array.from({ length: new Date().getFullYear() - 2017 + 1 }).map((_, i) => {
-                            const y = new Date().getFullYear() - i;
-                            return { value: String(y), label: String(y) };
-                        }),
-                    ]} testid="donations-filter-year" />
-                    <div className="flex items-end gap-2">
-                        <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="donations-report-run">Run</Button>
-                        <Button onClick={exportCSV} variant="outline" className="rounded-full"><Download className="h-4 w-4 mr-1.5" />CSV</Button>
+                <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
+                <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    <FilterSelect label="Year" value={String(year)} onChange={(v) => setYear(Number(v))} options={years.map((y) => ({ value: String(y), label: String(y) }))} testid="donations-filter-year" />
+                    <div>
+                        <Label className="text-xs">Period</Label>
+                        <Select value={period} onValueChange={setPeriod}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="donations-filter-period"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">Entire year</SelectItem>
+                                <SelectItem value="q1">Q1</SelectItem>
+                                <SelectItem value="q2">Q2</SelectItem>
+                                <SelectItem value="q3">Q3</SelectItem>
+                                <SelectItem value="q4">Q4</SelectItem>
+                                {MONTH_NAMES.map((mn, i) => <SelectItem key={i + 1} value={`m${i + 1}`}>{mn}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
                     </div>
+                    <FilterSelect label="Chapter" value={chapterId} onChange={setChapterId} options={[{ value: "", label: "All chapters" }, ...chapters.map((c) => ({ value: c.id, label: c.name }))]} testid="donations-filter-chapter" />
+                    <FilterSelect label="Status" value={status} onChange={setStatus} options={[
+                        { value: "", label: "Any" }, { value: "completed", label: "Completed" }, { value: "pending", label: "Pending" }, { value: "refunded", label: "Refunded" }, { value: "failed", label: "Failed" },
+                    ]} testid="donations-filter-status" />
+                    <FilterSelect label="Cause" value={causeId} onChange={setCauseId} options={[{ value: "", label: "Any" }, ...causes.map((c) => ({ value: c.id, label: c.title }))]} testid="donations-filter-cause" />
+                </div>
+                <div className="flex flex-wrap justify-end gap-2 mt-4">
+                    <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="donations-report-run">Run report</Button>
+                    <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="donations-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
                 </div>
             </div>
-            <div className="text-sm text-muted-foreground mb-2">{rows.length} donations · ${total.toFixed(2)} completed</div>
+
+            {/* View switcher */}
+            <Tabs value={view} onValueChange={setView}>
+                <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
+                    <TabsTrigger value="entries" className="rounded-full" data-testid="donations-view-entries">Individual entries</TabsTrigger>
+                    <TabsTrigger value="by_member" className="rounded-full" data-testid="donations-view-by-member">By member</TabsTrigger>
+                    <TabsTrigger value="by_chapter" className="rounded-full" data-testid="donations-view-by-chapter">By chapter</TabsTrigger>
+                    <TabsTrigger value="by_period" className="rounded-full" data-testid="donations-view-by-period">By period</TabsTrigger>
+                </TabsList>
+            </Tabs>
+
+            {/* Totals */}
+            {summary?.totals && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4" data-testid="donations-totals">
+                    <Stat label="Completed" value={fmtMoney(summary.totals.completed_amount)} />
+                    <Stat label="Donors" value={summary.totals.donor_count} />
+                    <Stat label="Pending" value={fmtMoney(summary.totals.pending_amount)} />
+                    <Stat label="Refunded" value={fmtMoney(summary.totals.refunded_amount)} />
+                </div>
+            )}
+
+            <div className="text-sm text-muted-foreground mt-4 mb-2">{rows.length} row{rows.length !== 1 ? "s" : ""}</div>
+
             <div className="bg-card rounded-2xl border overflow-x-auto">
                 <table className="w-full text-sm">
-                    <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-                        <tr><th className="text-left px-4 py-2.5">Date</th><th className="text-left px-4 py-2.5">Donor</th><th className="text-left px-4 py-2.5">Amount</th><th className="text-left px-4 py-2.5">Cause</th><th className="text-left px-4 py-2.5">Status</th></tr>
-                    </thead>
-                    <tbody>
-                        {rows.map((t) => (
-                            <tr key={t.id} className="border-t border-border" data-testid={`donations-row-${t.id}`}>
-                                <td className="px-4 py-2.5 text-muted-foreground">{t.created_at && format(parseISO(t.created_at), "MMM d, yyyy")}</td>
-                                <td className="px-4 py-2.5">{t.user_name || (t.anonymous ? "Anonymous" : "—")}</td>
-                                <td className="px-4 py-2.5 font-bold">${t.amount?.toFixed(2)}</td>
-                                <td className="px-4 py-2.5 text-muted-foreground">{causeDisplay(t, causes)}</td>
-                                <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{t.status}</td>
-                            </tr>
-                        ))}
-                        {rows.length === 0 && <tr><td colSpan={5} className="text-center text-muted-foreground py-6">No donations match these filters.</td></tr>}
-                    </tbody>
+                    {view === "entries" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr><th className="text-left px-4 py-2.5">Date</th><th className="text-left px-4 py-2.5">Donor</th><th className="text-right px-4 py-2.5">Amount</th><th className="text-left px-4 py-2.5">Cause</th><th className="text-left px-4 py-2.5">Status</th></tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((t) => (
+                                    <tr key={t.id} className="border-t border-border" data-testid={`donations-row-${t.id}`}>
+                                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{t.created_at && format(parseISO(t.created_at), "MMM d, yyyy")}</td>
+                                        <td className="px-4 py-2.5">{t.user_name || (t.anonymous ? "Anonymous" : "—")}</td>
+                                        <td className="px-4 py-2.5 text-right font-bold">{fmtMoney(t.amount)}</td>
+                                        <td className="px-4 py-2.5 text-muted-foreground">{causeDisplay(t, causes)}</td>
+                                        <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{t.status}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_member" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr><th className="text-left px-4 py-2.5">Member</th><th className="text-left px-4 py-2.5">Chapter</th><th className="text-right px-4 py-2.5">Total donated</th><th className="text-right px-4 py-2.5">Gifts</th></tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.user_id} className="border-t border-border" data-testid={`donations-by-member-row-${r.user_id}`}>
+                                        <td className="px-4 py-2.5 font-medium">{r.user_name}</td>
+                                        <td className="px-4 py-2.5 text-muted-foreground">{r.chapter_name || "Unassigned"}</td>
+                                        <td className="px-4 py-2.5 text-right font-bold">{fmtMoney(r.amount)}</td>
+                                        <td className="px-4 py-2.5 text-right text-muted-foreground">{r.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_chapter" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr><th className="text-left px-4 py-2.5">Chapter</th><th className="text-right px-4 py-2.5">Distinct donors</th><th className="text-right px-4 py-2.5">Total donated</th><th className="text-right px-4 py-2.5">Gifts</th></tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r, i) => (
+                                    <tr key={r.chapter_id || `unassigned-${i}`} className="border-t border-border" data-testid={`donations-by-chapter-row-${r.chapter_id || "unassigned"}`}>
+                                        <td className="px-4 py-2.5 font-medium">{r.chapter_name}</td>
+                                        <td className="px-4 py-2.5 text-right text-muted-foreground">{r.member_count}</td>
+                                        <td className="px-4 py-2.5 text-right font-bold">{fmtMoney(r.amount)}</td>
+                                        <td className="px-4 py-2.5 text-right text-muted-foreground">{r.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_period" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr><th className="text-left px-4 py-2.5">Period</th><th className="text-right px-4 py-2.5">Total donated</th><th className="text-right px-4 py-2.5">Gifts</th></tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.period_key} className="border-t border-border" data-testid={`donations-by-period-row-${r.period_key}`}>
+                                        <td className="px-4 py-2.5 font-medium">{r.period_label}</td>
+                                        <td className="px-4 py-2.5 text-right font-bold">{fmtMoney(r.amount)}</td>
+                                        <td className="px-4 py-2.5 text-right text-muted-foreground">{r.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
                 </table>
+                {rows.length === 0 && <div className="p-6 text-center text-sm text-muted-foreground">No donations match these filters.</div>}
             </div>
         </div>
     );
