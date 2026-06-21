@@ -334,7 +334,12 @@ function HoursReport() {
         downloadCSV(fname, csvify(rows, headers));
     }
 
-    const years = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2, now.getFullYear() - 3, now.getFullYear() - 4];
+    const years = (() => {
+        const cy = now.getFullYear();
+        const list = [];
+        for (let y = cy; y >= 2017; y--) list.push(y);
+        return list;
+    })();
     const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
     return (
@@ -1329,7 +1334,7 @@ function AwardGrantsTable() {
                         <SelectTrigger className="rounded-full h-9 w-32 text-sm" data-testid="awards-grants-year"><SelectValue placeholder="All years" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="_all">All years</SelectItem>
-                            {Array.from({ length: 6 }).map((_, i) => {
+                            {Array.from({ length: new Date().getFullYear() - 2017 + 1 }).map((_, i) => {
                                 const y = new Date().getFullYear() - i;
                                 return <SelectItem key={y} value={String(y)}>{y}</SelectItem>;
                             })}
@@ -1432,7 +1437,7 @@ function OfTheYearTable() {
                         <SelectTrigger className="rounded-full h-9 w-32 text-sm" data-testid="oty-year"><SelectValue /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="_all">All years</SelectItem>
-                            {Array.from({ length: 6 }).map((_, i) => {
+                            {Array.from({ length: new Date().getFullYear() - 2017 + 1 }).map((_, i) => {
                                 const y = new Date().getFullYear() - i;
                                 return <SelectItem key={y} value={String(y)}>{y}</SelectItem>;
                             })}
