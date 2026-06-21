@@ -16,6 +16,25 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AY — Iteration 55: Chat extraction (REST + WebSocket) (2026-06-21)
+P1 modularization continued — the entire chat block left server.py.
+
+1. **`/app/backend/routes/chat.py`** (new, 486 lines) owns:
+   - `ChatHub` real-time fan-out class + the module-level singleton `chat_hub`.
+   - REST endpoints: `GET/POST /conversations`, `GET/PUT/DELETE /conversations/{cid}`, `POST /conversations/{cid}/leave`, `POST /conversations/{cid}/read`, `GET/POST /conversations/{cid}/messages`, `DELETE /messages/{mid}`, `POST /chat/upload`.
+   - WebSocket: `@app.websocket("/api/ws/chat")` — JWT cookie auth, ping/pong keep-alive, push-only server→client.
+   - Pydantic models: `ConversationCreateIn`, `ConversationUpdateIn`, `MessageIn`.
+   - Helpers: `conversation_out`, `message_out`, `_is_message_expired`, `_user_brief`, `_ttl_choice_to_seconds`.
+
+2. **`server.py`** lost ~450 lines (6756 → 6323). The old chat block was replaced with a 9-line stub that just imports `chat_hub` from `routes.chat` so the chat-email-digest service (still in server.py) can keep checking who's connected. Registration at the bottom of server.py threads `queue_chat_notifications`, `jwt_secret`, `put_object`, `IMAGE_EXT`, `MIME_BY_EXT`, and `logger` into `routes_chat.register(api, app, ...)`.
+
+**Verification (iter55)**:
+- 50/50 pytest pass across iter51-54 regression suites — no regressions.
+- Curl smoke: `GET /conversations` (3 returned), `POST /conversations` (DM created), `POST /messages` (delivered), `GET /messages` (last body matches `"iter55 smoke test"`), `POST /read` (ok), `DELETE /conversations` (ok), follow-up `GET` returns 404.
+- WebSocket smoke (`wss://…/api/ws/chat`): cookie-auth succeeded, server sent `{"type":"connected","user_id":"…"}`, ping → pong roundtrip OK.
+
+
+
 ### Phase AX — Iteration 54: Admin full-edit of submitted hours (2026-06-21)
 Admins now have a complete edit surface for every field on an existing volunteer-hours record — not just the hours value.
 
