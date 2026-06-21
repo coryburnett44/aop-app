@@ -16,6 +16,31 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BI — Iteration 65/66: Email drafts, per-template test send, failure surfaces (2026-06-21)
+Three admin productivity wins on the Email tab, plus a critical 422-crash defense.
+
+1. **Per-template "Send test to me" button** (Admin → Email → Templates)
+   - Every template card now has a `Send test to me` button (`template-test-send-<id>`) that fires `POST /api/email/test-send` with just the `template_id`. Backend `EmailTestSendIn.to_email` is now `Optional[str]` and falls back to the calling admin's email address — so one click confirms the template renders in inbox before a real blast.
+   - Built-in templates display a "Built-in" badge next to the name.
+
+2. **Draft auto-save + manual saves** (Admin → Email → Compose)
+   - New collection `email_drafts` (private per admin) with CRUD endpoints `GET/POST/PUT/DELETE /api/email/drafts`.
+   - Auto-save: every subject/body/segment/tier/individual change triggers a 2-second debounced upsert to a single per-admin auto-save slot (`is_autosave=true`). The `visibilitychange`, `beforeunload`, and `pagehide` events also force an immediate flush — switching tabs, closing the window, or accidentally clicking another tab never loses work.
+   - Manual saves: `Save as draft` button prompts for a name and creates a separate named draft. The Drafts toolbar shows a Load picker (auto-save + named drafts) and a destructive-coloured Delete picker (named drafts only). Auto-save status indicator displays "Saved at HH:MM" / "Saving…" / "Save failed".
+
+3. **Failed-recipient visibility** (Admin → Email → History)
+   - Each historical blast with `failed_count > 0` now shows the count as a clickable destructive-coloured button. Clicking expands the row to show every failed recipient's email + reason, plus a `Copy N emails` button that puts a comma-separated list on the clipboard for one-click pasting elsewhere.
+   - New endpoint `GET /api/email/blasts/{id}/failed` exposes the full failed list.
+   - New "Password-setup link failures" section below the blast table — sourced from `db.password_setup_attempts` (newly written by both `/api/admin/members/{id}/resend-set-password` and `/api/admin/members/bulk-resend-set-password`). Shows attempted timestamp, member name, email, reason, attempting admin (mode=single|bulk) for last 90 days. Includes Copy + Refresh buttons.
+
+4. **Critical bug fixed mid-iteration (iter66)**: Initial implementation of (1) crashed the Admin page with `Objects are not valid as a React child` when backend returned a 422 validation error (FastAPI returns `detail` as an array of objects). Two-pronged fix:
+   - Backend: `EmailTestSendIn.to_email` made `Optional[str] = None` with admin-email fallback — the omitted-to_email path now returns 200.
+   - Frontend: Admin.jsx imports `formatApiError` from `lib/api.js` and coerces all `detail` values to string before passing to `toast.error`.
+
+5. **Regression**: `/app/backend/tests/test_iteration65_drafts_failures.py` (9 tests covering drafts CRUD + auto-save upsert + ownership + blast failed list + password-setup-failures + test-send with/without to_email). All 18 iter64+65 tests pass.
+
+
+
 ### Phase BH — Iteration 64: Email Blast Composer overhaul (2026-06-21)
 Three improvements for admin email blasts: resizable images, reliable email rendering, and pre-built templates.
 
