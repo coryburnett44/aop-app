@@ -2400,7 +2400,8 @@ function CausesAdmin() {
     }
     return (
         <div>
-            <div className="flex justify-end mb-4">
+            <div className="flex justify-end gap-2 mb-4 flex-wrap">
+                <DonationsCsvImportDialog onImported={load} />
                 <CauseDialog onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-cause-btn"><Plus className="h-4 w-4 mr-1" />New cause</Button>} />
             </div>
             <div className="grid md:grid-cols-2 gap-4">
@@ -3140,5 +3141,160 @@ function BlastHistory() {
                 </tbody>
             </table>
         </div>
+    );
+}
+
+
+/**
+ * Bulk-import donation transactions via CSV. Mirrors the Hours CSV importer:
+ * pick a file → automatic dry-run preview with row-by-row READY/ERROR pills →
+ * Confirm to write. Errors quote the row number + the offending message so
+ * the admin can fix and re-upload without leaving the dialog.
+ */
+function DonationsCsvImportDialog({ onImported }) {
+    const [open, setOpen] = useState(false);
+    const [file, setFile] = useState(null);
+    const [preview, setPreview] = useState(null);
+    const [busy, setBusy] = useState(false);
+
+    function reset() {
+        setFile(null);
+        setPreview(null);
+    }
+
+    async function downloadTemplate() {
+        try {
+            const { data } = await api.get("/donations/admin/csv/template", { responseType: "blob" });
+            const url = URL.createObjectURL(new Blob([data], { type: "text/csv" }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "donations_template.csv";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Template download failed");
+        }
+    }
+
+    async function runDryRun(f) {
+        setBusy(true);
+        try {
+            const fd = new FormData();
+            fd.append("file", f);
+            const { data } = await api.post("/donations/admin/csv?dry_run=true", fd, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+            setPreview(data);
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "CSV preview failed");
+            setPreview(null);
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function confirmImport() {
+        if (!file) return;
+        setBusy(true);
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            const { data } = await api.post("/donations/admin/csv?dry_run=false", fd, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+            toast.success(`${data.created} donation${data.created === 1 ? "" : "s"} imported`);
+            setOpen(false);
+            reset();
+            onImported && onImported();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Import failed");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+            <DialogTrigger asChild>
+                <Button variant="outline" className="rounded-full" data-testid="donations-csv-btn">
+                    <Upload className="h-4 w-4 mr-1" />Bulk import donations
+                </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto" data-testid="donations-csv-dialog">
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl">Bulk import donations</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 mt-2">
+                    <div className="rounded-xl bg-muted/40 p-3 text-sm space-y-1">
+                        <div><strong>CSV columns:</strong> <code className="bg-background px-1.5 py-0.5 rounded">member_email, amount, cause, date, note, anonymous, method</code></div>
+                        <div className="text-xs text-muted-foreground">
+                            <code>cause</code> must match an existing cause title (case-insensitive); blank means unallocated. <code>date</code> accepts YYYY-MM-DD, MM/DD/YYYY, M/D/YY, or 15-Jun-2026. <code>anonymous</code> = true/false (default false).
+                        </div>
+                        <button type="button" onClick={downloadTemplate} className="text-primary font-semibold hover:underline text-xs" data-testid="donations-csv-template-btn">
+                            ⬇ Download CSV template
+                        </button>
+                    </div>
+
+                    {!preview && (
+                        <label className="rounded-xl border-2 border-dashed border-slate-300 px-4 py-6 text-sm font-semibold cursor-pointer hover:bg-white hover:border-primary transition-colors flex items-center gap-2 justify-center" data-testid="donations-csv-file-btn">
+                            <Upload className="h-4 w-4" />{file ? file.name : "Choose CSV file"}
+                            <input
+                                type="file"
+                                accept=".csv,text/csv"
+                                className="hidden"
+                                onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) {
+                                        setFile(f);
+                                        runDryRun(f);
+                                    }
+                                }}
+                            />
+                        </label>
+                    )}
+
+                    {busy && !preview && <div className="text-sm text-muted-foreground">Analyzing…</div>}
+
+                    {preview && (
+                        <div className="space-y-2" data-testid="donations-csv-preview">
+                            <div className="flex items-center justify-between text-sm">
+                                <div>
+                                    <strong>{preview.total}</strong> rows · <span className="text-emerald-700">{preview.total - preview.failed} ready</span>{preview.failed > 0 && <span className="text-destructive"> · {preview.failed} errors</span>}
+                                </div>
+                                <button type="button" onClick={reset} className="text-xs text-primary hover:underline font-semibold" data-testid="donations-csv-reset">
+                                    Choose a different file
+                                </button>
+                            </div>
+                            <div className="max-h-72 overflow-y-auto rounded-xl border border-border bg-card divide-y divide-border">
+                                {preview.rows.map((r) => (
+                                    <div key={r.row} className="px-3 py-2 text-xs flex items-start gap-2" data-testid={`donations-csv-row-${r.row}`}>
+                                        <span className={`uppercase tracking-wider font-bold rounded-full px-2 py-0.5 text-[10px] shrink-0 ${r.status === "READY" ? "bg-emerald-100 text-emerald-700" : "bg-destructive/15 text-destructive"}`}>{r.status}</span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-semibold">Row {r.row} · {r.member_email || "(no email)"} · ${r.amount_raw || "0"}{r.cause_title ? ` · ${r.cause_title}` : ""}</div>
+                                            {r.errors.length > 0 && (
+                                                <div className="text-destructive">{r.errors.join("; ")}</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+                <div className="flex justify-end gap-2 mt-4">
+                    <Button variant="outline" onClick={() => { setOpen(false); reset(); }} className="rounded-full">Cancel</Button>
+                    <Button
+                        onClick={confirmImport}
+                        disabled={busy || !preview || preview.total === preview.failed}
+                        className="rounded-full bg-primary hover:bg-primary/90"
+                        data-testid="donations-csv-confirm"
+                    >
+                        {busy ? "Importing…" : preview ? `Import ${preview.total - preview.failed} donation${(preview.total - preview.failed) === 1 ? "" : "s"}` : "Import"}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }

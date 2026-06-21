@@ -16,6 +16,24 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase AZ — Iteration 56: Bulk donations CSV + Top Donors leaderboard (2026-06-21)
+Two coordinated changes around donations:
+
+1. **Bulk CSV upload for donations** (admin):
+   - `GET /api/donations/admin/csv/template` — returns a 7-column CSV (`member_email, amount, cause, date, note, anonymous, method`) with a sample row.
+   - `POST /api/donations/admin/csv?dry_run=true|false` — parses uploads, resolves email→user and cause-title→cause_id (case-insensitive), validates each row, and returns a row-by-row preview with READY/ERROR pills. On confirm, writes `db.transactions` records (status=completed, type=donation, anonymous flag respected) and refreshes raised_amount/donor_count on every touched cause. Date column accepts the same flexible formats as the hours CSV (YYYY-MM-DD, MM/DD/YYYY, M/D/YY, 15-Jun-2026).
+   - Admin UI: new "Bulk import donations" button next to "New cause" on the Causes tab, opening a dialog with template download + file picker + dry-run preview + confirm. Testids: `donations-csv-btn`, `donations-csv-dialog`, `donations-csv-template-btn`, `donations-csv-file-btn`, `donations-csv-preview`, `donations-csv-row-{N}`, `donations-csv-confirm`.
+
+2. **Top Donors Leaderboard** on the home page:
+   - New `GET /api/leaderboards/top-donors?period={quarter|month|year|all}` aggregates completed donations by user_id and by chapter_id ($lookup), returning top-5 chapters and top-5 members with `amount` (sum) and `count` (gift count). Anonymous donations are excluded from the member board (privacy) but still counted in chapter totals.
+   - New `<TopDonorsLeaderboard />` component on `/` rendered immediately below `CommunityServiceLeaderboard` under the same `showSection("leaderboard")` gate. Mirrors the community-service board's visual rhythm (gold/silver/bronze rank discs, avatar, member·chapter subtitle, rank rows in a single column) but in dollars. Two pill tabs to swap between Top Chapters and Top Members. Testids: `home-top-donors`, `top-donors-tab-chapters`, `top-donors-tab-members`, `top-donors-chapter-{id}`, `top-donors-member-{id}`.
+
+**Verification (iter56)**:
+- `tests/test_iteration56_donations_csv.py`: 7/7 pass — template header sanity, non-admin 403, dry-run never writes, real-import writes only the valid rows (1/5 in the test fixture, the other 4 ERROR with the right messages), leaderboard returns the expected shape, anonymous donations omitted from member board, quarter period label looks like `Qn YYYY`.
+- UI smoke: Home `/` shows the new "Top Donors Leader Board · Q2 2026" section with Maya Patel $250 and Riley Chen $150 stacked under gold/silver discs. Admin Causes tab renders the new "Bulk import donations" button and the dialog opens with the right column hints + template link + file chooser.
+
+
+
 ### Phase AY — Iteration 55: Chat extraction (REST + WebSocket) (2026-06-21)
 P1 modularization continued — the entire chat block left server.py.
 
