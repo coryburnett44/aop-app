@@ -16,6 +16,30 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BD — Iteration 60: Donations/Causes extraction (2026-06-21)
+P1 modularization continued — the entire donations + causes block left server.py.
+
+1. **`/app/backend/routes/donations.py`** (new, 475 lines) owns:
+   - Pydantic models: `CauseIn`, `CauseUpdateIn`, `PledgeIn`.
+   - Helpers: `cause_out` (serializer), `recompute_cause_totals` (cause totals refresher).
+   - REST endpoints: `GET /causes`, `GET /causes/{id}`, `POST /causes`, `PUT /causes/{id}`, `DELETE /causes/{id}`, `POST /causes/{id}/pledge`, `GET /causes/{id}/donations`, `GET /donations/admin/csv/template`, `POST /donations/admin/csv`, `GET /leaderboards/top-donors`.
+   - `re.escape` is used for the email regex match (replacing the previous `_re_escape_local` shim in server.py).
+2. **`server.py`** shrank ~430 lines (6648 → 6220). The old block is replaced by a 4-line stub that re-exports `recompute_cause_totals` and `cause_out` so the PayPal capture flow (still in server.py at line 4105) can keep importing them via the same import path. Registration threads `admin_tab_dep`, `is_chapter_scoped`, and `chapter_scope_user_ids` into `routes_donations.register(api, …)`.
+
+**Verification (iter60)**:
+- 50/50 pytest pass across iter52, iter53, iter54, iter56, iter57, iter59 regression suites — no regressions.
+- Curl smoke: `GET /causes` (3 causes), `GET /leaderboards/top-donors` (responds with proper period_label/empty lists since prior test data was cleaned up), `GET /donations/admin/csv/template` (returns canonical header).
+
+### server.py size progression
+- iter51 end: 6912 lines
+- iter53 (gear extraction): 6755 (−157)
+- iter55 (chat extraction): 6323 (−432)
+- **iter60 (donations extraction): 6220 (−103)**
+
+Remaining sizable extraction targets: chat email digest service (~210 lines, lines ~4900–5100), automated email cron + scheduler, and the ~150-line ICS/calendar block.
+
+
+
 ### Phase BC — Iteration 59: Donations filter parity with hours + member year filter (2026-06-21)
 Closed the loop on donation visibility — admins can now slice donations by the same axes as volunteer hours, members can scope their receipts to any single year.
 
