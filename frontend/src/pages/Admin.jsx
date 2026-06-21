@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api, mediaUrl } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
@@ -2785,6 +2785,10 @@ function ComposeBlast() {
     const [signatures, setSignatures] = useState([]);
     const [preview, setPreview] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [drafts, setDrafts] = useState([]);
+    const [draftStatus, setDraftStatus] = useState(""); // "saving" | "saved <time>" | ""
+    const dirtyRef = React.useRef(false);
+    const autosaveTimer = React.useRef(null);
 
     useEffect(() => {
         api.get("/tiers").then(({ data }) => setTiers(data)).catch(() => {});
@@ -2792,7 +2796,105 @@ function ComposeBlast() {
         api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
         api.get("/email/templates").then(({ data }) => setTemplates(data)).catch(() => {});
         api.get("/email/signatures").then(({ data }) => setSignatures(data)).catch(() => {});
+        loadDrafts();
     }, []);
+
+    function loadDrafts() {
+        return api.get("/email/drafts").then(({ data }) => setDrafts(data || [])).catch(() => setDrafts([]));
+    }
+
+    function buildDraftPayload(extra = {}) {
+        return {
+            name: "",
+            subject,
+            body_html,
+            segment: segment === "individual" ? "custom" : segment,
+            tier_id: tier_id || undefined,
+            chapter_id: chapter_id || undefined,
+            custom_user_ids: segment === "individual" && individualId ? [individualId] : [],
+            is_autosave: true,
+            ...extra,
+        };
+    }
+
+    // Auto-save: debounced 2s after the last change. Also flushes immediately
+    // when the tab is hidden or the window is about to unload, so accidentally
+    // clicking away or closing the tab never loses work.
+    async function flushAutosave() {
+        if (!dirtyRef.current) return;
+        if (!subject && !body_html) return;
+        setDraftStatus("saving");
+        try {
+            await api.post("/email/drafts", buildDraftPayload());
+            const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+            setDraftStatus(`Saved at ${stamp}`);
+            dirtyRef.current = false;
+            loadDrafts();
+        } catch {
+            setDraftStatus("Save failed — your changes are still in the browser");
+        }
+    }
+
+    useEffect(() => {
+        dirtyRef.current = true;
+        if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+        autosaveTimer.current = setTimeout(flushAutosave, 2000);
+        return () => clearTimeout(autosaveTimer.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [subject, body_html, segment, tier_id, chapter_id, individualId]);
+
+    useEffect(() => {
+        const onVis = () => { if (document.visibilityState === "hidden") flushAutosave(); };
+        const onBeforeUnload = () => { flushAutosave(); };
+        document.addEventListener("visibilitychange", onVis);
+        window.addEventListener("beforeunload", onBeforeUnload);
+        window.addEventListener("pagehide", onBeforeUnload);
+        return () => {
+            document.removeEventListener("visibilitychange", onVis);
+            window.removeEventListener("beforeunload", onBeforeUnload);
+            window.removeEventListener("pagehide", onBeforeUnload);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [subject, body_html, segment, tier_id, chapter_id, individualId]);
+
+    function loadDraft(did) {
+        const d = drafts.find((x) => x.id === did);
+        if (!d) return;
+        setSubject(d.subject || "");
+        setBody(d.body_html || "");
+        if (d.custom_user_ids?.length) {
+            setSegment("individual");
+            setIndividualId(d.custom_user_ids[0]);
+        } else {
+            setSegment(d.segment || "active");
+        }
+        setTierId(d.tier_id || "");
+        setChapterId(d.chapter_id || "");
+        dirtyRef.current = false;
+        toast.success(d.is_autosave ? "Restored auto-saved draft" : `Loaded draft "${d.name}"`);
+    }
+
+    async function saveNamedDraft() {
+        const name = window.prompt("Name this draft (e.g. 'Spring Newsletter v2')");
+        if (!name || !name.trim()) return;
+        try {
+            await api.post("/email/drafts", buildDraftPayload({ name: name.trim(), is_autosave: false }));
+            toast.success(`Draft "${name.trim()}" saved`);
+            loadDrafts();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Save failed");
+        }
+    }
+
+    async function deleteDraft(did) {
+        if (!confirm("Delete this draft?")) return;
+        try {
+            await api.delete(`/email/drafts/${did}`);
+            toast.success("Draft deleted");
+            loadDrafts();
+        } catch (e) { toast.error(e.response?.data?.detail || "Delete failed"); }
+    }
+
 
     function applyTemplate(tid) {
         const t = templates.find((x) => x.id === tid);
@@ -2843,6 +2945,42 @@ function ComposeBlast() {
     return (
         <div className="grid lg:grid-cols-[1fr_400px] gap-6">
             <div className="bg-card rounded-2xl border border-border p-6 space-y-4 shadow-warm">
+                <div className="flex flex-wrap items-center gap-2 -mt-1 pb-3 border-b border-border" data-testid="drafts-toolbar">
+                    <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mr-1">Drafts</div>
+                    {drafts.length > 0 && (
+                        <Select value="" onValueChange={loadDraft}>
+                            <SelectTrigger className="rounded-full h-8 w-auto min-w-[180px] text-xs px-3" data-testid="drafts-picker">
+                                <SelectValue placeholder={`Load draft (${drafts.length})…`} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {drafts.map((d) => (
+                                    <SelectItem key={d.id} value={d.id}>
+                                        {d.is_autosave ? "↻ Auto-saved" : (d.name || "Untitled")}
+                                        {d.subject ? ` — ${d.subject.slice(0, 40)}` : ""}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    )}
+                    <Button type="button" variant="outline" size="sm" className="rounded-full h-8 text-xs" onClick={saveNamedDraft} data-testid="save-draft-btn">
+                        Save as draft
+                    </Button>
+                    {drafts.some((d) => !d.is_autosave) && (
+                        <Select value="" onValueChange={deleteDraft}>
+                            <SelectTrigger className="rounded-full h-8 w-auto min-w-[110px] text-xs px-3 border-destructive/40 text-destructive" data-testid="delete-draft-picker">
+                                <SelectValue placeholder="Delete draft…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {drafts.filter((d) => !d.is_autosave).map((d) => (
+                                    <SelectItem key={d.id} value={d.id}>{d.name || "Untitled"}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    )}
+                    {draftStatus && (
+                        <span className="text-xs text-muted-foreground ml-auto" data-testid="draft-status">{draftStatus}</span>
+                    )}
+                </div>
                 <div className="grid sm:grid-cols-2 gap-3">
                     {templates.length > 0 && (
                         <div>
@@ -2974,12 +3112,25 @@ const officialOnly = (c) => OFFICIAL_CHAPTER_NAMES.includes(c.name);
 
 function EmailTemplates() {
     const [items, setItems] = useState([]);
+    const [testingId, setTestingId] = useState("");
     const load = () => api.get("/email/templates").then(({ data }) => setItems(data));
     useEffect(() => { load(); }, []);
     async function del(id) {
         if (!confirm("Delete this template?")) return;
         await api.delete(`/email/templates/${id}`);
         load();
+    }
+    async function sendTestToMe(t) {
+        setTestingId(t.id);
+        try {
+            const { data } = await api.post("/email/test-send", { template_id: t.id });
+            if (data.ok) toast.success(`Test "${t.name}" sent to ${data.to || "you"} — check your inbox`);
+            else toast.error(`Resend rejected: ${data.detail || "unknown error"}`, { duration: 10000 });
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Test send failed");
+        } finally {
+            setTestingId("");
+        }
     }
     return (
         <div>
@@ -2991,7 +3142,10 @@ function EmailTemplates() {
                     <div key={t.id} className="bg-card border border-border rounded-2xl p-5" data-testid={`template-${t.id}`}>
                         <div className="flex items-start justify-between">
                             <div>
-                                <div className="font-heading font-semibold text-lg">{t.name}</div>
+                                <div className="font-heading font-semibold text-lg flex items-center gap-2">
+                                    {t.name}
+                                    {t.is_builtin && <span className="text-[10px] uppercase tracking-wider font-bold bg-primary/10 text-primary rounded-full px-2 py-0.5">Built-in</span>}
+                                </div>
                                 <div className="text-xs text-muted-foreground mt-1">{t.subject}</div>
                             </div>
                             <div className="flex gap-1">
@@ -3000,6 +3154,19 @@ function EmailTemplates() {
                             </div>
                         </div>
                         {t.description && <p className="text-sm text-muted-foreground mt-2">{t.description}</p>}
+                        <div className="mt-3 flex justify-end">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-full text-xs"
+                                onClick={() => sendTestToMe(t)}
+                                disabled={testingId === t.id}
+                                data-testid={`template-test-send-${t.id}`}
+                            >
+                                <Send className="h-3.5 w-3.5 mr-1.5" />
+                                {testingId === t.id ? "Sending…" : "Send test to me"}
+                            </Button>
+                        </div>
                     </div>
                 ))}
                 {items.length === 0 && <div className="col-span-full text-muted-foreground text-center py-8">No templates yet. Create reusable email layouts.</div>}
@@ -3156,27 +3323,182 @@ function SignatureDialog({ signature, kind, onSaved, trigger }) {
 
 function BlastHistory() {
     const [items, setItems] = useState([]);
+    const [openId, setOpenId] = useState("");
+    const [failedDetails, setFailedDetails] = useState({});
     useEffect(() => { api.get("/email/blasts").then(({ data }) => setItems(data)).catch(() => {}); }, []);
+
+    async function toggleFailed(bid) {
+        if (openId === bid) { setOpenId(""); return; }
+        setOpenId(bid);
+        if (!failedDetails[bid]) {
+            try {
+                const { data } = await api.get(`/email/blasts/${bid}/failed`);
+                setFailedDetails((m) => ({ ...m, [bid]: data }));
+            } catch {
+                setFailedDetails((m) => ({ ...m, [bid]: { failed: [], failed_count: 0 } }));
+            }
+        }
+    }
+
+    function copyEmails(emails) {
+        const text = emails.join(", ");
+        navigator.clipboard.writeText(text).then(
+            () => toast.success(`Copied ${emails.length} address${emails.length === 1 ? "" : "es"} to clipboard`),
+            () => toast.error("Copy failed"),
+        );
+    }
+
     return (
-        <div className="bg-card rounded-2xl border overflow-x-auto">
-            <table className="w-full text-sm">
-                <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-                    <tr><th className="text-left px-4 py-2.5">Sent</th><th className="text-left px-4 py-2.5">Subject</th><th className="text-left px-4 py-2.5">Segment</th><th className="text-left px-4 py-2.5">Sent</th><th className="text-left px-4 py-2.5">Failed</th><th className="text-left px-4 py-2.5">Opens</th></tr>
-                </thead>
-                <tbody>
-                    {items.map((b) => (
-                        <tr key={b.id} className="border-t border-border" data-testid={`blast-${b.id}`}>
-                            <td className="px-4 py-2.5 text-muted-foreground">{b.sent_at && format(parseISO(b.sent_at), "MMM d, yyyy h:mm a")}</td>
-                            <td className="px-4 py-2.5 font-medium">{b.subject}</td>
-                            <td className="px-4 py-2.5 text-xs">{b.segment}{b.test_only ? " · test" : ""}</td>
-                            <td className="px-4 py-2.5">{b.sent_count}</td>
-                            <td className="px-4 py-2.5">{b.failed_count || 0}</td>
-                            <td className="px-4 py-2.5">{b.opens || 0}</td>
+        <div className="space-y-8">
+            <div>
+                <h3 className="font-heading text-xl font-bold mb-3">Blast history</h3>
+                <div className="bg-card rounded-2xl border overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                            <tr>
+                                <th className="text-left px-4 py-2.5">Sent</th>
+                                <th className="text-left px-4 py-2.5">Subject</th>
+                                <th className="text-left px-4 py-2.5">Segment</th>
+                                <th className="text-left px-4 py-2.5">Sent</th>
+                                <th className="text-left px-4 py-2.5">Failed</th>
+                                <th className="text-left px-4 py-2.5">Opens</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((b) => {
+                                const open = openId === b.id;
+                                const det = failedDetails[b.id];
+                                const failedList = det?.failed || [];
+                                return (
+                                    <React.Fragment key={b.id}>
+                                        <tr className="border-t border-border" data-testid={`blast-${b.id}`}>
+                                            <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{b.sent_at && format(parseISO(b.sent_at), "MMM d, yyyy h:mm a")}</td>
+                                            <td className="px-4 py-2.5 font-medium">{b.subject}</td>
+                                            <td className="px-4 py-2.5 text-xs">{b.segment}{b.test_only ? " · test" : ""}</td>
+                                            <td className="px-4 py-2.5">{b.sent_count}</td>
+                                            <td className="px-4 py-2.5">
+                                                {(b.failed_count || 0) > 0 ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleFailed(b.id)}
+                                                        className="text-destructive font-semibold underline-offset-2 hover:underline"
+                                                        data-testid={`blast-failed-toggle-${b.id}`}
+                                                    >
+                                                        {b.failed_count} {open ? "▾" : "▸"}
+                                                    </button>
+                                                ) : (
+                                                    <span className="text-muted-foreground">0</span>
+                                                )}
+                                            </td>
+                                            <td className="px-4 py-2.5">{b.opens || 0}</td>
+                                        </tr>
+                                        {open && (
+                                            <tr className="bg-red-50/50" data-testid={`blast-failed-detail-${b.id}`}>
+                                                <td colSpan={6} className="px-4 py-3">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <div className="text-xs font-bold uppercase tracking-wider text-destructive">Failed recipients — needs attention</div>
+                                                        {failedList.length > 0 && (
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="rounded-full h-7 text-xs"
+                                                                onClick={() => copyEmails(failedList.map((f) => f.email).filter(Boolean))}
+                                                                data-testid={`blast-copy-failed-${b.id}`}
+                                                            >
+                                                                Copy {failedList.filter((f) => f.email).length} emails
+                                                            </Button>
+                                                        )}
+                                                    </div>
+                                                    {failedList.length === 0 && <div className="text-sm text-muted-foreground">Loading…</div>}
+                                                    {failedList.length > 0 && (
+                                                        <ul className="space-y-1 text-sm">
+                                                            {failedList.map((f, i) => (
+                                                                <li key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                                                    <span className="font-mono text-xs">{f.email || <em className="text-muted-foreground">(no email)</em>}</span>
+                                                                    {f.reason && <span className="text-xs text-muted-foreground">— {f.reason}</span>}
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </React.Fragment>
+                                );
+                            })}
+                            {items.length === 0 && <tr><td colSpan={6} className="text-center text-muted-foreground py-6">No blasts yet.</td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <PasswordSetupFailures />
+        </div>
+    );
+}
+
+function PasswordSetupFailures() {
+    const [items, setItems] = useState([]);
+    const [loading, setLoading] = useState(true);
+    function load() {
+        setLoading(true);
+        api.get("/email/password-setup-failures")
+            .then(({ data }) => setItems(data || []))
+            .catch(() => setItems([]))
+            .finally(() => setLoading(false));
+    }
+    useEffect(() => { load(); }, []);
+
+    function copyAll() {
+        const emails = items.map((i) => i.email).filter(Boolean);
+        if (!emails.length) return;
+        navigator.clipboard.writeText(emails.join(", ")).then(
+            () => toast.success(`Copied ${emails.length} address${emails.length === 1 ? "" : "es"}`),
+            () => toast.error("Copy failed"),
+        );
+    }
+
+    return (
+        <div data-testid="password-setup-failures">
+            <div className="flex items-center justify-between mb-3">
+                <div>
+                    <h3 className="font-heading text-xl font-bold">Password-setup link failures</h3>
+                    <p className="text-xs text-muted-foreground">Members whose set-password / welcome email could not be delivered in the last 90 days. Re-send manually from the Members tab once you've corrected their address.</p>
+                </div>
+                <div className="flex gap-2">
+                    {items.length > 0 && (
+                        <Button variant="outline" size="sm" className="rounded-full text-xs" onClick={copyAll} data-testid="copy-setup-failures-btn">
+                            Copy {items.length} emails
+                        </Button>
+                    )}
+                    <Button variant="ghost" size="sm" className="rounded-full text-xs" onClick={load} data-testid="refresh-setup-failures-btn">Refresh</Button>
+                </div>
+            </div>
+            <div className="bg-card rounded-2xl border overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                            <th className="text-left px-4 py-2.5">Attempted</th>
+                            <th className="text-left px-4 py-2.5">Member</th>
+                            <th className="text-left px-4 py-2.5">Email</th>
+                            <th className="text-left px-4 py-2.5">Reason</th>
+                            <th className="text-left px-4 py-2.5">By</th>
                         </tr>
-                    ))}
-                    {items.length === 0 && <tr><td colSpan={6} className="text-center text-muted-foreground py-6">No blasts yet.</td></tr>}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {loading && <tr><td colSpan={5} className="text-center text-muted-foreground py-6">Loading…</td></tr>}
+                        {!loading && items.length === 0 && <tr><td colSpan={5} className="text-center text-muted-foreground py-6">No failures in the last 90 days — onboarding emails are landing cleanly.</td></tr>}
+                        {!loading && items.map((it) => (
+                            <tr key={it.id} className="border-t border-border" data-testid={`setup-failure-${it.id}`}>
+                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{it.attempted_at && format(parseISO(it.attempted_at), "MMM d, yyyy h:mm a")}</td>
+                                <td className="px-4 py-2.5">{it.user_name || <em className="text-muted-foreground">unknown</em>}</td>
+                                <td className="px-4 py-2.5 font-mono text-xs">{it.email || <em className="text-muted-foreground">(no email)</em>}</td>
+                                <td className="px-4 py-2.5 text-xs text-muted-foreground">{it.reason || "—"}</td>
+                                <td className="px-4 py-2.5 text-xs text-muted-foreground">{it.admin_name || "—"}{it.mode === "bulk" ? " · bulk" : ""}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }

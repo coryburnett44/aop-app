@@ -952,6 +952,20 @@ async def admin_resend_set_password(user_id: str, admin: dict = Depends(admin_ta
     name = user.get("name") or user.get("first_name") or user.get("email")
     sent = await _send_set_password_email(user["email"], name, token)
     logger.info(f"[resend-set-password] admin={admin.get('email')} user={user.get('email')} sent={sent}")
+    # Log the attempt so the Email → History tab can surface failures
+    await db.password_setup_attempts.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "user_name": user.get("name", ""),
+        "email": user["email"],
+        "ok": bool(sent),
+        "reason": "" if sent else "Resend API rejected or no API key configured",
+        "mode": "single",
+        "admin_id": admin.get("id"),
+        "admin_name": admin.get("name", ""),
+        "attempted_at": iso(now),
+        "attempted_at_dt": now,
+    })
     return {"ok": True, "sent": bool(sent), "email": user["email"]}
 
 
@@ -971,12 +985,26 @@ async def admin_bulk_resend_set_password(admin: dict = Depends(admin_tab_dep("me
     pending = await cursor.to_list(500)
     now = now_utc()
     summary = {"ok": True, "total": len(pending), "sent": 0, "failed": 0, "skipped_no_email": 0, "members": []}
+    attempt_logs: List[dict] = []
     for user in pending:
         email = (user.get("email") or "").strip()
         uid = user.get("id")
         if not email:
             summary["skipped_no_email"] += 1
             summary["members"].append({"id": uid, "name": user.get("name", ""), "email": "", "sent": False, "skipped": True})
+            attempt_logs.append({
+                "id": str(uuid.uuid4()),
+                "user_id": uid,
+                "user_name": user.get("name", ""),
+                "email": "",
+                "ok": False,
+                "reason": "Member has no email address on file",
+                "mode": "bulk",
+                "admin_id": admin.get("id"),
+                "admin_name": admin.get("name", ""),
+                "attempted_at": iso(now),
+                "attempted_at_dt": now,
+            })
             continue
         token = secrets.token_urlsafe(32)
         expires_at = now + timedelta(days=7)
@@ -1000,10 +1028,38 @@ async def admin_bulk_resend_set_password(admin: dict = Depends(admin_tab_dep("me
             else:
                 summary["failed"] += 1
             summary["members"].append({"id": uid, "name": user.get("name", ""), "email": email, "sent": bool(sent)})
+            attempt_logs.append({
+                "id": str(uuid.uuid4()),
+                "user_id": uid,
+                "user_name": user.get("name", ""),
+                "email": email,
+                "ok": bool(sent),
+                "reason": "" if sent else "Resend API rejected or no API key configured",
+                "mode": "bulk",
+                "admin_id": admin.get("id"),
+                "admin_name": admin.get("name", ""),
+                "attempted_at": iso(now),
+                "attempted_at_dt": now,
+            })
         except Exception as ex:
             summary["failed"] += 1
             summary["members"].append({"id": uid, "name": user.get("name", ""), "email": email, "sent": False, "error": str(ex)})
+            attempt_logs.append({
+                "id": str(uuid.uuid4()),
+                "user_id": uid,
+                "user_name": user.get("name", ""),
+                "email": email,
+                "ok": False,
+                "reason": str(ex)[:300],
+                "mode": "bulk",
+                "admin_id": admin.get("id"),
+                "admin_name": admin.get("name", ""),
+                "attempted_at": iso(now),
+                "attempted_at_dt": now,
+            })
             logger.warning(f"[bulk-resend-setpw] failed for {email}: {ex}")
+    if attempt_logs:
+        await db.password_setup_attempts.insert_many(attempt_logs)
     logger.info(
         f"[bulk-resend-setpw] admin={admin.get('email')} total={summary['total']} "
         f"sent={summary['sent']} failed={summary['failed']} skipped_no_email={summary['skipped_no_email']}"
@@ -4417,6 +4473,151 @@ async def update_my_email_preferences(body: EmailPreferencesIn, user: dict = Dep
 async def list_email_blasts(_: dict = Depends(admin_tab_dep("email"))):
     items = await db.email_blasts.find({}, {"_id": 0}).sort("sent_at", -1).limit(100).to_list(100)
     return items
+
+
+@api.get("/email/blasts/{blast_id}/failed")
+async def get_blast_failed_recipients(blast_id: str, _: dict = Depends(admin_tab_dep("email"))):
+    """Return the full failed-recipients list for a given blast so admins can
+    quickly see which addresses need attention (bounces, opt-outs, no email on
+    file, Resend errors). The blast doc itself caps `failed` at 50 entries to
+    keep documents small, but for diagnostics we expose it directly here."""
+    b = await db.email_blasts.find_one({"id": blast_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Blast not found")
+    failed = b.get("failed") or []
+    return {
+        "blast_id": blast_id,
+        "subject": b.get("subject", ""),
+        "sent_at": b.get("sent_at"),
+        "failed_count": b.get("failed_count", len(failed)),
+        "failed": failed,
+    }
+
+
+# ============================================================
+# Email Drafts (per admin) — manual saves + auto-save
+# ============================================================
+class EmailDraftIn(BaseModel):
+    name: str = ""  # "" for the auto-save slot, non-empty for named drafts
+    subject: str = ""
+    body_html: str = ""
+    segment: str = "active"
+    tier_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    custom_user_ids: List[str] = []
+    is_autosave: bool = False
+
+
+def _draft_out(d: dict) -> dict:
+    return {
+        "id": d["id"],
+        "name": d.get("name", ""),
+        "subject": d.get("subject", ""),
+        "body_html": d.get("body_html", ""),
+        "segment": d.get("segment", "active"),
+        "tier_id": d.get("tier_id"),
+        "chapter_id": d.get("chapter_id"),
+        "custom_user_ids": d.get("custom_user_ids") or [],
+        "is_autosave": bool(d.get("is_autosave", False)),
+        "created_at": d.get("created_at"),
+        "updated_at": d.get("updated_at"),
+    }
+
+
+@api.get("/email/drafts")
+async def list_email_drafts(admin: dict = Depends(admin_tab_dep("email"))):
+    """Drafts are private per-admin. Auto-save slot (if any) is included so the
+    client can restore it on next visit."""
+    items = await db.email_drafts.find(
+        {"owner_id": admin["id"]}, {"_id": 0}
+    ).sort("updated_at", -1).to_list(100)
+    return [_draft_out(d) for d in items]
+
+
+@api.post("/email/drafts")
+async def create_email_draft(body: EmailDraftIn, admin: dict = Depends(admin_tab_dep("email"))):
+    """Create a new draft. If `is_autosave=true`, upsert the single auto-save
+    slot for this admin (so we never accumulate hundreds of half-typed drafts
+    on every keystroke)."""
+    now = iso(now_utc())
+    if body.is_autosave:
+        existing = await db.email_drafts.find_one({"owner_id": admin["id"], "is_autosave": True})
+        if existing:
+            await db.email_drafts.update_one(
+                {"id": existing["id"]},
+                {"$set": {
+                    "subject": body.subject,
+                    "body_html": body.body_html,
+                    "segment": body.segment,
+                    "tier_id": body.tier_id,
+                    "chapter_id": body.chapter_id,
+                    "custom_user_ids": body.custom_user_ids,
+                    "updated_at": now,
+                }},
+            )
+            d = await db.email_drafts.find_one({"id": existing["id"]}, {"_id": 0})
+            return _draft_out(d)
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["owner_id"] = admin["id"]
+    doc["created_at"] = now
+    doc["updated_at"] = now
+    await db.email_drafts.insert_one(doc)
+    return _draft_out(doc)
+
+
+@api.put("/email/drafts/{draft_id}")
+async def update_email_draft(draft_id: str, body: EmailDraftIn, admin: dict = Depends(admin_tab_dep("email"))):
+    d = await db.email_drafts.find_one({"id": draft_id})
+    if not d:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if d.get("owner_id") != admin["id"]:
+        raise HTTPException(status_code=403, detail="Not your draft")
+    await db.email_drafts.update_one(
+        {"id": draft_id},
+        {"$set": {
+            "name": body.name,
+            "subject": body.subject,
+            "body_html": body.body_html,
+            "segment": body.segment,
+            "tier_id": body.tier_id,
+            "chapter_id": body.chapter_id,
+            "custom_user_ids": body.custom_user_ids,
+            "updated_at": iso(now_utc()),
+        }},
+    )
+    d2 = await db.email_drafts.find_one({"id": draft_id}, {"_id": 0})
+    return _draft_out(d2)
+
+
+@api.delete("/email/drafts/{draft_id}")
+async def delete_email_draft(draft_id: str, admin: dict = Depends(admin_tab_dep("email"))):
+    d = await db.email_drafts.find_one({"id": draft_id})
+    if not d:
+        return {"ok": True}
+    if d.get("owner_id") != admin["id"]:
+        raise HTTPException(status_code=403, detail="Not your draft")
+    await db.email_drafts.delete_one({"id": draft_id})
+    return {"ok": True}
+
+
+# ============================================================
+# Password-setup link failures log
+# ============================================================
+@api.get("/email/password-setup-failures")
+async def list_password_setup_failures(days: int = 90, _: dict = Depends(admin_tab_dep("email"))):
+    """Returns recent failed password-setup-email attempts (last `days` days,
+    default 90). Used by the Email → History tab so admins can quickly spot
+    which member onboarding emails bounced or were rejected by Resend."""
+    cutoff = now_utc() - timedelta(days=max(1, min(365, days)))
+    items = await db.password_setup_attempts.find(
+        {"ok": False, "attempted_at_dt": {"$gte": cutoff}}, {"_id": 0}
+    ).sort("attempted_at_dt", -1).limit(500).to_list(500)
+    for it in items:
+        it.pop("attempted_at_dt", None)
+    return items
+
+
 
 
 # ---------- Public unsubscribe endpoints ----------

@@ -1,0 +1,57 @@
+{
+  "summary": "Iter65 backend (8/8 pytest) PASS. Frontend mostly PASS, but 1 CRITICAL bug: clicking 'Send test to me' on any Template card crashes the Admin page with React runtime error 'Objects are not valid as a React child (found: object with keys {type, loc, msg, input, url})'. Root cause: Frontend posts {template_id} only (no to_email); backend EmailTestSendIn requires to_email -> 422 -> frontend renders FastAPI validation-error array directly in toast.error().",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/email/test-send",
+        "issue": "EmailTestSendIn declares `to_email: str` (required). When the Templates 'Send test to me' UI calls test-send with only {template_id}, backend returns 422. Spec/regression docstring says it should default to the admin's own email when to_email is omitted. Fix: make `to_email: Optional[str] = None` and resolve to admin['email'] when missing/blank.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "EmailTemplates.sendTestToMe (Admin.jsx ~L3123)",
+        "issue": "Catch block does `toast.error(e.response?.data?.detail || ...)`. For 422 responses, FastAPI's `detail` is an array of validation-error OBJECTS — react-hot-toast renders it as a React child, throwing 'Objects are not valid as a React child (found: object with keys {type, loc, msg, input, url})'. This crashes the entire Admin page with a runtime error overlay. Defensive fix: coerce non-string detail to string (e.g. `Array.isArray(d) ? d.map(x=>x.msg).join('; ') : (typeof d==='string'? d : JSON.stringify(d))`).",
+        "selector": "[data-testid=template-test-send-builtin_tpl_announcement]",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Templates → Send test to me",
+        "issue": "Network request fires (POST /api/email/test-send) but returns 422 instead of 200, and the response body crashes the React tree.",
+        "affected_selectors": ["[data-testid^=template-test-send-]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration65_drafts_failures.py",
+    "/app/test_reports/pytest/iter65_results.xml"
+  ],
+  "action_items": [
+    "Backend: change EmailTestSendIn.to_email to Optional[str] = None; in email_test_send, if not body.to_email then to_email = admin.get('email').",
+    "Frontend Admin.jsx (sendTestToMe, ~L3123): stringify non-string error detail to prevent React child crash. Apply the same defensive pattern to any other axios catch that surfaces e.response.data.detail in a toast (audit for /email/* routes).",
+    "After both fixes, re-run iter65 backend + frontend tests."
+  ],
+  "critical_code_review_comments": [
+    "Toast-error pattern `toast.error(e.response?.data?.detail || '…')` is repeated throughout Admin.jsx — refactor into a small `getErrorMessage(err)` helper that always returns a string and handles FastAPI 422 arrays. Search shows ~30+ similar call sites; any future endpoint that returns a 422 will crash the page the same way.",
+    "EmailTestSendIn validates to_email format via plain `str` — consider `EmailStr` for stricter validation once the optional change lands.",
+    "server.py is still 6482 lines — recurring suggestion to split into routers."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (8/8 iter65 pytest)",
+    "frontend": "~85% — all draft/history features verified; ONE flow (template test-send) crashes the page"
+  },
+  "test_credentials": "admin@clubhaven.app / Admin123! (worked as documented)",
+  "seed_data_creation": "Test draft 'Iter65 Named Draft' (id d4a23b48-3080-46f0-8c9d-49f965dbacaf) was created during testing and DELETED via DELETE /api/email/drafts/{id} at end of run. Autosave slot for admin user remains and was upserted (single row) — that's intended behavior.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend: 8/8 iter65 tests green via `REACT_APP_BACKEND_URL=https://club-express-lite.preview.emergentagent.com pytest backend/tests/test_iteration65_drafts_failures.py`. UI verifications confirmed: drafts-toolbar visible, autosave fires within ~2s of typing (draft-status updates to 'Saved at HH:MM'), save-draft-btn prompts for name and creates a named draft via POST /api/email/drafts, drafts-picker lists both named draft and 'Auto-saved —' entry, selecting populates subject correctly, delete-draft-picker appears once a named draft exists, History tab shows password-setup-failures section with refresh-setup-failures-btn (empty-state shown — copy-setup-failures-btn correctly absent), 6 existing blasts show clickable failed counts via blast-failed-toggle-* — expanding renders blast-failed-detail-* and blast-copy-failed-* button. Only blocker is the test-send 422+crash. Note: the iter65 backend pytest test for test-send sends `to_email=ADMIN_EMAIL` explicitly, hiding the 422 default-path bug. Suggest adding a test like `admin.post('/api/email/test-send', json={'template_id': 'builtin_tpl_announcement'}).status_code == 200` after the fix.",
+  "rca of the issue": "1) Frontend Admin.jsx L3126 calls api.post('/email/test-send', { template_id: t.id }) — no to_email. 2) Backend EmailTestSendIn at server.py L4713 declares `to_email: str` (required, non-Optional). Pydantic validation fails -> FastAPI returns 422 with body { detail: [ { type, loc, msg, input, url } ] }. 3) sendTestToMe catch block (L3130) passes e.response.data.detail directly to toast.error() — react-hot-toast renders the array of objects as React children, which throws 'Objects are not valid as a React child'. The runtime-error overlay (CRA dev server) then covers the entire page, breaking subsequent interactions. Mitigation: (a) make to_email optional on backend with admin fallback; (b) wrap detail in a string-coercion helper on the frontend so future 422s don't crash the UI."
+}
