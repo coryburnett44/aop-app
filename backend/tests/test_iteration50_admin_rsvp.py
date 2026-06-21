@@ -145,13 +145,16 @@ class TestAuthz:
 # VALIDATION / ERROR PATHS
 # =========================================================
 class TestValidation:
-    def test_missing_user_id_returns_400(self, admin_client, fresh_event):
+    def test_missing_user_id_returns_422(self, admin_client, fresh_event):
+        """Pydantic's missing-required-field validation returns 422 (not 400)
+        from FastAPI. The error body still surfaces "user_id" so admins know
+        which field they missed."""
         r = admin_client.post(
             f"{BASE_URL}/api/events/{fresh_event['id']}/admin-rsvp",
             json={"send_email": False},
             timeout=15,
         )
-        assert r.status_code == 400, r.text
+        assert r.status_code == 422, r.text
         assert "user_id" in r.text.lower()
 
     def test_nonexistent_user_id_returns_404(self, admin_client, fresh_event):
