@@ -120,7 +120,7 @@ def test_real_import_writes_only_valid_rows(admin, first_cause_title):
         [MEMBER_EMAIL, 75, first_cause_title, "2026-05-02", f"{MARKER} ok-1", "false", "manual_csv"],
         ["not-a-member@example.com", 25, first_cause_title, "2026-05-02", f"{MARKER} bad-email", "false", "manual_csv"],
         [MEMBER_EMAIL, -10, first_cause_title, "2026-05-02", f"{MARKER} bad-amount", "false", "manual_csv"],
-        [MEMBER_EMAIL, 30, "Does-Not-Exist Fund", "2026-05-02", f"{MARKER} bad-cause", "false", "manual_csv"],
+        [MEMBER_EMAIL, 30, "Does-Not-Exist Fund", "2026-05-02", f"{MARKER} unmatched-cause", "false", "manual_csv"],
         [MEMBER_EMAIL, 40, first_cause_title, "garbled-date", f"{MARKER} bad-date", "false", "manual_csv"],
     ])
     r = admin.post(
@@ -130,17 +130,47 @@ def test_real_import_writes_only_valid_rows(admin, first_cause_title):
     )
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["created"] == 1, f"expected exactly 1 successful row, got {d['created']}"
-    assert d["failed"] == 4
+    # Now that an unmatched cause is a WARNING (not an ERROR), 2 of the 5
+    # rows write successfully: the matched-cause row AND the unmatched-cause
+    # row. The other 3 fail on bad email / negative amount / bad date.
+    assert d["created"] == 2, f"expected 2 successful rows, got {d['created']}"
+    assert d["failed"] == 3
     statuses = [r["status"] for r in d["rows"]]
-    assert statuses.count("READY") == 1
-    assert statuses.count("ERROR") == 4
-    # specific error messages
+    assert statuses.count("READY") == 2
+    assert statuses.count("ERROR") == 3
     errs_by_row = {r["row"]: r["errors"] for r in d["rows"]}
+    warns_by_row = {r["row"]: r.get("warnings", []) for r in d["rows"]}
     assert any("no member" in e for e in errs_by_row[3])
     assert any("amount must be > 0" in e for e in errs_by_row[4])
-    assert any("cause" in e and "not found" in e for e in errs_by_row[5])
+    # Unmatched cause is now a non-blocking warning, not an error
+    assert errs_by_row[5] == []
+    assert any("not found" in w and "unallocated" in w for w in warns_by_row[5])
     assert any("date" in e and "garbled-date" in e for e in errs_by_row[6])
+
+
+def test_unmatched_cause_preserves_label_in_description(admin, first_cause_title):
+    """An unmatched cause label is preserved in the transaction description
+    so the donation remains traceable in /reports/donations and member
+    receipts (no cause_id link but the fund name lives on)."""
+    label = f"{MARKER} Made-Up Fund"
+    payload = _csv_bytes([
+        [MEMBER_EMAIL, 60, label, "2026-05-04", f"{MARKER} preserved-label", "false", "manual_csv"],
+    ])
+    r = admin.post(
+        f"{API}/donations/admin/csv?dry_run=false",
+        files={"file": ("d.csv", payload, "text/csv")},
+        timeout=15,
+    )
+    assert r.status_code == 200
+    assert r.json()["created"] == 1
+    # Read it back via /reports/donations
+    r2 = admin.get(f"{API}/reports/donations", timeout=10)
+    assert r2.status_code == 200
+    rows = r2.json()
+    match = next((t for t in rows if "preserved-label" in (t.get("description") or "")), None)
+    assert match is not None, "imported donation not found in /reports/donations"
+    assert match.get("cause_id") in (None, ""), "cause_id should be empty for unmatched cause"
+    assert label in (match.get("description") or ""), f"unmatched cause label should be preserved in description: {match.get('description')}"
 
 
 def test_top_donors_returns_correct_shape(admin, first_cause_title):

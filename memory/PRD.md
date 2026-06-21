@@ -16,6 +16,20 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BB — Iteration 58: Donations CSV — cause truly optional + free-text label preserved (2026-06-21)
+Hotfix on iter56's bulk donations importer based on user feedback ("Make the cause optional").
+
+- `POST /api/donations/admin/csv`: a non-blank `cause` value that does NOT match any existing cause is no longer an ERROR. The row imports as READY with a non-blocking `warnings` array (`"cause '...' not found — saved as unallocated"`), `cause_id=null`, and the original free-text label is preserved in the transaction `description` as `Fund: <label> · <note> · (CSV import)` plus a dedicated `cause_label` field. Blank cause stays unallocated as before. Matched cause links and updates `cause.raised_amount` as before.
+- Admin UI: dialog hint rewritten to "cause is optional — leave blank OR enter any text; matching links to that cause, non-matching is saved as unallocated with the label preserved." Preview rows render a yellow ⚠ row beneath status when a `warnings` entry is present.
+- **History tracking confirmed end-to-end**: imported donations show up in `/api/reports/donations` (admin), `/api/me/transactions` (member receipts), `/api/causes/{id}/donations` (per-cause), and the home Top Donors leaderboard — exactly like the volunteer-hours flow. No new history endpoints needed; the existing transactions collection already powers all four surfaces.
+
+**Verification (iter58)**:
+- `tests/test_iteration56_donations_csv.py` re-tightened: `test_real_import_writes_only_valid_rows` now expects 2 successful rows out of 5 (matched + unmatched cause both succeed), with the unmatched cause carrying a `warnings` entry but no `errors`.
+- New `test_unmatched_cause_preserves_label_in_description` asserts the free-text label survives in `/reports/donations`.
+- 16/16 pass (8 iter56 + 8 iter57).
+
+
+
 ### Phase BA — Iteration 57: Per-cause payment processor (PayPal vs Zeffy) (2026-06-21)
 Admins can now route funds for each individual cause through either PayPal (in-app checkout) or Zeffy (external link).
 

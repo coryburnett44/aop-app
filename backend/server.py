@@ -3538,14 +3538,23 @@ async def donations_csv_import(
             if not u:
                 row_out["errors"].append(f"no member with email '{email}'")
 
-        # Resolve cause (optional)
+        # Resolve cause — fully optional. A blank value imports the donation
+        # as unallocated. A non-blank value that *matches* an existing cause
+        # title (case-insensitive) links the transaction so the cause page
+        # picks it up automatically. A non-blank value that does NOT match is
+        # NOT an error — we surface a `warnings` note so the admin sees what
+        # happened, then save the donation as unallocated with the raw label
+        # preserved in the description so it remains traceable in reports.
         resolved_cause_id: Optional[str] = None
+        cause_label_for_desc = ""
+        row_out["warnings"] = []
         if cause_title:
             cid = cause_by_title.get(cause_title.lower())
             if cid:
                 resolved_cause_id = cid
             else:
-                row_out["errors"].append(f"cause '{cause_title}' not found")
+                cause_label_for_desc = cause_title
+                row_out["warnings"].append(f"cause '{cause_title}' not found — saved as unallocated")
 
         # Parse date
         dt = None
@@ -3564,6 +3573,15 @@ async def donations_csv_import(
             row_out["amount"] = amount
             row_out["date_iso"] = iso(dt) if dt else None
             row_out["cause_id"] = resolved_cause_id
+            # Build a description that preserves the original cause label
+            # even when it didn't match — keeps the donation traceable in
+            # admin reports and member receipts.
+            desc_parts = []
+            if cause_label_for_desc:
+                desc_parts.append(f"Fund: {cause_label_for_desc}")
+            if note:
+                desc_parts.append(note)
+            desc_parts.append("(CSV import)")
             tx = {
                 "id": str(uuid.uuid4()),
                 "user_id": u["id"],
@@ -3571,7 +3589,8 @@ async def donations_csv_import(
                 "type": "donation",
                 "amount": amount,
                 "currency": "USD",
-                "description": (f"Donation: {note}" if note else "Donation (CSV import)"),
+                "description": " · ".join(desc_parts),
+                "cause_label": cause_label_for_desc,  # free-text fund label preserved alongside cause_id
                 "status": "completed",
                 "cause_id": resolved_cause_id,
                 "anonymous": anonymous,

@@ -3267,7 +3267,7 @@ function DonationsCsvImportDialog({ onImported }) {
                     <div className="rounded-xl bg-muted/40 p-3 text-sm space-y-1">
                         <div><strong>CSV columns:</strong> <code className="bg-background px-1.5 py-0.5 rounded">member_email, amount, cause, date, note, anonymous, method</code></div>
                         <div className="text-xs text-muted-foreground">
-                            <code>cause</code> must match an existing cause title (case-insensitive); blank means unallocated. <code>date</code> accepts YYYY-MM-DD, MM/DD/YYYY, M/D/YY, or 15-Jun-2026. <code>anonymous</code> = true/false (default false).
+                            <code>cause</code> is optional — leave blank to import as unallocated, OR enter any text. If the text matches an existing cause title (case-insensitive) the donation links to that cause; if not, it&apos;s saved as unallocated and the label is preserved on the receipt. <code>date</code> accepts YYYY-MM-DD, MM/DD/YYYY, M/D/YY, or 15-Jun-2026. <code>anonymous</code> = true/false (default false).
                         </div>
                         <button type="button" onClick={downloadTemplate} className="text-primary font-semibold hover:underline text-xs" data-testid="donations-csv-template-btn">
                             ⬇ Download CSV template
@@ -3312,6 +3312,9 @@ function DonationsCsvImportDialog({ onImported }) {
                                             <div className="font-semibold">Row {r.row} · {r.member_email || "(no email)"} · ${r.amount_raw || "0"}{r.cause_title ? ` · ${r.cause_title}` : ""}</div>
                                             {r.errors.length > 0 && (
                                                 <div className="text-destructive">{r.errors.join("; ")}</div>
+                                            )}
+                                            {(r.warnings || []).length > 0 && (
+                                                <div className="text-amber-700">⚠ {r.warnings.join("; ")}</div>
                                             )}
                                         </div>
                                     </div>
