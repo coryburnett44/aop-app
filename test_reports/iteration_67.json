@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 67 — Verified the inactive-member API guard, 15-day grace period auto-flip, ProtectedRoute redirects, Navbar banner/link restrictions, and the formatCalendarDay timezone fix on Admin Members + Hours. All 14 pytest cases pass (100%); all Playwright UI checks pass. No regressions.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verifications_performed": [
+    "Backend pytest /app/backend/tests/test_iteration67_inactive_member_guard.py — 14/14 passed",
+    "Inactive member POST /api/auth/login -> 200; GET /api/auth/me returns status_override='inactive'",
+    "Inactive allowlist verified (must not 403): /api/auth/me, /api/me, /api/news, /api/chapters, /api/causes, /api/health",
+    "Inactive blocklist verified (must 403 with 'membership is inactive'): /api/members, /api/hours, /api/events, /api/donations",
+    "Admin bypass verified: with admin's own status_override='inactive', GETs to /api/members /api/hours /api/events return non-403",
+    "Active member regression verified: /api/members /api/hours /api/events /api/donations not blocked",
+    "GRACE_PERIOD_DAYS=15 logic verified end-to-end via direct Mongo simulation: inserted user with expires_at=now-20d -> flipped to inactive by the exact cron query; user with expires_at=now-5d -> NOT flipped",
+    "Frontend ProtectedRoute: as inactive maya, /hours and /events both redirected to /; /profile rendered normally",
+    "Frontend Navbar: inactive-membership-banner [data-testid=inactive-membership-banner] visible for inactive non-admin with copy 'Your membership is inactive.Access is limited to Home and Profile…'; nav strip reduced to logo only (no Calendar/Events/Members/etc.)",
+    "Frontend Admin Members table: maya.patel row with membership_expires_at='2025-12-31T00:00:00Z' renders 'Dec 31, 2025' (NOT 'Dec 30, 2025') — confirms formatCalendarDay TZ fix on Admin.jsx L1025",
+    "Frontend Hours page: dates rendered via formatCalendarDay (e.g. 'Jun 16, 2026' for an existing entry) — no off-by-one observed",
+    "Admin (active) sees full nav links (Calendar, Events, Members, Chat, Chapters, Photos, AOP Forms, Awards, Gear, Donate, Omega, News, Meet) and NO inactive banner"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration67_inactive_member_guard.py",
+    "/app/test_reports/pytest/iter67_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L5478 lists '/api/health' in INACTIVE_ALLOWED_PREFIXES but the actual health route is mounted at /health (not /api/health) — the entry is harmless but cosmetically misleading. Not a bug since middleware only intercepts /api/* paths.",
+    "INACTIVE_ALLOWED_EXACT contains /api/auth/me + /api/auth/logout which are already covered by the '/api/auth/' prefix; redundant but not incorrect.",
+    "Allowlist correctly excludes /api/members /api/hours /api/events /api/donations (verified all 4 return 403 for inactive). No mismatch found between frontend ProtectedRoute redirect set and backend block-list.",
+    "Token decode in middleware passes options={'verify_exp': False} — intentional per design (lets normal auth flow handle expiry), confirmed by comment on L5516. Worth flagging for future auditors but not a bug.",
+    "server.py is 5539 lines — split-into-routers suggestion still standing from prior iterations."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration67_inactive_member_guard.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@clubhaven.app / Admin123!  ·  maya.patel@clubhaven.app / Demo123!  ·  member@clubhaven.app / Member123! — all worked",
+  "seed_data_creation": "None. The maya.patel demo user was temporarily flipped to status_override='inactive' (and her membership_expires_at briefly set to 2025-12-31T00:00:00Z); both restored to active at end of run. Two ephemeral sentinel users TEST_iter67_past / TEST_iter67_grace were inserted to validate the cron Mongo query and deleted in the same script.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "To flip a member's status: admin login then PUT /api/members/{id} with body {member_status:'inactive'|'active'} (NOT PATCH /api/users — that endpoint does not exist). Inactive middleware lives at server.py L5493-5533. AuthContext refresh after login can take ~2-3s so wait for [data-testid=inactive-membership-banner] (don't just sleep 1s). The Hours page query for date strings via regex only catches whatever existing rows there are — to truly stress-test add a TEST_ hour entry via POST /api/hours first.",
+  "rca of the issue": "N/A — no defects found. All 9 requested checks (15-day cutoff, middleware allowlist, middleware blocklist, admin bypass, active-member regression, inactive login, ProtectedRoute redirect, Navbar banner+links, formatCalendarDay on Admin + Hours) verified passing."
+}

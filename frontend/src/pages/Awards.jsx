@@ -6,6 +6,7 @@ import {
     DollarSign, UserPlus, Users, Plus, Pencil, Trash2,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { formatCalendarDay } from "../lib/dateUtil";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
@@ -145,7 +146,7 @@ function CatalogSection() {
                                             )}
                                         </div>
                                         <div className="text-xs text-muted-foreground">
-                                            {g.granted_at && format(parseISO(g.granted_at), "MMM d, yyyy")}
+                                            {g.granted_at && formatCalendarDay(g.granted_at, "MMM d, yyyy")}
                                             {g.reason && ` · ${g.reason}`}
                                         </div>
                                     </div>
@@ -243,7 +244,7 @@ function RecipientsDialog({ award, onClose }) {
                                                 </span>
                                             )}
                                             <div className="text-xs text-muted-foreground tabular-nums shrink-0">
-                                                {r.granted_at ? format(parseISO(r.granted_at), "MMM d") : ""}
+                                                {r.granted_at ? formatCalendarDay(r.granted_at, "MMM d") : ""}
                                             </div>
                                         </li>
                                     );

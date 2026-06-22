@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
+import { formatCalendarDay } from "../lib/dateUtil";
 import { fmtET } from "../lib/eventTime";
 import AdminDashboard from "./AdminDashboard";
 import Reports from "./Reports";
@@ -1021,7 +1022,7 @@ function MembersAdmin() {
                                         <span className="text-primary font-semibold">Lifetime</span>
                                     ) : (
                                         <>
-                                            {m.membership_expires_at ? format(parseISO(m.membership_expires_at), "MMM d, yyyy") : "—"}
+                                            {m.membership_expires_at ? formatCalendarDay(m.membership_expires_at, "MMM d, yyyy") : "—"}
                                             {m.within_grace && <span className="ml-2 text-[10px] bg-destructive/15 text-destructive rounded-full px-2 py-0.5">grace</span>}
                                         </>
                                     )}
@@ -1411,7 +1412,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                                         const selectedTier = tiers.find((t) => t.id === form.tier_id);
                                         if (selectedTier?.is_lifetime) return <span className="text-primary font-semibold">Lifetime · no expiration</span>;
                                         if (form.join_date) return format(new Date(new Date(`${form.join_date}T00:00:00Z`).getTime() + 365 * 86400000), "MMM d, yyyy");
-                                        return member.membership_expires_at ? format(parseISO(member.membership_expires_at), "MMM d, yyyy") : "—";
+                                        return member.membership_expires_at ? formatCalendarDay(member.membership_expires_at, "MMM d, yyyy") : "—";
                                     })()}
                                 </div>
                             )}
@@ -1778,7 +1779,7 @@ function HoursAdmin() {
     async function del(h) {
         // Hard delete from the queue — only used when the entry is wrong (typo,
         // duplicate, etc.) and shouldn't show up in member history either.
-        if (!confirm(`Permanently delete ${h.user_name}'s ${h.hours}h entry on ${h.date ? format(parseISO(h.date), "MMM d, yyyy") : "unknown date"}?\n\nThis cannot be undone.`)) return;
+        if (!confirm(`Permanently delete ${h.user_name}'s ${h.hours}h entry on ${h.date ? formatCalendarDay(h.date, "MMM d, yyyy") : "unknown date"}?\n\nThis cannot be undone.`)) return;
         try {
             await api.delete(`/hours/${h.id}`);
             toast.success("Hours entry deleted");
@@ -1825,7 +1826,7 @@ function HoursAdmin() {
                                     <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-accent/40">{h.event_type === "aop_related" ? "AOP-related" : "Other"}</span>
                                     <span className={`text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 ${h.status === "approved" ? "bg-green-100 text-green-700" : h.status === "rejected" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{h.status}</span>
                                 </div>
-                                <div className="text-xs text-muted-foreground">{h.date && format(parseISO(h.date), "EEE, MMM d, yyyy")}</div>
+                                <div className="text-xs text-muted-foreground">{h.date && formatCalendarDay(h.date, "EEE, MMM d, yyyy")}</div>
                                 {h.agency_name && (
                                     <div className="mt-2 text-sm"><span className="text-xs uppercase tracking-wider text-muted-foreground font-bold">Agency:</span> <span className="font-medium">{h.agency_name}</span></div>
                                 )}
@@ -2157,20 +2158,20 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                     <DetailRow label="Phone" value={details.phone} />
                     <DetailRow label="Address" value={[details.address, details.city, details.state, details.zip_code].filter(Boolean).join(", ")} />
                     <DetailRow label="Country" value={details.country} />
-                    <DetailRow label="Birthdate" value={details.birthdate ? format(parseISO(details.birthdate.length === 10 ? `${details.birthdate}T00:00:00` : details.birthdate), "MMM d, yyyy") : ""} />
+                    <DetailRow label="Birthdate" value={details.birthdate ? formatCalendarDay(details.birthdate.length === 10 ? `${details.birthdate}T00:00:00` : details.birthdate, "MMM d, yyyy") : ""} />
                     <DetailRow label="Branch of service" value={details.branch_of_service} />
                     <DetailRow label="Intake line" value={details.intake_line} />
                     <DetailRow label="Intake completed" value={details.intake_completed_at} />
                     <DetailRow label="Chapter" value={chapter?.name} />
                     <DetailRow label="Member type" value={tier?.name} />
-                    <DetailRow label="Date joined" value={details.join_date ? format(parseISO(details.join_date), "MMM d, yyyy") : (details.created_at ? format(parseISO(details.created_at), "MMM d, yyyy") : "")} />
+                    <DetailRow label="Date joined" value={details.join_date ? formatCalendarDay(details.join_date, "MMM d, yyyy") : (details.created_at ? format(parseISO(details.created_at), "MMM d, yyyy") : "")} />
                     {details.is_lifetime_member ? (
                         <div className="flex justify-between gap-3 py-1.5 border-b last:border-0 border-border/40">
                             <span className="text-xs uppercase tracking-wider font-semibold text-muted-foreground">Membership</span>
                             <span className="text-sm font-bold text-primary">Lifetime · no renewal</span>
                         </div>
                     ) : (
-                        <DetailRow label="Membership expires" value={details.membership_expires_at ? format(parseISO(details.membership_expires_at), "MMM d, yyyy") : ""} />
+                        <DetailRow label="Membership expires" value={details.membership_expires_at ? formatCalendarDay(details.membership_expires_at, "MMM d, yyyy") : ""} />
                     )}
                     {details.bio && (
                         <div className="pt-2 border-t">
@@ -2193,7 +2194,7 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                                             <div className="min-w-0">
                                                 <div className="font-semibold text-sm truncate">{g.award_name || g.name || "Ribbon"} {g.ordinal > 1 && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-primary/10 text-primary ml-1">{g.ordinal}×</span>}</div>
                                                 <div className="text-[11px] text-muted-foreground truncate">
-                                                    {g.granted_at ? format(parseISO(g.granted_at), "MMM d, yyyy") : ""}{g.reason ? ` · ${g.reason}` : ""}
+                                                    {g.granted_at ? formatCalendarDay(g.granted_at, "MMM d, yyyy") : ""}{g.reason ? ` · ${g.reason}` : ""}
                                                 </div>
                                             </div>
                                         </div>

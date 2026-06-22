@@ -76,7 +76,7 @@ function App() {
                             <Route path="/reset-password" element={<ResetPassword />} />
                             <Route path="/hours" element={<ProtectedRoute><Hours /></ProtectedRoute>} />
                             <Route path="/page/:slug" element={<CmsPage />} />
-                            <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+                            <Route path="/profile" element={<ProtectedRoute allowInactive><Profile /></ProtectedRoute>} />
                             <Route path="/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
                         </Routes>
                     </main>

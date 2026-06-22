@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { Users, Calendar, DollarSign, TrendingUp, AlertCircle, Newspaper, FileText, Sparkles, Clock, Trophy, Image as ImageIcon, Inbox, Check, X, UserPlus, AlertTriangle } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { formatCalendarDay } from "../lib/dateUtil";
 import { fmtET } from "../lib/eventTime";
 import { toast } from "sonner";
 import {
@@ -344,7 +345,7 @@ function InboxPanel({ inbox, onAction }) {
                                     <div className="flex-1 min-w-0">
                                         <div className="text-sm font-medium">{h.user_name}</div>
                                         <div className="text-sm text-muted-foreground truncate">{h.description}</div>
-                                        <div className="text-xs text-muted-foreground mt-0.5">{h.date && format(parseISO(h.date), "MMM d, yyyy")}</div>
+                                        <div className="text-xs text-muted-foreground mt-0.5">{h.date && formatCalendarDay(h.date, "MMM d, yyyy")}</div>
                                     </div>
                                     <div className="flex gap-1.5 shrink-0">
                                         <button onClick={() => approveHours(h.id)} className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90 p-2" data-testid={`inbox-approve-${h.id}`} title="Approve">

@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Download, FileText, Filter, Printer, Pencil, Trash2 } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { formatCalendarDay } from "../lib/dateUtil";
 import { FullEditHoursDialog } from "./Hours";
 import { toast } from "sonner";
 
@@ -136,7 +137,7 @@ function MembersReport() {
                                 <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{m.status}</td>
                                 <td className="px-4 py-2.5 text-muted-foreground">{chapters.find((c) => c.id === m.chapter_id)?.name || "—"}</td>
                                 <td className="px-4 py-2.5 text-muted-foreground">{m.membership_tier}</td>
-                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{(m.join_date || m.created_at) && format(parseISO(m.join_date || m.created_at), "MMM d, yyyy")}</td>
+                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{(m.join_date || m.created_at) && formatCalendarDay(m.join_date || m.created_at, "MMM d, yyyy")}</td>
                                 <td className="px-4 py-2.5">
                                     <div className="font-semibold">{m.events_attended_count ?? 0}</div>
                                     {(m.events_attended || []).length > 0 && (
@@ -450,7 +451,7 @@ function HoursReport() {
                                         <td className="px-4 py-2.5 font-bold">{h.hours}</td>
                                         <td className="px-4 py-2.5 text-xs">{h.event_type}</td>
                                         <td className="px-4 py-2.5 text-muted-foreground max-w-sm truncate">{h.activity || h.description}</td>
-                                        <td className="px-4 py-2.5 text-muted-foreground">{h.date && format(parseISO(h.date), "MMM d, yyyy")}</td>
+                                        <td className="px-4 py-2.5 text-muted-foreground">{h.date && formatCalendarDay(h.date, "MMM d, yyyy")}</td>
                                         <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{h.status}</td>
                                         <td className="px-4 py-2.5 text-right whitespace-nowrap">
                                             <FullEditHoursDialog
@@ -477,7 +478,7 @@ function HoursReport() {
                                                 data-testid={`hours-report-delete-${h.id}`}
                                                 title="Delete this entry"
                                                 onClick={async () => {
-                                                    if (!confirm(`Delete ${h.user_name}'s ${h.hours}h entry on ${h.date ? format(parseISO(h.date), "MMM d, yyyy") : "unknown date"}?\n\nThis cannot be undone.`)) return;
+                                                    if (!confirm(`Delete ${h.user_name}'s ${h.hours}h entry on ${h.date ? formatCalendarDay(h.date, "MMM d, yyyy") : "unknown date"}?\n\nThis cannot be undone.`)) return;
                                                     try {
                                                         await api.delete(`/hours/${h.id}`);
                                                         toast.success("Hours entry deleted");
@@ -1610,7 +1611,7 @@ function AwardGrantsTable() {
                     <tbody className="divide-y divide-border">
                         {filtered.map((r) => (
                             <tr key={r.id} className="hover:bg-muted/30" data-testid={`award-grant-row-${r.id}`}>
-                                <td className="px-4 py-2.5 text-xs whitespace-nowrap">{r.granted_at ? format(parseISO(r.granted_at), "MMM d, yyyy") : "—"}</td>
+                                <td className="px-4 py-2.5 text-xs whitespace-nowrap">{r.granted_at ? formatCalendarDay(r.granted_at, "MMM d, yyyy") : "—"}</td>
                                 <td className="px-4 py-2.5">
                                     <div className="flex items-center gap-2">
                                         {r.user_avatar_url ? (

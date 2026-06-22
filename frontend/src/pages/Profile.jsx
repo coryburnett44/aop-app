@@ -11,6 +11,7 @@ import { Button } from "../components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { format, parseISO, differenceInDays } from "date-fns";
+import { formatCalendarDay } from "../lib/dateUtil";
 import { fmtET } from "../lib/eventTime";
 import { toast } from "sonner";
 import {
@@ -202,7 +203,7 @@ export default function Profile() {
                                     {user.within_grace ? <span className="text-destructive">In grace period — renew soon</span> : daysLeft > 0 ? `${daysLeft} days remaining` : "Expired"}
                                 </div>
                                 <div className="text-sm text-muted-foreground mt-1">
-                                    Expires {user.membership_expires_at && format(parseISO(user.membership_expires_at), "MMM d, yyyy")}
+                                    Expires {user.membership_expires_at && formatCalendarDay(user.membership_expires_at, "MMM d, yyyy")}
                                     {user.within_grace && " · 30-day grace active"}
                                 </div>
                             </>
@@ -538,7 +539,7 @@ export default function Profile() {
                                                 </div>
                                                 <div className="text-xs text-muted-foreground">
                                                     {row.count > 1 ? "Latest " : ""}
-                                                    {row.last_granted_at && format(parseISO(row.last_granted_at), "MMM d, yyyy")}
+                                                    {row.last_granted_at && formatCalendarDay(row.last_granted_at, "MMM d, yyyy")}
                                                 </div>
                                                 {row.reasons.length > 0 && (
                                                     <div className="text-xs italic mt-1 truncate" title={row.reasons.join(" • ")}>{row.reasons[row.reasons.length - 1]}</div>
@@ -561,7 +562,7 @@ export default function Profile() {
                                     <div className="w-10 h-10 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold text-sm">{h.hours}</div>
                                     <div className="flex-1 min-w-0">
                                         <div className="text-sm">{h.description}</div>
-                                        <div className="text-xs text-muted-foreground">{h.date && format(parseISO(h.date), "MMM d, yyyy")}</div>
+                                        <div className="text-xs text-muted-foreground">{h.date && formatCalendarDay(h.date, "MMM d, yyyy")}</div>
                                     </div>
                                     <span className={`text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5 ${h.status === "approved" ? "bg-accent/40" : h.status === "rejected" ? "bg-destructive/15 text-destructive" : "bg-secondary/40"}`}>{h.status}</span>
                                 </div>

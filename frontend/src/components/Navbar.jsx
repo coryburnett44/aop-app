@@ -37,7 +37,13 @@ export default function Navbar() {
     const [open, setOpen] = useState(false);
     const { settings } = useSiteSettings();
     const navOverrides = settings?.nav_labels || {};
-    const links = LINKS.map((l) => ({ ...l, label: navOverrides[l.slug] || l.label }));
+    const isInactive = !!user && user.role !== "admin" && user.status_override === "inactive";
+    // For inactive members we hide every nav link except Home + Profile so the
+    // top bar is just the logo + their avatar (with Profile + Logout in the
+    // dropdown). The backend `block_inactive_member_writes` middleware enforces
+    // the same restriction at the API level — frontend is purely UX.
+    const visibleLinks = LINKS.filter((l) => (isInactive ? l.to === "/" || l.to === "/profile" : true));
+    const links = visibleLinks.map((l) => ({ ...l, label: navOverrides[l.slug] || l.label }));
 
     const initials = (user?.name || user?.email || "U")
         .split(" ")
@@ -176,6 +182,18 @@ export default function Navbar() {
                             </NavLink>
                         ))}
                     </div>
+                </div>
+            )}
+            {isInactive && (
+                // Subtle but unmissable strip the inactive member sees on every
+                // page they're allowed to view. Explains why the rest of the app
+                // is grayed out and points them at the next step (contact officer).
+                <div
+                    className="bg-amber-50 border-t border-amber-200 text-amber-900 text-xs sm:text-sm px-6 lg:px-10 py-2 flex items-center justify-center gap-2 flex-wrap"
+                    data-testid="inactive-membership-banner"
+                >
+                    <strong className="font-semibold">Your membership is inactive.</strong>
+                    <span>Access is limited to Home and Profile until a chapter officer reactivates you.</span>
                 </div>
             )}
         </header>

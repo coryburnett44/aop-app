@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Dict, Any
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, status, UploadFile, File, Form, Header, Query
-from fastapi.responses import Response as FastResponse, StreamingResponse
+from fastapi.responses import Response as FastResponse, StreamingResponse, JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 60 * 24  # 1 day (simpler UX for demo)
 REFRESH_TOKEN_DAYS = 7
-GRACE_PERIOD_DAYS = 30
+GRACE_PERIOD_DAYS = 15
 APP_NAME = "clubhaven"
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 _storage_key: Optional[str] = None
@@ -2265,6 +2265,7 @@ async def startup():
     )
     _routes_chat_digest.start_chat_digest_loop()
     asyncio.create_task(_automated_email_loop())
+    asyncio.create_task(_auto_inactive_loop())
 
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")
@@ -5002,6 +5003,32 @@ async def _automated_email_loop():
             logger.warning(f"Automated email loop error: {e}")
         await asyncio.sleep(300)
 
+
+async def _auto_inactive_loop():
+    """Once an hour, find members whose grace period has fully elapsed and flip
+    them to `status_override="inactive"`. Lifetime members and already-inactive
+    members are skipped. The check runs hourly (not daily) so a member who's
+    14 days past expiration in the morning flips to inactive on day 15 within
+    the hour — keeps the user experience honest about the deadline."""
+    while True:
+        try:
+            cutoff_iso = iso(now_utc() - timedelta(days=GRACE_PERIOD_DAYS))
+            q = {
+                "is_lifetime_member": {"$ne": True},
+                "membership_expires_at": {"$lt": cutoff_iso, "$exists": True, "$nin": [None, ""]},
+                "status_override": {"$nin": ["inactive", "deceased"]},
+            }
+            result = await db.users.update_many(
+                q,
+                {"$set": {"status_override": "inactive", "auto_inactivated_at": iso(now_utc())}},
+            )
+            if result.modified_count:
+                logger.info(f"[auto-inactive] flipped {result.modified_count} member(s) to inactive (15-day grace elapsed)")
+        except Exception as e:
+            logger.warning(f"Auto-inactive loop error: {e}")
+        await asyncio.sleep(3600)
+
+
 # ---------- Built-in starter email templates ----------
 # Now lives in routes/email.py (BUILTIN_EMAIL_TEMPLATES + seed_builtin_email_templates).
 # The startup hook in this file calls routes_email.seed_builtin_email_templates(db, iso, now_utc, logger).
@@ -5425,6 +5452,86 @@ else:
     _cors_kwargs["allow_origins"] = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 
 app.add_middleware(CORSMiddleware, **_cors_kwargs)
+
+
+# ---------- Inactive-member API guard ----------
+# When a member's status is "inactive" (manually set, or auto-flipped 15 days
+# after dues expiry by `_auto_inactive_loop`), they should only be able to
+# touch the Home page + their own Profile. The frontend hides nav links, but
+# we also enforce here so a curl/script can't reach the rest of the API.
+#
+# Allow-listed paths cover: auth (login/logout/refresh), the calling user's
+# own profile + email prefs, public reads needed to render Home (chapters,
+# news, causes list, recent photos public feed), unsubscribe links, and the
+# inline file fetch used by avatars/profile photos.
+INACTIVE_ALLOWED_PREFIXES = (
+    "/api/auth/",            # login, logout, refresh, /me
+    "/api/me/",              # own profile, email prefs
+    "/api/files/",           # served images (avatars on Home / Profile)
+    "/api/photos/",          # photo gallery — public read
+    "/api/news",             # Home news feed
+    "/api/chapters",         # Home chapter list
+    "/api/causes",           # Home & Profile may reference cause titles
+    "/api/email/unsubscribe", # public token-signed link
+    "/api/email/resubscribe",
+    "/api/email/unsubscribe-status",
+    "/api/health",           # liveness / version
+)
+INACTIVE_ALLOWED_EXACT = {
+    "/api/auth/me",
+    "/api/auth/logout",
+    "/api/me",
+}
+
+
+def _is_path_allowed_for_inactive(path: str) -> bool:
+    if path in INACTIVE_ALLOWED_EXACT:
+        return True
+    return any(path.startswith(p) for p in INACTIVE_ALLOWED_PREFIXES)
+
+
+@app.middleware("http")
+async def block_inactive_member_writes(request: Request, call_next):
+    """Reject API calls from members whose status is `inactive` for any path
+    outside the Home + Profile allow-list. Always lets non-API requests through
+    (those are static asset serves), and never blocks admins."""
+    path = request.url.path
+    # Fast-path: anything that isn't /api/* is the React bundle / static files.
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    # Allow-listed paths never trigger a token lookup — keeps unauthenticated
+    # public endpoints (login, public causes) cheap.
+    if _is_path_allowed_for_inactive(path):
+        return await call_next(request)
+    # Peek at the access token without raising — unauthenticated requests stay
+    # unaffected (their handler returns the appropriate 401).
+    token = request.cookies.get("access_token") or ""
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        return await call_next(request)
+    try:
+        payload = jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGORITHM], options={"verify_exp": False})
+        user_id = payload.get("sub")
+        if not user_id:
+            return await call_next(request)
+        u = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "role": 1, "status_override": 1})
+        if not u:
+            return await call_next(request)
+        if u.get("role") == "admin":  # admins are never blocked
+            return await call_next(request)
+        if u.get("status_override") == "inactive":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Your membership is inactive. Please contact a chapter officer to restore access."},
+            )
+    except Exception:
+        # Any decode failure: defer to the normal auth flow.
+        pass
+    return await call_next(request)
+
 
 @app.on_event("shutdown")
 async def shutdown():

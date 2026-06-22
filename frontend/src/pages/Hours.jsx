@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Clock, Plus, Check, X, Calendar, Building2, User as UserIcon, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
+import { formatCalendarDay } from "../lib/dateUtil";
 
 export default function Hours() {
     const { user } = useAuth();
@@ -626,7 +627,7 @@ function MyHours() {
  */
 function MyHoursActions({ h, onDeleted }) {
     async function del() {
-        const dateLabel = h.date ? format(parseISO(h.date), "MMM d, yyyy") : "this entry";
+        const dateLabel = h.date ? formatCalendarDay(h.date, "MMM d, yyyy") : "this entry";
         const msg = h.status === "approved"
             ? `Permanently delete your APPROVED ${h.hours}h entry on ${dateLabel}?\n\nThese hours will be removed from your record. This cannot be undone.`
             : `Delete your ${h.hours}h entry on ${dateLabel}?\n\nThis cannot be undone.`;
@@ -665,7 +666,7 @@ function HoursCard({ h, children }) {
                 {h.user_name && <div className="text-sm font-semibold">{h.user_name}</div>}
                 <div className="text-sm leading-relaxed">{h.activity || h.description}</div>
                 <div className="text-xs text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span><Calendar className="h-3 w-3 inline mr-1" />{h.date && format(parseISO(h.date), "MMM d, yyyy")}</span>
+                    <span><Calendar className="h-3 w-3 inline mr-1" />{h.date && formatCalendarDay(h.date, "MMM d, yyyy")}</span>
                     <span className={`uppercase tracking-wider font-semibold rounded-full px-2 py-0.5 ${h.event_type === "aop_related" ? "bg-primary/15 text-primary" : "bg-muted"}`}>
                         {h.event_type === "aop_related" ? "AOP event" : "Other"}
                     </span>
