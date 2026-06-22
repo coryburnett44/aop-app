@@ -863,7 +863,7 @@ function DownloadTaxLetterButton() {
     const [year, setYear] = useState(new Date().getFullYear() - 1);
     const years = [];
     const cur = new Date().getFullYear();
-    for (let y = cur; y >= cur - 5; y--) years.push(y);
+    for (let y = cur; y >= 2017; y--) years.push(y);
     async function download() {
         setBusy(true);
         try {

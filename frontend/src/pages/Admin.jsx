@@ -203,7 +203,7 @@ function EventDialog({ event, onSaved, trigger }) {
             setOpen(false);
             onSaved();
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Save failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Save failed");
         }
     }
 
@@ -232,7 +232,7 @@ function EventDialog({ event, onSaved, trigger }) {
             setForm({ ...form, description: data.text });
             toast.success("AI draft ready ✨");
         } catch (e) {
-            toast.error(e.response?.data?.detail || "AI failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "AI failed");
         }
         setAiBusy(false);
     }
@@ -272,7 +272,7 @@ function EventDialog({ event, onSaved, trigger }) {
                                             const { data } = await api.post("/events/upload-cover", fd, { headers: { "Content-Type": "multipart/form-data" } });
                                             setForm((p) => ({ ...p, cover_image: data.url }));
                                             toast.success("Cover uploaded");
-                                        } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
+                                        } catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Upload failed"); }
                                         setCoverUploading(false);
                                     }} />
                                 </label>
@@ -568,7 +568,7 @@ function NewsDialog({ article, onSaved, trigger }) {
             setOpen(false);
             onSaved();
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Save failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Save failed");
         }
     }
 
@@ -580,7 +580,7 @@ function NewsDialog({ article, onSaved, trigger }) {
             setForm({ ...form, body: data.text });
             toast.success("Email drafted ✨");
         } catch (e) {
-            toast.error(e.response?.data?.detail || "AI failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "AI failed");
         }
         setEmailBusy(false);
     }
@@ -614,7 +614,7 @@ function NewsDialog({ article, onSaved, trigger }) {
                                         const { data } = await api.post("/news/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
                                         setForm((p) => ({ ...p, cover_image: data.url }));
                                         toast.success("Cover photo uploaded");
-                                    } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
+                                    } catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Upload failed"); }
                                 }} />
                             </label>
                             {form.cover_image && (
@@ -687,7 +687,7 @@ function PageDialog({ page, onSaved, trigger }) {
             setOpen(false);
             onSaved();
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Save failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Save failed");
         }
     }
     return (
@@ -749,7 +749,7 @@ function ApplicationsPanel({ onApproved }) {
             await load();
             if (action === "approve") onApproved?.();
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Failed");
         }
         setBusy({ ...busy, [id]: false });
     }
@@ -803,7 +803,7 @@ function PendingIntakeChangesPanel({ onChanged }) {
             await load();
             onChanged?.();
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Failed");
         }
         setBusy({ ...busy, [id]: false });
     }
@@ -890,7 +890,7 @@ function MembersAdmin() {
             await api.delete(`/members/${m.id}`);
             toast.success("Member removed");
             load();
-        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Failed"); }
     }
     async function resendSetPassword(m) {
         if (!confirm(`Send a fresh set-password email to ${m.email}? This invalidates any prior link.`)) return;
@@ -898,7 +898,7 @@ function MembersAdmin() {
             const { data } = await api.post(`/admin/members/${m.id}/resend-set-password`);
             if (data?.sent) toast.success(`Set-password email sent to ${m.email}`);
             else toast.warning("Token created but the email failed to send. Check Resend logs.");
-        } catch (e) { toast.error(e.response?.data?.detail || "Failed to resend"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Failed to resend"); }
     }
     async function bulkResendSetPassword() {
         const count = members.filter((x) => x.pending_set_password).length;
@@ -911,7 +911,7 @@ function MembersAdmin() {
             if (failed === 0 && skipped === 0) toast.success(`Sent ${data?.sent || 0} set-password emails.`);
             else toast.warning(`Sent ${data?.sent || 0}, failed ${failed}, skipped (no email) ${skipped}.`);
             load();
-        } catch (e) { toast.error(e.response?.data?.detail || "Bulk resend failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Bulk resend failed"); }
     }
 
     const [pendingOnly, setPendingOnly] = useState(false);
@@ -1079,7 +1079,7 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
             setOpen(false);
             setForm({ email: "", password: "", title: "", first_name: "", middle_name: "", last_name: "", line_name: "", username: "", phone: "", city: "", address: "", birthdate: "", branch_of_service: "", role: "member", chapter_id: "", tier_id: "", member_status: "active" });
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Create failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Create failed"); }
         setBusy(false);
     }
     return (
@@ -1314,7 +1314,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
             toast.success("Saved");
             setOpen(false);
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Save failed"); }
         setBusy(false);
     }
 
@@ -1446,7 +1446,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                                                 setForm({ ...form, avatar_url: data.url });
                                                 toast.success("Photo uploaded — Save to persist");
                                             } catch (err) {
-                                                toast.error(err.response?.data?.detail || "Upload failed");
+                                                toast.error(formatApiError(err.response?.data?.detail) || "Upload failed");
                                             }
                                             e.target.value = "";
                                         }}
@@ -1610,7 +1610,7 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
             toast.success("Saved");
             setOpen(false);
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Save failed"); }
     }
     async function uploadLogo(file) {
         if (!file) return;
@@ -1620,7 +1620,7 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
             const { data } = await api.post("/chapters/upload-logo", fd, { headers: { "Content-Type": "multipart/form-data" } });
             setForm((p) => ({ ...p, logo_url: data.url }));
             toast.success("Logo uploaded");
-        } catch (e) { toast.error(e.response?.data?.detail || "Upload failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Upload failed"); }
     }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -1719,7 +1719,7 @@ function TierDialog({ tier, onSaved, trigger }) {
             toast.success("Saved");
             setOpen(false);
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Save failed"); }
     }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -1857,7 +1857,7 @@ function AwardDialog({ award, onSaved, trigger }) {
             toast.success("Saved");
             setOpen(false);
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Save failed"); }
     }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -1923,7 +1923,7 @@ function GrantAwardDialog({ award, members, onSaved }) {
             setOpen(false);
             setSelectedIds([]); setReason(""); setGrantedAt(""); setMemberQuery("");
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Failed"); }
         setBusy(false);
     }
 
@@ -2033,7 +2033,7 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
             await api.delete(`/awards/grants/${g.id}`);
             toast.success("Award revoked");
             loadGrants();
-        } catch (e) { toast.error(e.response?.data?.detail || "Could not revoke"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Could not revoke"); }
     }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -2160,7 +2160,7 @@ function GrantEditDialog({ grant, onClose, onSaved }) {
             await api.put(`/awards/grants/${grant.id}`, { reason, granted_at: grantedAt });
             toast.success("Award updated");
             onSaved?.();
-        } catch (e) { toast.error(e.response?.data?.detail || "Could not update"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Could not update"); }
         setBusy(false);
     }
     return (
@@ -2264,7 +2264,7 @@ function GearDialog({ item, onSaved, trigger }) {
             toast.success("Saved");
             setOpen(false);
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Save failed"); }
     }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -2350,7 +2350,7 @@ function GearDialog({ item, onSaved, trigger }) {
                                             setForm({ ...form, cover_image: data.url });
                                             toast.success("Image uploaded");
                                         } catch (err) {
-                                            toast.error(err.response?.data?.detail || "Upload failed");
+                                            toast.error(formatApiError(err.response?.data?.detail) || "Upload failed");
                                         }
                                         e.target.value = "";
                                     }}
@@ -2449,7 +2449,7 @@ function CauseDialog({ cause, onSaved, trigger }) {
             toast.success("Saved");
             setOpen(false);
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Save failed"); }
     }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -2487,7 +2487,7 @@ function CauseDialog({ cause, onSaved, trigger }) {
                                     const { data } = await api.post("/causes/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
                                     setForm((p) => ({ ...p, cover_image: data.url }));
                                     toast.success("Cover photo uploaded");
-                                } catch (err) { toast.error(err.response?.data?.detail || "Upload failed"); }
+                                } catch (err) { toast.error(formatApiError(err.response?.data?.detail) || "Upload failed"); }
                             }} />
                         </label>
                         {form.cover_image && (
@@ -2578,7 +2578,7 @@ function EmailDeliverability() {
     useEffect(() => {
         api.get("/email/deliverability")
             .then(({ data }) => setData(data))
-            .catch((err) => setError(err.response?.data?.detail || "Could not load deliverability info"));
+            .catch((err) => setError(formatApiError(err.response?.data?.detail) || "Could not load deliverability info"));
     }, []);
 
     if (error) return <div className="bg-card border border-border rounded-2xl p-6 text-red-700" data-testid="deliverability-error">{error}</div>;
@@ -2695,7 +2695,7 @@ function EmailTestSend() {
                 toast.error(`Resend rejected the test: ${data.detail || "unknown error"}`, { duration: 10000 });
             }
         } catch (e) {
-            const detail = e.response?.data?.detail || "Failed to send test email";
+            const detail = formatApiError(e.response?.data?.detail) || "Failed to send test email";
             setLastResult({ ok: false, detail });
             toast.error(detail);
         }
@@ -2882,7 +2882,7 @@ function ComposeBlast() {
             toast.success(`Draft "${name.trim()}" saved`);
             loadDrafts();
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Save failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Save failed");
         }
     }
 
@@ -2892,7 +2892,7 @@ function ComposeBlast() {
             await api.delete(`/email/drafts/${did}`);
             toast.success("Draft deleted");
             loadDrafts();
-        } catch (e) { toast.error(e.response?.data?.detail || "Delete failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Delete failed"); }
     }
 
 
@@ -2926,7 +2926,7 @@ function ComposeBlast() {
         try {
             const { data } = await api.post("/email/preview", buildPayload());
             setPreview(data);
-        } catch (e) { toast.error(e.response?.data?.detail || "Preview failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Preview failed"); }
     }
 
     async function sendBlast(test_only = false) {
@@ -2937,7 +2937,7 @@ function ComposeBlast() {
             const { data } = await api.post("/email/blast", { ...buildPayload(), test_only });
             toast.success(`Sent: ${data.sent}, failed: ${data.failed}`);
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Send failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Send failed");
         }
         setBusy(false);
     }
@@ -3189,7 +3189,7 @@ function TemplateDialog({ template, onSaved, trigger }) {
             toast.success("Saved");
             setOpen(false);
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Save failed"); }
     }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -3295,7 +3295,7 @@ function SignatureDialog({ signature, kind, onSaved, trigger }) {
             toast.success("Saved");
             setOpen(false);
             onSaved();
-        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Save failed"); }
     }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -3533,7 +3533,7 @@ function DonationsCsvImportDialog({ onImported }) {
             a.remove();
             URL.revokeObjectURL(url);
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Template download failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Template download failed");
         }
     }
 
@@ -3547,7 +3547,7 @@ function DonationsCsvImportDialog({ onImported }) {
             });
             setPreview(data);
         } catch (e) {
-            toast.error(e.response?.data?.detail || "CSV preview failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "CSV preview failed");
             setPreview(null);
         } finally {
             setBusy(false);
@@ -3568,7 +3568,7 @@ function DonationsCsvImportDialog({ onImported }) {
             reset();
             onImported && onImported();
         } catch (e) {
-            toast.error(e.response?.data?.detail || "Import failed");
+            toast.error(formatApiError(e.response?.data?.detail) || "Import failed");
         } finally {
             setBusy(false);
         }

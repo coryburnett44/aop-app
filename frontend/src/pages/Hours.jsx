@@ -540,8 +540,10 @@ function MyHours() {
     const approved = entries.filter((e) => e.status === "approved").reduce((s, e) => s + e.hours, 0);
     const pending = entries.filter((e) => e.status === "pending").reduce((s, e) => s + e.hours, 0);
 
-    // Year options: current year and 4 prior
-    const years = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2, now.getFullYear() - 3, now.getFullYear() - 4];
+    // Year options: from 2017 back to current year (matches Reports + Transactions).
+    const _cy = now.getFullYear();
+    const years = [];
+    for (let y = _cy; y >= 2017; y--) years.push(y);
     const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
     return (

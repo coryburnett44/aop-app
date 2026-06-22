@@ -16,6 +16,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BJ — Iteration 67: Year filters back to 2017 + Admin.jsx toast hardening (2026-06-21)
+Two small but high-impact polishes.
+
+1. **Year filters extended to 2017** — for years the chapter has been active (founded ~2017). The Year `<Select>` on member-facing pages used to cap at 4–5 years back, which silently hid older records.
+   - `pages/Hours.jsx`: My Hours year filter — was `[current, -1..-4]`, now `[current..2017]`.
+   - `pages/Profile.jsx`: Tax-letter year picker — was `[current..current-5]`, now `[current..2017]`.
+   - Already correct (no change needed): `Transactions.jsx`, `Reports.jsx` (Hours/Donations/Awards filters), and backend endpoints (no min-year restriction was ever enforced server-side).
+
+2. **Admin.jsx toast hardening (P1 sweep)** — wrapped every `(?:e|err|ex)\.response\?\.data\?\.detail` reference in Admin.jsx with `formatApiError(...)` from `lib/api.js`. 37 call sites (38 incl. the iter66 fix) so any future endpoint that returns a FastAPI 422 validation array can no longer crash the React tree with `Objects are not valid as a React child`. `formatApiError` already handled strings/arrays/objects-with-`.msg` — we just had to apply it consistently.
+
+
+
 ### Phase BI — Iteration 65/66: Email drafts, per-template test send, failure surfaces (2026-06-21)
 Three admin productivity wins on the Email tab, plus a critical 422-crash defense.
 
