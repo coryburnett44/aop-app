@@ -10,7 +10,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Switch } from "../components/ui/switch";
 import { ShoppingBag, Tag, Pencil, Plus, Trash2, Upload as UploadIcon, Image as ImageIcon, Palette, Ruler } from "lucide-react";
-import PayPalCheckout from "../components/PayPalCheckout";
+// PayPal in-app gear checkout retired — see GearCheckout component below.
 import { toast } from "sonner";
 
 const NAVY = "#0A2463";
@@ -305,24 +305,25 @@ function GearCheckout({ item, user, onClose }) {
 
                 <div className="mt-4">
                     {user ? (
-                        <PayPalCheckout
-                            purpose="gear"
-                            amount={item.price * qty}
-                            gear_id={item.id}
-                            quantity={qty}
-                            gear_color={color}
-                            gear_size={size}
-                            disabled={!canCheckout || !item.in_stock}
-                            note={`${item.name}${color ? ` · ${color}` : ""}${size ? ` · ${size}` : ""}${qty > 1 ? ` ×${qty}` : ""}`}
-                            onComplete={onClose}
-                        />
+                        // In-app gear checkout via PayPal has been retired. Members now
+                        // reserve gear with chapter officers directly until the gear
+                        // store moves onto Zeffy. We still capture quantity / color /
+                        // size selections so the message to officers is unambiguous.
+                        <div className="w-full rounded-2xl bg-slate-50 border border-slate-200 p-4 text-sm" data-testid={`gear-checkout-unavailable-${item.id}`}>
+                            <div className="font-semibold text-slate-800">Online checkout is paused</div>
+                            <p className="text-slate-600 mt-1 leading-snug">
+                                Contact your chapter officers to reserve <strong>{item.name}</strong>
+                                {color ? <> · {color}</> : null}
+                                {size ? <> · {size}</> : null}
+                                {qty > 1 ? <> (×{qty})</> : null}. They&apos;ll confirm availability and arrange payment + shipping.
+                            </p>
+                        </div>
                     ) : (
                         <Button asChild className="w-full rounded-full text-white shadow-warm" style={{ backgroundColor: RED }}>
                             <a href="/login">Log in to checkout</a>
                         </Button>
                     )}
                 </div>
-                <p className="text-xs text-slate-500 text-center mt-2">Secure checkout via PayPal. Shipping arranged separately by your chapter.</p>
             </div>
         </div>
     );

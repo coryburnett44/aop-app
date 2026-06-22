@@ -18,7 +18,6 @@ import {
     Award as AwardIcon, Building2, Lock, DollarSign, Activity, Phone, AtSign,
     Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Download,
 } from "lucide-react";
-import PayPalCheckout from "../components/PayPalCheckout";
 import ZeffyCheckout from "../components/ZeffyCheckout";
 import AvatarUploader from "../components/AvatarUploader";
 import { MaritalStatusField, LanguagesEditor, CivilianDegreesEditor } from "../components/ProfileExtrasEditor";
@@ -214,28 +213,14 @@ export default function Profile() {
                     )}
                 </div>
                 {!user.is_lifetime_member && (
-                    <div className="mt-4 pt-4 border-t border-border/40 grid sm:grid-cols-2 gap-4" data-testid="dues-checkout-row">
-                        <div>
-                            <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Pay dues with PayPal</div>
-                            <PayPalCheckout
-                                purpose="dues"
-                                amount={105}
-                                note="Annual dues"
-                                onComplete={async () => {
-                                    const { data } = await api.get("/auth/me").catch(() => ({ data: null }));
-                                    if (data) setUser(data);
-                                }}
-                            />
-                        </div>
-                        <div>
-                            <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Pay dues with Zeffy</div>
-                            <ZeffyCheckout
-                                onComplete={async () => {
-                                    const { data } = await api.get("/auth/me").catch(() => ({ data: null }));
-                                    if (data) setUser(data);
-                                }}
-                            />
-                        </div>
+                    <div className="mt-4 pt-4 border-t border-border/40" data-testid="dues-checkout-row">
+                        <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Pay annual dues</div>
+                        <ZeffyCheckout
+                            onComplete={async () => {
+                                const { data } = await api.get("/auth/me").catch(() => ({ data: null }));
+                                if (data) setUser(data);
+                            }}
+                        />
                     </div>
                 )}
             </div>

@@ -2,12 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
-import { Textarea } from "../components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Heart, Target } from "lucide-react";
-import PayPalCheckout from "../components/PayPalCheckout";
 
 const NAVY = "#0A2463";
 const RED = "#C8102E";
@@ -73,7 +68,7 @@ function CauseCard({ cause, canPledge, onPledged }) {
 
                 <div className="mt-6 flex gap-2">
                     {canPledge ? (
-                        cause.payment_processor === "zeffy" && cause.zeffy_url ? (
+                        cause.zeffy_url ? (
                             <Button
                                 asChild
                                 className="flex-1 rounded-full text-white shadow-warm hover:opacity-90"
@@ -85,7 +80,12 @@ function CauseCard({ cause, canPledge, onPledged }) {
                                 </a>
                             </Button>
                         ) : (
-                            <PledgeDialog cause={cause} onPledged={onPledged} />
+                            // Donations through PayPal in-app checkout were retired.
+                            // Until an officer adds a Zeffy URL to this cause, members
+                            // see a friendly hand-off message rather than a dead button.
+                            <div className="flex-1 rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-600" data-testid={`donate-unavailable-${cause.id}`}>
+                                Online giving for this cause is being set up. Contact your chapter officers to donate directly in the meantime.
+                            </div>
                         )
                     ) : (
                         <Button asChild className="flex-1 rounded-full text-white shadow-warm" style={{ backgroundColor: RED }}>
@@ -98,50 +98,6 @@ function CauseCard({ cause, canPledge, onPledged }) {
     );
 }
 
-function PledgeDialog({ cause, onPledged }) {
-    const [open, setOpen] = useState(false);
-    const [amount, setAmount] = useState("");
-    const [anonymous, setAnonymous] = useState(false);
-    const [note, setNote] = useState("");
-
-    return (
-        <Dialog open={open} onOpenChange={setOpen}>
-            <Button onClick={() => setOpen(true)} className="flex-1 rounded-full text-white shadow-warm hover:opacity-90" style={{ backgroundColor: RED }} data-testid={`pledge-btn-${cause.id}`}>
-                <Heart className="h-4 w-4 mr-1.5" /> Donate
-            </Button>
-            <DialogContent className="max-w-md">
-                <DialogHeader><DialogTitle className="font-heading text-2xl" style={{ color: NAVY }}>Donate to {cause.title}</DialogTitle></DialogHeader>
-                <div className="space-y-4 mt-2">
-                    <div>
-                        <Label>Amount (USD)</Label>
-                        <Input type="number" step="1" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="50" className="rounded-xl mt-1.5" data-testid="pledge-amount-input" />
-                        <div className="flex gap-2 mt-2 flex-wrap">
-                            {[25, 50, 100, 250].map((q) => (
-                                <button key={q} onClick={() => setAmount(String(q))} className="rounded-full px-3 py-1 text-xs font-medium bg-slate-100 hover:bg-slate-200">${q}</button>
-                            ))}
-                        </div>
-                    </div>
-                    <div>
-                        <Label>Message (optional)</Label>
-                        <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} className="rounded-xl mt-1.5" placeholder="In honor of…" />
-                    </div>
-                    <label className="flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} className="rounded" data-testid="pledge-anonymous" />
-                        Make this donation anonymous
-                    </label>
-
-                    <div className="pt-2 border-t">
-                        <PayPalCheckout
-                            purpose="donation"
-                            amount={Number(amount) || 0}
-                            cause_id={cause.id}
-                            anonymous={anonymous}
-                            note={note}
-                            onComplete={() => { setOpen(false); setAmount(""); setNote(""); setAnonymous(false); onPledged?.(); }}
-                        />
-                    </div>
-                </div>
-            </DialogContent>
-        </Dialog>
-    );
-}
+// PledgeDialog removed — the in-app PayPal donation checkout was retired.
+// All donations now route to each cause's Zeffy URL. Causes without a Zeffy
+// URL show a "contact your chapter" hand-off message inside the cause card.
