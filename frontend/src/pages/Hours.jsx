@@ -8,7 +8,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Clock, Plus, Check, X, Calendar, Building2, User as UserIcon } from "lucide-react";
+import { Clock, Plus, Check, X, Calendar, Building2, User as UserIcon, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 
@@ -606,9 +606,51 @@ function MyHours() {
                 </div>
             ) : (
                 <div className="space-y-3">
-                    {entries.map((h) => <HoursCard key={h.id} h={h} />)}
+                    {entries.map((h) => (
+                        <HoursCard key={h.id} h={h}>
+                            <MyHoursActions h={h} onDeleted={load} />
+                        </HoursCard>
+                    ))}
                 </div>
             )}
+        </div>
+    );
+}
+
+/**
+ * Per-row actions on the member's own Hours list — status badge + a Delete
+ * button. Members can remove any of their own submissions (pending, approved,
+ * or rejected) — the backend `DELETE /hours/{id}` already enforces that the
+ * caller owns the record. We surface an extra confirmation step on approved
+ * entries since deleting an approved record means giving up credited hours.
+ */
+function MyHoursActions({ h, onDeleted }) {
+    async function del() {
+        const dateLabel = h.date ? format(parseISO(h.date), "MMM d, yyyy") : "this entry";
+        const msg = h.status === "approved"
+            ? `Permanently delete your APPROVED ${h.hours}h entry on ${dateLabel}?\n\nThese hours will be removed from your record. This cannot be undone.`
+            : `Delete your ${h.hours}h entry on ${dateLabel}?\n\nThis cannot be undone.`;
+        if (!confirm(msg)) return;
+        try {
+            await api.delete(`/hours/${h.id}`);
+            toast.success("Hours entry deleted");
+            onDeleted();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not delete");
+        }
+    }
+    return (
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <StatusBadge status={h.status} />
+            <button
+                type="button"
+                onClick={del}
+                className="text-[11px] text-destructive hover:underline font-semibold inline-flex items-center gap-1"
+                data-testid={`my-hours-delete-${h.id}`}
+                title={h.status === "approved" ? "Delete this approved entry (cannot be undone)" : "Delete this entry"}
+            >
+                <Trash2 className="h-3 w-3" />Delete
+            </button>
         </div>
     );
 }
