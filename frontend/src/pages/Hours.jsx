@@ -526,14 +526,21 @@ function CsvImportDialog() {
 function MyHours() {
     const [entries, setEntries] = useState([]);
     const now = new Date();
-    const [year, setYear] = useState(now.getFullYear());
+    // year is "all" or a stringified 4-digit year. We keep it as a string to
+    // simplify the Select binding and the URL-param logic below.
+    const [year, setYear] = useState(String(now.getFullYear()));
     const [period, setPeriod] = useState("all"); // all | q1..q4 | m1..m12
 
     const load = () => {
         const params = new URLSearchParams();
-        params.set("year", year);
-        if (period.startsWith("q")) params.set("quarter", period.slice(1));
-        else if (period.startsWith("m")) params.set("month", period.slice(1));
+        // "all" → omit year filter entirely so the backend returns every
+        // submission in the member's history. Period filters are ignored when
+        // year is "all" because Q1/Jan only make sense within a single year.
+        if (year !== "all") {
+            params.set("year", year);
+            if (period.startsWith("q")) params.set("quarter", period.slice(1));
+            else if (period.startsWith("m")) params.set("month", period.slice(1));
+        }
         api.get(`/me/hours?${params.toString()}`).then(({ data }) => setEntries(data));
     };
     useEffect(() => {
@@ -560,17 +567,18 @@ function MyHours() {
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
                     <div className="flex items-center gap-2">
                         <Label className="text-xs uppercase tracking-wider font-bold text-muted-foreground">Year</Label>
-                        <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
-                            <SelectTrigger className="rounded-full h-9 w-28 text-sm" data-testid="my-hours-year"><SelectValue /></SelectTrigger>
+                        <Select value={year} onValueChange={setYear}>
+                            <SelectTrigger className="rounded-full h-9 w-32 text-sm" data-testid="my-hours-year"><SelectValue /></SelectTrigger>
                             <SelectContent>
+                                <SelectItem value="all" data-testid="my-hours-year-all">All years</SelectItem>
                                 {years.map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
                             </SelectContent>
                         </Select>
                     </div>
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                         <Label className="text-xs uppercase tracking-wider font-bold text-muted-foreground shrink-0">Period</Label>
-                        <Select value={period} onValueChange={setPeriod}>
-                            <SelectTrigger className="rounded-full h-9 text-sm flex-1" data-testid="my-hours-period"><SelectValue /></SelectTrigger>
+                        <Select value={period} onValueChange={setPeriod} disabled={year === "all"}>
+                            <SelectTrigger className="rounded-full h-9 text-sm flex-1" data-testid="my-hours-period"><SelectValue placeholder={year === "all" ? "—" : ""} /></SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="all">Entire year</SelectItem>
                                 <SelectItem value="q1">Q1 (Jan–Mar)</SelectItem>

@@ -257,7 +257,9 @@ function HoursReport() {
     const now = new Date();
     const [view, setView] = useState("entries"); // entries | by_member | by_chapter | by_period
     const [chapters, setChapters] = useState([]);
-    const [year, setYear] = useState(now.getFullYear());
+    // year is "all" or a stringified 4-digit year so the Select binds cleanly
+    // and the "All years" option drops the year/period params from the query.
+    const [year, setYear] = useState(String(now.getFullYear()));
     const [period, setPeriod] = useState("all"); // all | q1..q4 | m1..m12
     const [chapterId, setChapterId] = useState("");
     const [eventType, setEventType] = useState("");
@@ -268,9 +270,14 @@ function HoursReport() {
     useEffect(() => { api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {}); }, []);
 
     function buildParams() {
-        const p = { year };
-        if (period.startsWith("q")) p.quarter = period.slice(1);
-        else if (period.startsWith("m")) p.month = period.slice(1);
+        const p = {};
+        // "All years" omits the year/period filters entirely so the backend
+        // returns lifetime totals.
+        if (year !== "all") {
+            p.year = year;
+            if (period.startsWith("q")) p.quarter = period.slice(1);
+            else if (period.startsWith("m")) p.month = period.slice(1);
+        }
         if (chapterId) p.chapter_id = chapterId;
         if (eventType) p.event_type = eventType;
         if (status) p.status_filter = status;
@@ -298,7 +305,7 @@ function HoursReport() {
 
     function exportCSV() {
         let headers;
-        let fname = `hours-${view}-${year}${period !== "all" ? "-" + period : ""}.csv`;
+        let fname = `hours-${view}-${year === "all" ? "all-years" : year}${year !== "all" && period !== "all" ? "-" + period : ""}.csv`;
         if (view === "entries") {
             headers = [
                 { label: "Member", get: (h) => h.user_name },
@@ -347,11 +354,11 @@ function HoursReport() {
             <div className="bg-card rounded-2xl border p-5 mb-4">
                 <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
                 <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                    <FilterSelect label="Year" value={String(year)} onChange={(v) => setYear(Number(v))} options={years.map((y) => ({ value: String(y), label: String(y) }))} testid="hours-filter-year" />
+                    <FilterSelect label="Year" value={year} onChange={setYear} options={[{ value: "all", label: "All years" }, ...years.map((y) => ({ value: String(y), label: String(y) }))]} testid="hours-filter-year" />
                     <div>
                         <Label className="text-xs">Period</Label>
-                        <Select value={period} onValueChange={setPeriod}>
-                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="hours-filter-period"><SelectValue /></SelectTrigger>
+                        <Select value={period} onValueChange={setPeriod} disabled={year === "all"}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="hours-filter-period"><SelectValue placeholder={year === "all" ? "—" : ""} /></SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="all">Entire year</SelectItem>
                                 <SelectItem value="q1">Q1</SelectItem>
@@ -481,7 +488,7 @@ function DonationsReport() {
     const [view, setView] = useState("entries"); // entries | by_member | by_chapter | by_period
     const [chapters, setChapters] = useState([]);
     const [causes, setCauses] = useState([]);
-    const [year, setYear] = useState(now.getFullYear());
+    const [year, setYear] = useState(String(now.getFullYear()));
     const [period, setPeriod] = useState("all"); // all | q1..q4 | m1..m12
     const [chapterId, setChapterId] = useState("");
     const [causeId, setCauseId] = useState("");
@@ -495,9 +502,12 @@ function DonationsReport() {
     }, []);
 
     function buildParams() {
-        const p = { year };
-        if (period.startsWith("q")) p.quarter = period.slice(1);
-        else if (period.startsWith("m")) p.month = period.slice(1);
+        const p = {};
+        if (year !== "all") {
+            p.year = year;
+            if (period.startsWith("q")) p.quarter = period.slice(1);
+            else if (period.startsWith("m")) p.month = period.slice(1);
+        }
         if (chapterId) p.chapter_id = chapterId;
         if (causeId) p.cause_id = causeId;
         if (status) p.status_filter = status;
@@ -523,7 +533,7 @@ function DonationsReport() {
 
     function exportCSV() {
         let headers;
-        const fname = `donations-${view}-${year}${period !== "all" ? "-" + period : ""}.csv`;
+        const fname = `donations-${view}-${year === "all" ? "all-years" : year}${year !== "all" && period !== "all" ? "-" + period : ""}.csv`;
         if (view === "entries") {
             headers = [
                 { label: "Date", get: (t) => t.created_at?.slice(0, 10) || "" },
@@ -571,11 +581,11 @@ function DonationsReport() {
             <div className="bg-card rounded-2xl border p-5 mb-4">
                 <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
                 <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                    <FilterSelect label="Year" value={String(year)} onChange={(v) => setYear(Number(v))} options={years.map((y) => ({ value: String(y), label: String(y) }))} testid="donations-filter-year" />
+                    <FilterSelect label="Year" value={year} onChange={setYear} options={[{ value: "all", label: "All years" }, ...years.map((y) => ({ value: String(y), label: String(y) }))]} testid="donations-filter-year" />
                     <div>
                         <Label className="text-xs">Period</Label>
-                        <Select value={period} onValueChange={setPeriod}>
-                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="donations-filter-period"><SelectValue /></SelectTrigger>
+                        <Select value={period} onValueChange={setPeriod} disabled={year === "all"}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="donations-filter-period"><SelectValue placeholder={year === "all" ? "—" : ""} /></SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="all">Entire year</SelectItem>
                                 <SelectItem value="q1">Q1</SelectItem>
