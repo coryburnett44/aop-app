@@ -1,4 +1,4 @@
-name: Backend pytest
+name: CI
 
 # Triggers: on every push to any branch + every pull request. Cancel any
 # in-flight run for the same ref so the workflow doesn't queue forever when
@@ -113,3 +113,37 @@ jobs:
           if [ -f uvicorn.pid ]; then
             kill "$(cat uvicorn.pid)" 2>/dev/null || true
           fi
+
+
+  frontend:
+    name: Frontend build (React + craco)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install --frozen-lockfile --network-timeout 600000
+
+      - name: Build production bundle
+        working-directory: frontend
+        # CI=false because the existing codebase has a handful of pre-existing
+        # ESLint warnings (react/no-unescaped-entities apostrophes) that CRA
+        # promotes to errors under CI=true. The build step still catches the
+        # bugs that matter — syntax errors, broken imports, missing modules,
+        # bad JSX. We can flip CI back to `true` once the cosmetic warnings
+        # are cleaned up (tracked in PRD backlog).
+        env:
+          CI: "false"
+          DISABLE_ESLINT_PLUGIN: "false"
+        run: yarn build

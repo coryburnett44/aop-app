@@ -16,6 +16,25 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BK — Iteration 68: CI frontend build + Awards extraction (2026-06-22)
+Two infrastructure wins from the standing P1/P2 list.
+
+1. **CI workflow now builds the frontend** (`.github/workflows/ci.yml`)
+   - Renamed workflow from "Backend pytest" → "CI" to reflect the broader scope.
+   - Added a parallel `frontend` job: Node 20, `yarn install --frozen-lockfile`, `yarn build`.
+   - Uses `CI=false` for the build step because the codebase still has ~24 pre-existing `react/no-unescaped-entities` ESLint warnings that CRA would promote to errors under `CI=true`. The build still catches the bugs that matter (syntax errors, broken imports, missing modules, JSX errors). Tracked: re-enable `CI=true` once cosmetic warnings are cleaned.
+   - Verified locally: `yarn build` succeeds in ~44s, produces a 579 KB gzipped bundle.
+
+2. **Awards routes extracted to `/app/backend/routes/awards.py`**
+   - Moved 9 routes + the `award_out` serializer (255 lines lifted from `server.py`).
+   - Endpoints owned by the new module: `GET /awards`, `GET /awards/{id}/grants`, `POST /awards`, `PUT /awards/{id}`, `DELETE /awards/{id}`, `POST /awards/{id}/grant`, `POST /awards/{id}/grant-bulk`, `DELETE /awards/grants/{id}`, `PUT /awards/grants/{id}`, `GET /members/{id}/awards`, `GET /me/awards`.
+   - Registered via `routes_awards.register(api, db=, admin_tab_dep=, get_current_user=, iso=, now_utc=)` next to the other route modules.
+   - `reconcile_awards` (startup data fixer) stays in server.py — it's a one-time migration helper, not a route.
+   - `server.py` is now 6233 lines (down from 6488; -4% in one extraction).
+   - All 18 iter64+65 tests still pass. Manual curl probe of `/api/awards` and `/api/me/awards` returns 200. The 3 pre-existing failures in `test_fraternity.py` + `test_iteration49_award_grants_endpoint.py` are data-drift issues unrelated to this refactor (verified by running on HEAD before changes — same failures occurred).
+
+
+
 ### Phase BJ — Iteration 67: Year filters back to 2017 + Admin.jsx toast hardening (2026-06-21)
 Two small but high-impact polishes.
 
