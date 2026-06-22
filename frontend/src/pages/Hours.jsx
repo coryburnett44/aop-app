@@ -807,7 +807,7 @@ function AdminHoursActions({ h, onReview, onRemove, onSaved }) {
  * description, note). Posts to `PUT /api/hours/{id}` which writes only the
  * fields that actually changed and stamps the appropriate audit columns.
  */
-function FullEditHoursDialog({ h, onSaved }) {
+export function FullEditHoursDialog({ h, onSaved, trigger }) {
     const [open, setOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const [form, setForm] = useState({});
@@ -874,15 +874,19 @@ function FullEditHoursDialog({ h, onSaved }) {
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <button
-                type="button"
-                onClick={() => setOpen(true)}
-                className="text-[11px] text-primary hover:underline font-semibold"
-                data-testid={`edit-all-${h.id}`}
-                title="Edit every field on this entry"
-            >
-                ⚙ Edit all
-            </button>
+            {trigger ? (
+                <span onClick={() => setOpen(true)} style={{ display: "inline-flex" }}>{trigger}</span>
+            ) : (
+                <button
+                    type="button"
+                    onClick={() => setOpen(true)}
+                    className="text-[11px] text-primary hover:underline font-semibold"
+                    data-testid={`edit-all-${h.id}`}
+                    title="Edit every field on this entry"
+                >
+                    ⚙ Edit all
+                </button>
+            )}
             <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto" data-testid={`edit-all-dialog-${h.id}`}>
                 <DialogHeader>
                     <DialogTitle className="font-heading text-2xl">Edit hours entry</DialogTitle>

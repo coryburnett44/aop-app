@@ -6,8 +6,10 @@ import { Label } from "../components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { Download, FileText, Filter, Printer } from "lucide-react";
+import { Download, FileText, Filter, Printer, Pencil, Trash2 } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { FullEditHoursDialog } from "./Hours";
+import { toast } from "sonner";
 
 function csvify(rows, headers) {
     const escape = (v) => {
@@ -264,6 +266,10 @@ function HoursReport() {
     const [chapterId, setChapterId] = useState("");
     const [eventType, setEventType] = useState("");
     const [status, setStatus] = useState("");
+    // Client-side text filter against user_name. Lives outside `buildParams`
+    // because the backend has no member-name search — we filter the rendered
+    // rows so the filter stays responsive as the admin types.
+    const [memberQuery, setMemberQuery] = useState("");
     const [rows, setRows] = useState([]);
     const [summary, setSummary] = useState(null);
 
@@ -377,6 +383,18 @@ function HoursReport() {
                         { value: "", label: "Any" }, { value: "aop_related", label: "AOP event" }, { value: "other", label: "Other" },
                     ]} testid="hours-filter-type" />
                 </div>
+                {view === "entries" && (
+                    <div className="mt-3">
+                        <Label className="text-xs">Search member</Label>
+                        <Input
+                            value={memberQuery}
+                            onChange={(e) => setMemberQuery(e.target.value)}
+                            placeholder="Filter by member name…"
+                            className="rounded-xl mt-1.5"
+                            data-testid="hours-filter-member-search"
+                        />
+                    </div>
+                )}
                 <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="hours-report-run">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="hours-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
@@ -403,17 +421,30 @@ function HoursReport() {
                 </div>
             )}
 
-            <div className="text-sm text-muted-foreground mt-4 mb-2">{rows.length} row{rows.length !== 1 ? "s" : ""}</div>
+            <div className="text-sm text-muted-foreground mt-4 mb-2">
+                {(() => {
+                    const shown = view === "entries" && memberQuery.trim()
+                        ? rows.filter((h) => (h.user_name || "").toLowerCase().includes(memberQuery.toLowerCase().trim())).length
+                        : rows.length;
+                    if (view === "entries" && memberQuery.trim()) {
+                        return `${shown} of ${rows.length} row${rows.length !== 1 ? "s" : ""} match "${memberQuery.trim()}"`;
+                    }
+                    return `${rows.length} row${rows.length !== 1 ? "s" : ""}`;
+                })()}
+            </div>
 
             <div className="bg-card rounded-2xl border overflow-x-auto">
                 <table className="w-full text-sm">
                     {view === "entries" && (
                         <>
                             <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-                                <tr><th className="text-left px-4 py-2.5">Member</th><th className="text-left px-4 py-2.5">Hrs</th><th className="text-left px-4 py-2.5">Type</th><th className="text-left px-4 py-2.5">Activity</th><th className="text-left px-4 py-2.5">Date</th><th className="text-left px-4 py-2.5">Status</th></tr>
+                                <tr><th className="text-left px-4 py-2.5">Member</th><th className="text-left px-4 py-2.5">Hrs</th><th className="text-left px-4 py-2.5">Type</th><th className="text-left px-4 py-2.5">Activity</th><th className="text-left px-4 py-2.5">Date</th><th className="text-left px-4 py-2.5">Status</th><th className="text-right px-4 py-2.5">Actions</th></tr>
                             </thead>
                             <tbody>
-                                {rows.map((h) => (
+                                {(memberQuery.trim()
+                                    ? rows.filter((h) => (h.user_name || "").toLowerCase().includes(memberQuery.toLowerCase().trim()))
+                                    : rows
+                                ).map((h) => (
                                     <tr key={h.id} className="border-t border-border" data-testid={`hours-report-row-${h.id}`}>
                                         <td className="px-4 py-2.5">{h.user_name}</td>
                                         <td className="px-4 py-2.5 font-bold">{h.hours}</td>
@@ -421,6 +452,44 @@ function HoursReport() {
                                         <td className="px-4 py-2.5 text-muted-foreground max-w-sm truncate">{h.activity || h.description}</td>
                                         <td className="px-4 py-2.5 text-muted-foreground">{h.date && format(parseISO(h.date), "MMM d, yyyy")}</td>
                                         <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{h.status}</td>
+                                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                            <FullEditHoursDialog
+                                                h={h}
+                                                onSaved={run}
+                                                trigger={
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                                        data-testid={`hours-report-edit-${h.id}`}
+                                                        title="Edit this entry"
+                                                    >
+                                                        <Pencil className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                }
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                data-testid={`hours-report-delete-${h.id}`}
+                                                title="Delete this entry"
+                                                onClick={async () => {
+                                                    if (!confirm(`Delete ${h.user_name}'s ${h.hours}h entry on ${h.date ? format(parseISO(h.date), "MMM d, yyyy") : "unknown date"}?\n\nThis cannot be undone.`)) return;
+                                                    try {
+                                                        await api.delete(`/hours/${h.id}`);
+                                                        toast.success("Hours entry deleted");
+                                                        run();
+                                                    } catch (e) {
+                                                        toast.error(e.response?.data?.detail || "Could not delete");
+                                                    }
+                                                }}
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>

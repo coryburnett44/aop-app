@@ -8,12 +8,13 @@ import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { fmtET } from "../lib/eventTime";
 import AdminDashboard from "./AdminDashboard";
 import Reports from "./Reports";
+import { FullEditHoursDialog } from "./Hours";
 import RichEditor from "../components/RichEditor";
 import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
 import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
@@ -1745,19 +1746,52 @@ function TierDialog({ tier, onSaved, trigger }) {
 function HoursAdmin() {
     const [items, setItems] = useState([]);
     const [filter, setFilter] = useState("pending");
+    const [search, setSearch] = useState("");
     const load = () => api.get(`/hours${filter !== "all" ? `?status_filter=${filter}` : ""}`).then(({ data }) => setItems(data));
     useEffect(() => { load(); }, [filter]);
     async function review(id, status) { await api.put(`/hours/${id}/review`, { status, note: "" }); toast.success(status); load(); }
+    async function del(h) {
+        // Hard delete from the queue — only used when the entry is wrong (typo,
+        // duplicate, etc.) and shouldn't show up in member history either.
+        if (!confirm(`Permanently delete ${h.user_name}'s ${h.hours}h entry on ${h.date ? format(parseISO(h.date), "MMM d, yyyy") : "unknown date"}?\n\nThis cannot be undone.`)) return;
+        try {
+            await api.delete(`/hours/${h.id}`);
+            toast.success("Hours entry deleted");
+            load();
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "Could not delete");
+        }
+    }
+    const filtered = search.trim()
+        ? items.filter((h) => (h.user_name || "").toLowerCase().includes(search.toLowerCase().trim()))
+        : items;
     return (
         <div>
-            <div className="flex gap-2 mb-4">
+            <div className="flex flex-wrap items-center gap-2 mb-4">
                 {["pending", "approved", "rejected", "all"].map((s) => (
                     <button key={s} onClick={() => setFilter(s)} className={`rounded-full px-4 py-1.5 text-sm font-medium capitalize ${filter === s ? "bg-primary text-primary-foreground shadow-warm" : "bg-muted hover:bg-muted/70"}`} data-testid={`admin-hours-filter-${s}`}>{s}</button>
                 ))}
+                <div className="ml-auto flex items-center gap-2 min-w-[260px]">
+                    <Input
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search by member name…"
+                        className="rounded-full h-9 text-sm"
+                        data-testid="admin-hours-search"
+                    />
+                    {search && (
+                        <button type="button" onClick={() => setSearch("")} className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap" data-testid="admin-hours-search-clear">Clear</button>
+                    )}
+                </div>
             </div>
-            {items.length === 0 ? <div className="text-muted-foreground">Empty.</div> : (
+            {search.trim() && (
+                <div className="text-xs text-muted-foreground mb-2">
+                    {filtered.length} of {items.length} entries match "{search.trim()}"
+                </div>
+            )}
+            {filtered.length === 0 ? <div className="text-muted-foreground">{search.trim() ? "No matches." : "Empty."}</div> : (
                 <div className="space-y-3">
-                    {items.map((h) => (
+                    {filtered.map((h) => (
                         <div key={h.id} className="bg-card border border-border rounded-2xl p-5 flex items-start gap-4" data-testid={`admin-hours-${h.id}`}>
                             <div className="w-14 h-14 rounded-full bg-primary/10 text-primary grid place-items-center font-heading font-bold text-lg shrink-0">{h.hours}<span className="text-[10px] font-normal -mt-0.5">hrs</span></div>
                             <div className="flex-1 min-w-0">
@@ -1785,12 +1819,40 @@ function HoursAdmin() {
                                     </div>
                                 )}
                             </div>
-                            {h.status === "pending" && (
-                                <div className="flex flex-col sm:flex-row gap-2 shrink-0">
-                                    <Button size="sm" onClick={() => review(h.id, "approved")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`admin-approve-${h.id}`}>Approve</Button>
-                                    <Button size="sm" variant="outline" onClick={() => review(h.id, "rejected")} className="rounded-full" data-testid={`admin-reject-${h.id}`}>Reject</Button>
-                                </div>
-                            )}
+                            <div className="flex flex-col sm:flex-row gap-2 shrink-0 items-end">
+                                {h.status === "pending" && (
+                                    <>
+                                        <Button size="sm" onClick={() => review(h.id, "approved")} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`admin-approve-${h.id}`}>Approve</Button>
+                                        <Button size="sm" variant="outline" onClick={() => review(h.id, "rejected")} className="rounded-full" data-testid={`admin-reject-${h.id}`}>Reject</Button>
+                                    </>
+                                )}
+                                <FullEditHoursDialog
+                                    h={h}
+                                    onSaved={load}
+                                    trigger={
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="outline"
+                                            className="rounded-full"
+                                            data-testid={`admin-hours-edit-${h.id}`}
+                                            title="Edit every field on this entry"
+                                        >
+                                            <Pencil className="h-3.5 w-3.5 mr-1" />Edit
+                                        </Button>
+                                    }
+                                />
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="rounded-full text-destructive hover:bg-destructive/10"
+                                    onClick={() => del(h)}
+                                    data-testid={`admin-hours-delete-${h.id}`}
+                                    title="Permanently delete this entry"
+                                >
+                                    <Trash2 className="h-3.5 w-3.5 mr-1" />Delete
+                                </Button>
+                            </div>
                         </div>
                     ))}
                 </div>
