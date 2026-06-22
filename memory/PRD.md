@@ -16,6 +16,28 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 
 ## Implemented
 
+### Phase BL — Iteration 69: Email module extraction + stale test refresh (2026-06-22)
+The biggest extraction yet.
+
+1. **Email routes moved to `/app/backend/routes/email.py`** — 24 routes + 7 Pydantic models + 3 serializers + 5 built-in starter templates + the seed function. Single `register(...)` callable wired in next to the other route modules.
+   - **Routes lifted**: `/email/templates` CRUD, `/email/preview`, `/email/blast`, `/me/email-preferences` (GET/PUT), `/email/blasts`, `/email/blasts/{id}/failed`, `/email/drafts` CRUD, `/email/password-setup-failures`, `/email/unsubscribe`, `/email/resubscribe`, `/email/unsubscribe-status`, `/email/deliverability`, `/email/test-send`, `/email/webhook`, `/email/signatures` CRUD, `/email/upload-image`.
+   - **Helpers lifted**: `render_template` (renamed `render_variables` inside the module), `resolve_segment`, `template_out`, `_draft_out`, `_signature_out`, all the request models, `BUILTIN_EMAIL_TEMPLATES`, `seed_builtin_email_templates`.
+   - **Kept in server.py** (shared with chat-digest and automated-emails): `send_bulk_email`, `_normalize_email_images`, `_verify_unsubscribe_token`, `RESEND_*` constants, `resend_sdk`, `put_object`, `IMAGE_EXT`, `MIME_BY_EXT`. These are injected into `register(...)`.
+   - **Startup hook** updated: `await _routes_email.seed_builtin_email_templates(db, iso, now_utc, logger)`.
+   - `server.py` is now **5431 lines** (down from 6233 → **−802 lines, −13%** in a single extraction).
+
+2. **Stale award test assertions refreshed** so the CI suite is fully green for awards:
+   - `test_fraternity.py::test_awards_seeded` — was checking for the original demo seed (Founder's Medal, Service Star, etc.) which admins have since replaced with real fraternity ribbons (Life Membership Ribbon, etc.). Test now verifies the endpoint returns ≥1 award with the count fields present.
+   - `test_fraternity.py::test_award_grant_revoke_flow` — was asserting duplicate grant returns 400, contradicting Iter 36's "multiple grants per member" feature. Test now asserts the second grant gets ordinal 2 and a new id.
+   - `test_iteration49_award_grants_endpoint::test_seeded_award_returns_enriched_rows` — expected exactly 5 grants but admins have granted more since the seed; relaxed to ≥5.
+
+3. **Verification**:
+   - All 50 iter64 / iter65 / phase_bc tests pass.
+   - All 8 award tests pass (1 expected skip).
+   - Manual curl probe of `/api/email/templates`, `/drafts`, `/blasts`, `/signatures`, `/deliverability`, `/me/email-preferences` all return 200 with correct payloads.
+
+
+
 ### Phase BK — Iteration 68: CI frontend build + Awards extraction (2026-06-22)
 Two infrastructure wins from the standing P1/P2 list.
 

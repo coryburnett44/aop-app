@@ -129,13 +129,18 @@ def test_tier_crud(admin_session):
 
 # ---------- Awards ----------
 def test_awards_seeded():
+    """The awards catalog is fully admin-managed in production (admins have
+    renamed / replaced the original demo seed with fraternity-specific ribbons).
+    Just verify the endpoint returns the list and each row carries the count
+    fields the UI needs — don't hard-code names that admins may have changed."""
     r = requests.get(f"{API}/awards", timeout=15)
     assert r.status_code == 200
     items = r.json()
-    expected = {"Founder's Medal", "Service Star", "Brotherhood Award", "Scholar", "Rookie of the Year"}
-    assert expected.issubset({a["name"] for a in items})
+    assert isinstance(items, list) and len(items) >= 1, f"expected at least 1 award, got {len(items)}"
     for a in items:
         assert "granted_count" in a
+        assert "granted_distinct_count" in a
+        assert a.get("name"), f"award row missing name: {a}"
 
 
 def test_award_admin_only(member_session):
@@ -154,17 +159,23 @@ def test_award_grant_revoke_flow(admin_session, member_id):
     grant = g.json()
     assert grant["award_id"] == aid and grant["user_id"] == member_id
     assert grant["reason"] == "for testing"
+    assert grant.get("ordinal") == 1, f"first grant should be ordinal 1, got {grant.get('ordinal')}"
     grant_id = grant["id"]
-    # duplicate grant -> 400
+    # Repeat grant of the same award to the same member is now allowed (iter 36)
+    # — it gets a new id and ordinal 2 so the UI can render "2nd Award".
     dup = admin_session.post(f"{API}/awards/{aid}/grant", json={"user_id": member_id}, timeout=15)
-    assert dup.status_code == 400
+    assert dup.status_code == 200, dup.text
+    dup_grant = dup.json()
+    assert dup_grant["id"] != grant_id, "duplicate grant should get a new id"
+    assert dup_grant.get("ordinal") == 2, f"second grant should be ordinal 2, got {dup_grant.get('ordinal')}"
     # member awards listing
     list_resp = requests.get(f"{API}/members/{member_id}/awards", timeout=15)
     assert list_resp.status_code == 200
     assert any(x["id"] == grant_id for x in list_resp.json())
-    # revoke
+    # revoke both grants we created
     rv = admin_session.delete(f"{API}/awards/grants/{grant_id}", timeout=15)
     assert rv.status_code == 200
+    admin_session.delete(f"{API}/awards/grants/{dup_grant['id']}", timeout=15)
     # cleanup award
     admin_session.delete(f"{API}/awards/{aid}", timeout=15)
 
