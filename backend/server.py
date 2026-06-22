@@ -3696,12 +3696,16 @@ async def _build_tax_letter_pdf(user: dict, year: int):
     elements.append(Spacer(1, 22))
     elements.append(Paragraph("With sincere thanks,", body_style))
 
-    # Signature image — pulled from bundled assets directory.
+    # Signature image — pulled from bundled assets directory. Aligned to the
+    # left margin so it sits directly above the signature block (name, title,
+    # organization) rather than floating to the page center.
     sig_path = "/app/backend/assets/cory_signature.png"
     if os.path.isfile(sig_path):
         try:
             elements.append(Spacer(1, 4))
-            elements.append(Image(sig_path, width=2.0 * inch, height=0.78 * inch))
+            sig_img = Image(sig_path, width=2.0 * inch, height=0.78 * inch)
+            sig_img.hAlign = "LEFT"
+            elements.append(sig_img)
         except Exception as ex:
             logger.warning(f"[tax-letter] signature render failed: {ex}")
 
