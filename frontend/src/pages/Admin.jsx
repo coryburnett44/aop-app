@@ -1326,7 +1326,31 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                 <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" data-testid={`edit-member-${member.id}`}>Edit</Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader><DialogTitle className="font-heading text-2xl">Edit {member.name}</DialogTitle></DialogHeader>
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl flex flex-wrap items-center gap-2">
+                        Edit {member.name}
+                        {member.pending_set_password && (
+                            // Show the pending-password badge inside the dialog header so
+                            // admins know they're editing a member who hasn't completed
+                            // onboarding yet — easy to miss when the table row is no longer
+                            // visible. Editing a member does NOT clear this flag; only the
+                            // member completing /set-password (or an admin setting a new
+                            // password in this dialog) clears it.
+                            <span
+                                className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-amber-100 text-amber-800 border border-amber-300"
+                                title="This member hasn't completed the /set-password step from the welcome email yet."
+                                data-testid={`edit-pending-setpw-${member.id}`}
+                            >
+                                Pending password setup
+                            </span>
+                        )}
+                    </DialogTitle>
+                    {member.pending_set_password && (
+                        <p className="text-xs text-amber-700 mt-1" data-testid={`edit-pending-setpw-help-${member.id}`}>
+                            They haven&apos;t signed in yet. Saving edits below keeps this flag in place — set a new password in the optional password field if you want to clear it manually.
+                        </p>
+                    )}
+                </DialogHeader>
                 <div className="space-y-3 mt-2">
                     <div className="grid grid-cols-2 gap-3">
                         <div><Label>Email</Label><Input value={form.email || ""} onChange={(e) => setForm({ ...form, email: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-email" /></div>
