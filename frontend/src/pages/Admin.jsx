@@ -1908,7 +1908,11 @@ function GrantAwardDialog({ award, members, onSaved }) {
         if (selectedIds.length === 0) { toast.error("Pick at least one member"); return; }
         setBusy(true);
         try {
-            const granted_at = grantedAt ? new Date(grantedAt).toISOString() : undefined;
+            // Same gotcha as Hours: an HTML date input gives "YYYY-MM-DD" with no time,
+            // and `new Date(s)` parses it as UTC midnight — which displays as the prior
+            // day in any western-hemisphere timezone. Append "T00:00:00" so it's parsed
+            // as local midnight; matches the edit dialog's behavior.
+            const granted_at = grantedAt ? new Date(`${grantedAt}T00:00:00`).toISOString() : undefined;
             if (selectedIds.length === 1) {
                 const payload = { user_id: selectedIds[0], reason };
                 if (granted_at) payload.granted_at = granted_at;

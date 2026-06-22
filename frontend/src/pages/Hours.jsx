@@ -100,7 +100,14 @@ function LogHoursDialog() {
         try {
             const payload = {
                 hours: Number(form.hours),
-                date: new Date(form.date).toISOString(),
+                // Submit the calendar day exactly as the volunteer picked it. The HTML
+                // date input gives us "YYYY-MM-DD" with no time, and `new Date(s)` parses
+                // it as UTC midnight, which displays as the previous day in any
+                // western-hemisphere timezone. Appending "T00:00:00" forces the parser to
+                // treat the value as **local** midnight — matches the edit dialog's
+                // behavior (which is why the user-reported "edit → save fixes the day"
+                // workaround works).
+                date: new Date(`${form.date}T00:00:00`).toISOString(),
                 event_type: form.event_type,
                 agency_name: form.agency_name,
                 activity: form.activity,
