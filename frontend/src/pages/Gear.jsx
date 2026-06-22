@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, mediaUrl } from "../lib/api";
+import { safeHtml } from "../lib/sanitize";
 import { useAuth } from "../context/AuthContext";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -179,7 +180,7 @@ function GearCard({ item, isAdmin, onOpen, onEdit, onChanged }) {
                             <h3
                                 className="font-heading font-bold text-lg leading-snug gear-title-rich"
                                 style={{ color: NAVY }}
-                                dangerouslySetInnerHTML={{ __html: item.name_html }}
+                                dangerouslySetInnerHTML={safeHtml(item.name_html)}
                             />
                         ) : (
                             <h3 className="font-heading font-bold text-lg leading-snug" style={{ color: NAVY }}>{item.name}</h3>

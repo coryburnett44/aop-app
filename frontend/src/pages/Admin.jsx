@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api, mediaUrl, formatApiError } from "../lib/api";
+import { safeHtml } from "../lib/sanitize";
 import { useAuth } from "../context/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Input } from "../components/ui/input";
@@ -3162,7 +3163,7 @@ function ComposeBlast() {
                             Sample: {preview.sample_recipient.name} &lt;{preview.sample_recipient.email}&gt;
                         </div>
                         <div className="font-bold mt-3 mb-2">{preview.subject}</div>
-                        <div className="border rounded-xl p-3 bg-white max-h-96 overflow-auto prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: preview.html }} />
+                        <div className="border rounded-xl p-3 bg-white max-h-96 overflow-auto prose prose-sm max-w-none" dangerouslySetInnerHTML={safeHtml(preview.html)} />
                     </div>
                 ) : (
                     <div className="text-sm text-muted-foreground">Click <strong>Preview</strong> to render against a sample recipient.</div>
@@ -3331,7 +3332,7 @@ function SignatureGrid({ items, onSaved, onDelete }) {
                             <Button variant="ghost" size="icon" onClick={() => onDelete(s.id)} data-testid={`delete-signature-${s.id}`}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                         </div>
                     </div>
-                    <div className="mt-3 border rounded-xl p-3 bg-slate-50 max-h-48 overflow-auto prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: s.body_html }} />
+                    <div className="mt-3 border rounded-xl p-3 bg-slate-50 max-h-48 overflow-auto prose prose-sm max-w-none" dangerouslySetInnerHTML={safeHtml(s.body_html)} />
                 </div>
             ))}
         </div>

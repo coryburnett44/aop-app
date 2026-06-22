@@ -1,4 +1,5 @@
 import { mediaUrl } from "../../lib/api";
+import { safeHtml } from "../../lib/sanitize";
 
 /**
  * Renders a single CMS block to its public-facing output.
@@ -89,7 +90,7 @@ export function BlockRenderer({ block }) {
                 <div
                     className="prose max-w-none my-4"
                     data-testid={`block-html-${block.id}`}
-                    dangerouslySetInnerHTML={{ __html: p.html || "" }}
+                    dangerouslySetInnerHTML={safeHtml(p.html || "")}
                 />
             );
         case "columns": {
