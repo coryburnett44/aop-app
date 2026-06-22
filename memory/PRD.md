@@ -15,6 +15,33 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Phase BL — Iteration 67: Inactive-member guard + 15-day grace + date-display TZ fix (2026-02-15)
+
+**User requests addressed:**
+1. Off-by-one calendar-day display on Admin Members `membership_expires_at` and Hours `service_date` (e.g. Nov 11 showing as Nov 10 in EST because the value was UTC midnight).
+2. Auto-flip members to `status_override='inactive'` after 15 days past dues expiry (was 30).
+3. Restrict inactive members to Home + Profile only — both client-side (nav hidden + redirect) and server-side (API 403).
+
+**Changes:**
+- `/app/frontend/src/lib/dateUtil.js` — new `formatCalendarDay(iso, pattern)` helper that strips the time portion and parses as local midnight so the displayed calendar day matches what the submitter typed (TZ-safe). Wired into Admin Members expiration column and Hours rows.
+- `/app/backend/server.py` L30 — `GRACE_PERIOD_DAYS = 15` (was 30). `_auto_inactive_loop` (L5007-5028) uses the constant to flip stale members nightly.
+- `/app/backend/server.py` L5455-5533 — new `block_inactive_member_writes` HTTP middleware + `INACTIVE_ALLOWED_PREFIXES` / `INACTIVE_ALLOWED_EXACT` allow-lists. Admins always bypass; inactive members get 403 for any non-allowlisted `/api/*` path. Allow-list covers auth, `/api/me*`, `/api/files/*`, `/api/photos*`, `/api/news`, `/api/chapters`, `/api/causes`, unsubscribe links, health.
+- `/app/frontend/src/components/ProtectedRoute.jsx` — new `allowInactive` prop; inactive non-admins on any non-allowlisted route redirect to `/`.
+- `/app/frontend/src/components/Navbar.jsx` — hides every nav link except Home + Profile for inactive non-admins and surfaces a red `data-testid='inactive-membership-banner'` strip.
+
+**Verification (iter67):**
+- Backend pytest `/app/backend/tests/test_iteration67_inactive_member_guard.py` — 14/14 pass.
+- Inactive member: allow-listed endpoints succeed; `/api/members`, `/api/hours`, `/api/events`, `/api/donations` all return 403 with "membership is inactive".
+- Admin with `status_override='inactive'` still bypasses (verified non-403).
+- Active-member regression: no false blocks.
+- Cron logic: user with `expires_at = now-20d` flipped to inactive; `now-5d` not flipped.
+- Frontend: inactive maya redirected from `/hours` and `/events` to `/`; banner visible; nav stripped to logo. Admin Members table shows `'Dec 31, 2025'` (was `Dec 30`) for `2025-12-31T00:00:00Z`.
+
+**Known cosmetic nits (not bugs):**
+- `INACTIVE_ALLOWED_PREFIXES` lists `/api/health` though the actual health route is `/health`. Middleware only intercepts `/api/*` so this is dead-but-harmless.
+- `INACTIVE_ALLOWED_EXACT` contains `/api/auth/me` + `/api/auth/logout` which are already covered by the `/api/auth/` prefix — redundant.
+
+
 
 ### Phase BL — Iteration 69: Email module extraction + stale test refresh (2026-06-22)
 The biggest extraction yet.
