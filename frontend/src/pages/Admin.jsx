@@ -3661,7 +3661,10 @@ function DonationsCsvImportDialog({ onImported }) {
                 </DialogHeader>
                 <div className="space-y-4 mt-2">
                     <div className="rounded-xl bg-muted/40 p-3 text-sm space-y-1">
-                        <div><strong>CSV columns:</strong> <code className="bg-background px-1.5 py-0.5 rounded">member_email, amount, cause, date, note, anonymous, method</code></div>
+                        <div><strong>CSV columns:</strong> <code className="bg-background px-1.5 py-0.5 rounded">member_email, full_name, first_name, last_name, amount, cause, date, note, anonymous, method</code></div>
+                        <div className="text-xs text-muted-foreground">
+                            <strong>Member identifier (one per row):</strong> <code>member_email</code> (preferred), <em>or</em> <code>full_name</code>, <em>or</em> both <code>first_name</code>+<code>last_name</code> — use a name when the on-file email doesn&apos;t match. Ambiguous names (≥2 matches) are flagged so you can add an email to disambiguate.
+                        </div>
                         <div className="text-xs text-muted-foreground">
                             <code>cause</code> is optional — leave blank to import as unallocated, OR enter any text. If the text matches an existing cause title (case-insensitive) the donation links to that cause; if not, it&apos;s saved as unallocated and the label is preserved on the receipt. <code>date</code> accepts YYYY-MM-DD, MM/DD/YYYY, M/D/YY, or 15-Jun-2026. <code>anonymous</code> = true/false (default false).
                         </div>
@@ -3705,7 +3708,7 @@ function DonationsCsvImportDialog({ onImported }) {
                                     <div key={r.row} className="px-3 py-2 text-xs flex items-start gap-2" data-testid={`donations-csv-row-${r.row}`}>
                                         <span className={`uppercase tracking-wider font-bold rounded-full px-2 py-0.5 text-[10px] shrink-0 ${r.status === "READY" ? "bg-emerald-100 text-emerald-700" : "bg-destructive/15 text-destructive"}`}>{r.status}</span>
                                         <div className="flex-1 min-w-0">
-                                            <div className="font-semibold">Row {r.row} · {r.member_email || "(no email)"} · ${r.amount_raw || "0"}{r.cause_title ? ` · ${r.cause_title}` : ""}</div>
+                                            <div className="font-semibold">Row {r.row} · {r.member_email || r.member_identifier || "(no member)"} · ${r.amount_raw || "0"}{r.cause_title ? ` · ${r.cause_title}` : ""}</div>
                                             {r.errors.length > 0 && (
                                                 <div className="text-destructive">{r.errors.join("; ")}</div>
                                             )}

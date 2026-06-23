@@ -364,13 +364,19 @@ function CsvImportDialog() {
                     <div className="bg-primary/5 border border-primary/20 rounded-2xl p-3 text-xs leading-relaxed">
                         <div className="font-bold text-primary mb-1">CSV format</div>
                         <div className="text-foreground/80">
-                            Required columns: <code>member_email</code>, <code>hours</code>, <code>date</code>.
+                            <strong>Member identifier (one per row):</strong> <code>member_email</code> (preferred) <em>or</em> <code>full_name</code> <em>or</em> both <code>first_name</code>+<code>last_name</code>. Use a name when the on-file email doesn&apos;t match what the member uses today.
+                        </div>
+                        <div className="text-foreground/80 mt-1">
+                            <strong>Other required:</strong> <code>hours</code>, <code>date</code>.
                             Optional: <code>activity</code>, <code>event_type</code>, <code>agency_name</code>,
                             <code>host_name</code>, <code>host_email</code>, <code>host_phone</code>.
                             Every imported row is <strong>auto-approved</strong>. Max 1,000 rows / 1&nbsp;MB.
                         </div>
                         <div className="text-foreground/80 mt-1.5">
                             <strong>Date formats accepted:</strong> <code>YYYY-MM-DD</code> (e.g. 2026-06-15), <code>MM/DD/YYYY</code> (Excel default), <code>M/D/YY</code>, <code>15-Jun-2026</code>.
+                        </div>
+                        <div className="text-foreground/80 mt-1.5 italic">
+                            If two members share the same name, that row will be flagged so you can add an email to disambiguate.
                         </div>
                         <button
                             type="button"

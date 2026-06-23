@@ -23,7 +23,6 @@ The module is registered onto the `/api` router via `register(api, ...)` at
 the bottom of server.py.
 """
 import asyncio  # noqa: F401 — present so future async helpers can land here
-import re
 import uuid
 from typing import List, Literal, Optional
 
@@ -101,8 +100,8 @@ async def recompute_cause_totals(cause_id: str):
     await _db.causes.update_one({"id": cause_id}, {"$set": {"raised_amount": raised, "donor_count": count}})
 
 
-DONATIONS_CSV_COLUMNS = ["member_email", "amount", "cause", "date", "note", "anonymous", "method"]
-DONATIONS_CSV_SAMPLE_ROW = ["member@clubhaven.app", "100.00", "Anniversary Fund", "2026-04-15", "10-year drive", "false", "manual_csv"]
+DONATIONS_CSV_COLUMNS = ["member_email", "full_name", "first_name", "last_name", "amount", "cause", "date", "note", "anonymous", "method"]
+DONATIONS_CSV_SAMPLE_ROW = ["member@clubhaven.app", "", "", "", "100.00", "Anniversary Fund", "2026-04-15", "10-year drive", "false", "manual_csv"]
 
 
 def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapter_scoped, chapter_scope_user_ids):
@@ -225,6 +224,12 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
         import csv as _csv
         import io as _io
         from routes.hours import _parse_csv_date as _parse_csv_date_local
+        from routes._csv_member_lookup import (
+            MEMBER_LOOKUP_HEADER_HINT,
+            member_lookup_columns_present,
+            prefetch_member_lookup,
+            resolve_member_for_row,
+        )
 
         raw = await file.read()
         if not raw:
@@ -237,21 +242,24 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
         if not reader.fieldnames:
             raise HTTPException(status_code=400, detail="CSV has no header row")
         headers_lower = {h.strip().lower() for h in reader.fieldnames}
-        required = {"member_email", "amount"}
-        missing = required - headers_lower
-        if missing:
-            raise HTTPException(status_code=400, detail=f"Missing required column(s): {', '.join(sorted(missing))}")
+        if not member_lookup_columns_present(headers_lower):
+            raise HTTPException(status_code=400, detail=MEMBER_LOOKUP_HEADER_HINT)
+        if "amount" not in headers_lower:
+            raise HTTPException(status_code=400, detail="Missing required column: amount")
 
         # Pre-cache cause lookup (case-insensitive on title)
         all_causes = await db.causes.find({}, {"_id": 0, "id": 1, "title": 1}).to_list(500)
         cause_by_title = {(c.get("title") or "").strip().lower(): c["id"] for c in all_causes}
 
+        # Pre-cache member resolution for every row in one DB round-trip
+        all_rows = list(reader)
+        lookup_index = await prefetch_member_lookup(db, all_rows)
+
         rows_preview: list[dict] = []
         valid_writes: list[dict] = []
         causes_touched: set[str] = set()
-        for idx, raw_row in enumerate(reader, start=2):  # row 2 = first data row (header is row 1)
+        for idx, raw_row in enumerate(all_rows, start=2):  # row 2 = first data row (header is row 1)
             row = {k.strip().lower(): (v or "").strip() for k, v in raw_row.items() if k}
-            email = row.get("member_email", "").lower()
             amount_raw = row.get("amount", "")
             cause_title = row.get("cause", "").strip()
             date_raw = row.get("date", "")
@@ -259,9 +267,13 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
             anonymous = row.get("anonymous", "").strip().lower() in ("true", "yes", "1", "y", "t")
             method = row.get("method", "").strip() or "manual_csv"
 
+            res = resolve_member_for_row(raw_row, lookup_index)
+            u = res.user
+
             row_out: dict = {
                 "row": idx,
-                "member_email": email,
+                "member_email": (u.get("email") if u else "") or res.label or row.get("member_email", "") or row.get("email", ""),
+                "member_identifier": res.label,
                 "amount_raw": amount_raw,
                 "cause_title": cause_title,
                 "status": "READY",
@@ -269,8 +281,8 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
                 "warnings": [],
             }
 
-            if not email:
-                row_out["errors"].append("member_email is required")
+            if res.error:
+                row_out["errors"].append(res.error)
             if not amount_raw:
                 row_out["errors"].append("amount is required")
             try:
@@ -280,16 +292,6 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
             except (TypeError, ValueError):
                 row_out["errors"].append(f"amount '{amount_raw}' is not a number")
                 amount = 0.0
-
-            # Resolve user
-            u = None
-            if email:
-                u = await db.users.find_one(
-                    {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
-                    {"_id": 0, "id": 1, "name": 1, "chapter_id": 1},
-                )
-                if not u:
-                    row_out["errors"].append(f"no member with email '{email}'")
 
             # Resolve cause — fully optional. Blank ⇒ unallocated; matched
             # ⇒ linked; unmatched ⇒ unallocated + warning + preserved label.
@@ -320,6 +322,7 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
                 row_out["amount"] = amount
                 row_out["date_iso"] = iso(dt) if dt else None
                 row_out["cause_id"] = resolved_cause_id
+                row_out["matched_by"] = res.matched_by
                 desc_parts = []
                 if cause_label_for_desc:
                     desc_parts.append(f"Fund: {cause_label_for_desc}")
@@ -329,7 +332,7 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
                 tx = {
                     "id": str(uuid.uuid4()),
                     "user_id": u["id"],
-                    "user_name": "Anonymous" if anonymous else (u.get("name", "") or email),
+                    "user_name": "Anonymous" if anonymous else (u.get("name", "") or u.get("email", "") or res.label),
                     "type": "donation",
                     "amount": amount,
                     "currency": "USD",

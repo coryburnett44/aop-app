@@ -25,6 +25,12 @@ from fastapi import Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 
 from models import HoursLogIn, HoursReviewIn, AdminHoursLogIn, AdminHoursBulkLogIn, AdminHoursEditIn
+from routes._csv_member_lookup import (
+    MEMBER_LOOKUP_HEADER_HINT,
+    member_lookup_columns_present,
+    prefetch_member_lookup,
+    resolve_member_for_row,
+)
 
 
 # Formats we try when parsing user-supplied CSV dates. Order matters — try the
@@ -219,13 +225,21 @@ def register(
     async def admin_csv_template(_: dict = Depends(admin_tab_dep("hours"))):
         """Returns a small CSV template so admins know which headers to use.
         Includes a single illustrative row that the admin should delete before
-        uploading, plus a comment line documenting accepted date formats."""
+        uploading, plus a comment line documenting accepted date formats.
+
+        Member identifier: `member_email` is the preferred key, but admins
+        can also use `full_name`, OR `first_name`+`last_name` for rows where
+        the on-file email doesn't match what the member uses day-to-day.
+        Resolution falls back in that order; ambiguous name matches are
+        flagged as errors so the admin can supply an email."""
         headers = [
-            "member_email", "hours", "date", "activity", "event_type",
+            "member_email", "full_name", "first_name", "last_name",
+            "hours", "date", "activity", "event_type",
             "agency_name", "host_name", "host_email", "host_phone",
         ]
         sample = [
-            "member@clubhaven.app", "2.5", "2026-06-15",
+            "member@clubhaven.app", "", "", "",
+            "2.5", "2026-06-15",
             "Trail cleanup at Forest Park", "aop_related",
             "Wounded Warrior Project", "Jane Host",
             "jane@example.org", "555-123-4567",
@@ -246,17 +260,25 @@ def register(
         dry_run: bool = False,
         admin: dict = Depends(admin_tab_dep("hours")),
     ):
-        """Bulk-import volunteer hours from a CSV file. Required columns:
-        member_email, hours, date. Optional: activity, event_type, agency_name,
-        host_name, host_email, host_phone. Every successfully parsed row is
-        auto-approved. Rows that fail validation are returned in `errors`
-        so the admin can fix and re-upload.
+        """Bulk-import volunteer hours from a CSV file.
 
-        When `dry_run=true` is passed (querystring or form), nothing is written
-        to the database. The response includes a `preview` array with one entry
-        per CSV row (status='ready' or 'error', resolved member name, parsed
-        values, and an error message when applicable) so admins can sanity-check
-        the whole file before committing.
+        Member identifier (any ONE of):
+          - `member_email` (preferred, exact case-insensitive)
+          - `full_name` (matches `users.name` exactly, case-insensitive)
+          - `first_name` + `last_name` (both, exact case-insensitive)
+        Resolution falls back in the order above. Ambiguous name matches
+        (>1 member with the same name) become row errors and require the
+        admin to supply an email.
+
+        Other required columns: hours, date.
+        Optional: activity, event_type, agency_name, host_name, host_email,
+        host_phone. Every successfully parsed row is auto-approved. Rows
+        that fail validation are returned in `errors` so the admin can fix
+        and re-upload.
+
+        When `dry_run=true` is passed (querystring or form), nothing is
+        written to the database. The response includes a `preview` array
+        with one entry per CSV row.
         """
         if not file.filename or not file.filename.lower().endswith(".csv"):
             raise HTTPException(status_code=400, detail="Upload a .csv file")
@@ -276,30 +298,25 @@ def register(
         if not reader.fieldnames:
             raise HTTPException(status_code=400, detail="CSV has no header row")
         normalized = {(h or "").strip().lower(): h for h in reader.fieldnames}
-        if "member_email" not in normalized and "email" not in normalized:
-            raise HTTPException(status_code=400, detail="CSV must include a 'member_email' column")
+        headers_lower = set(normalized.keys())
+        if not member_lookup_columns_present(headers_lower):
+            raise HTTPException(status_code=400, detail=MEMBER_LOOKUP_HEADER_HINT)
         if "hours" not in normalized:
             raise HTTPException(status_code=400, detail="CSV must include an 'hours' column")
         if "date" not in normalized:
             raise HTTPException(status_code=400, detail="CSV must include a 'date' column")
 
-        email_key = normalized.get("member_email") or normalized.get("email")
         hours_key = normalized["hours"]
         date_key = normalized["date"]
 
-        # Pre-resolve every email in the file in one DB round-trip
         rows = list(reader)
         if not rows:
             raise HTTPException(status_code=400, detail="CSV has no data rows")
         if len(rows) > 1000:
             raise HTTPException(status_code=400, detail="CSV is too large (max 1000 rows)")
 
-        emails = sorted({(r.get(email_key) or "").strip().lower() for r in rows if (r.get(email_key) or "").strip()})
-        users_cursor = db.users.find(
-            {"email": {"$in": emails}},
-            {"_id": 0, "id": 1, "name": 1, "email": 1, "chapter_id": 1},
-        )
-        users_by_email = {u["email"].lower(): u for u in await users_cursor.to_list(len(emails) or 1)}
+        # Pre-resolve every member identifier (email + names) in one DB round-trip
+        lookup_index = await prefetch_member_lookup(db, rows)
 
         scoped_ids = None
         if is_chapter_scoped(admin):
@@ -316,12 +333,12 @@ def register(
                 return ""
             return (row.get(real) or "").strip()
 
-        def add_error(row_num: int, email: str, member_name: str, message: str, raw_hours: str = "", raw_date: str = "", raw_activity: str = ""):
+        def add_error(row_num: int, ident_label: str, member_name: str, message: str, raw_hours: str = "", raw_date: str = "", raw_activity: str = ""):
             errors.append({"row": row_num, "message": message})
             preview.append({
                 "row": row_num,
                 "status": "error",
-                "email": email,
+                "email": ident_label,
                 "member_name": member_name,
                 "hours": raw_hours,
                 "date": raw_date,
@@ -330,36 +347,33 @@ def register(
             })
 
         for idx, row in enumerate(rows, start=2):  # row 1 is header, so data starts at 2
-            email_raw = (row.get(email_key) or "").strip()
-            email = email_raw.lower()
             raw_hours = (row.get(hours_key) or "").strip()
             raw_date = (row.get(date_key) or "").strip()
             raw_activity = opt(row, "activity")
 
-            if not email:
-                add_error(idx, "", "", "Missing member_email", raw_hours, raw_date, raw_activity)
+            res = resolve_member_for_row(row, lookup_index)
+            if res.error or not res.user:
+                add_error(idx, res.label, "", res.error or "could not resolve member", raw_hours, raw_date, raw_activity)
                 continue
-            target = users_by_email.get(email)
-            if not target:
-                add_error(idx, email_raw, "", f"No member with email {email_raw}", raw_hours, raw_date, raw_activity)
-                continue
+            target = res.user
+            ident_label = res.label or target.get("email", "")
             if scoped_ids is not None and target["id"] not in scoped_ids:
-                add_error(idx, email_raw, target.get("name", ""), f"{email_raw} is out of your chapter scope", raw_hours, raw_date, raw_activity)
+                add_error(idx, ident_label, target.get("name", ""), f"{ident_label} is out of your chapter scope", raw_hours, raw_date, raw_activity)
                 continue
             try:
                 hours_val = float(raw_hours)
                 if hours_val <= 0 or hours_val > 1000:
                     raise ValueError("hours must be > 0 and <= 1000")
             except Exception:
-                add_error(idx, email_raw, target.get("name", ""), "Invalid hours value", raw_hours, raw_date, raw_activity)
+                add_error(idx, ident_label, target.get("name", ""), "Invalid hours value", raw_hours, raw_date, raw_activity)
                 continue
             if not raw_date:
-                add_error(idx, email_raw, target.get("name", ""), f"Missing date — use {DATE_FORMATS_FOR_HUMANS}", raw_hours, raw_date, raw_activity)
+                add_error(idx, ident_label, target.get("name", ""), f"Missing date — use {DATE_FORMATS_FOR_HUMANS}", raw_hours, raw_date, raw_activity)
                 continue
             try:
                 parsed_dt = _parse_csv_date(raw_date)
             except ValueError as exc:
-                add_error(idx, email_raw, target.get("name", ""), str(exc), raw_hours, raw_date, raw_activity)
+                add_error(idx, ident_label, target.get("name", ""), str(exc), raw_hours, raw_date, raw_activity)
                 continue
             event_type = (opt(row, "event_type") or "aop_related").lower()
             if event_type not in ("aop_related", "other"):
@@ -391,8 +405,9 @@ def register(
             preview.append({
                 "row": idx,
                 "status": "ready",
-                "email": target.get("email", email_raw),
+                "email": target.get("email", ident_label),
                 "member_name": target.get("name", ""),
+                "matched_by": res.matched_by,
                 "hours": hours_val,
                 "date": iso(parsed_dt)[:10],
                 "activity": activity_text,

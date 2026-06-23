@@ -15,6 +15,26 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Phase BL — Iteration 68: CSV importers accept name in lieu of email (2026-02-15)
+
+**User request:** "When uploading CSV files, allow to add either full names, or first and last names in lieu of the email address because the members use different email addresses." User-chosen options: apply to both Hours + Donations; ambiguous names → ERROR (admin must add email); exact case-insensitive matching.
+
+**Changes:**
+- New `/app/backend/routes/_csv_member_lookup.py` — shared helper. Pre-fetches all candidate users in ONE Mongo round-trip and resolves each row in-memory.
+- `/app/backend/routes/hours.py` — `/api/hours/admin/csv` now accepts `member_email` OR `full_name` OR (`first_name`+`last_name`). Template + header validation updated. Preview rows include `matched_by`.
+- `/app/backend/routes/donations.py` — `/api/donations/admin/csv` mirror-changes. Adds `member_identifier` to preview rows so the UI can label the source.
+- `/app/frontend/src/pages/Hours.jsx` + `Admin.jsx` — help text spells out the three lookup paths + ambiguity warning. Donations preview row label falls back to identifier when email is empty.
+- Tests: 16 new pytest cases in `/app/backend/tests/test_iteration68_csv_member_lookup.py` covering all four resolution paths + priority ordering + ambiguity.
+
+**Resolution semantics:**
+1. `member_email` present → exact case-insensitive match. NOT found ⇒ error (does NOT silently fall through to name, since that would hide typos).
+2. `full_name` present → exact case-insensitive on `users.name`. >1 match ⇒ "ambiguous: N members named '…'. Add a 'member_email' column to disambiguate."
+3. `first_name`+`last_name` present → exact case-insensitive on `users.first_name` AND `users.last_name`. Same ambiguity rule.
+4. None present ⇒ "row is missing a member identifier".
+
+**Verification:** Backend pytest 16/16 pass. End-to-end curl dry-run validated all four paths and the ambiguity error (seeded two "Collision Twin" users) on both Hours and Donations. UI screenshot confirms the new help-text dialog renders correctly.
+
+
 ### Phase BL — Iteration 67: Inactive-member guard + 15-day grace + date-display TZ fix (2026-02-15)
 
 **User requests addressed:**
