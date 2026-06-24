@@ -401,8 +401,11 @@ function WinnerEditor({ category, row, onClose, onSaved }) {
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
+        // Always load chapters too — member categories can OPTIONALLY tag a
+        // chapter ("the chapter this member was in during that year") so it
+        // surfaces on the Personnel Brief.
+        api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
         if (isMember) api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
-        else api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
     }, [isMember]);
 
     const filteredMembers = useMemo(() => {
@@ -425,7 +428,9 @@ function WinnerEditor({ category, row, onClose, onSaved }) {
                     category: category.key,
                     year: Number(form.year),
                     user_id: isMember ? form.user_id : null,
-                    chapter_id: !isMember ? form.chapter_id : null,
+                    // Member categories can OPTIONALLY tag a chapter context
+                    // for the Personnel Brief; chapter categories require it.
+                    chapter_id: form.chapter_id || null,
                     note: form.note,
                 });
                 toast.success("Winner added");
@@ -433,7 +438,7 @@ function WinnerEditor({ category, row, onClose, onSaved }) {
                 await api.put(`/of-the-year/${row.id}`, {
                     year: Number(form.year),
                     user_id: isMember ? form.user_id : null,
-                    chapter_id: !isMember ? form.chapter_id : null,
+                    chapter_id: form.chapter_id || null,
                     note: form.note,
                 });
                 toast.success("Updated");
@@ -487,6 +492,25 @@ function WinnerEditor({ category, row, onClose, onSaved }) {
                                     </div>
                                 </div>
                             )}
+                            <div className="mt-3">
+                                <Label className="flex items-center gap-1">
+                                    Chapter context <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-muted text-muted-foreground">optional</span>
+                                </Label>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Which chapter this member was assigned to during {form.year}. Shows on the Personnel Brief. Leave blank to auto-resolve from assignment history.
+                                </p>
+                                <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v === "__none__" ? "" : v })}>
+                                    <SelectTrigger className="rounded-xl mt-1.5" data-testid="oty-member-chapter-select">
+                                        <SelectValue placeholder="Auto-resolve from assignment history" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="__none__">Auto-resolve from assignment history</SelectItem>
+                                        {chapters.map((c) => (
+                                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </div>
                     ) : (
                         <div>

@@ -170,8 +170,10 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
                 raise HTTPException(status_code=404, detail="Selected member not found.")
             sets["user_id"] = body.user_id
         if body.chapter_id is not None:
-            if existing["category"] in MEMBER_CATEGORIES and body.chapter_id:
-                raise HTTPException(status_code=400, detail="This category awards a member, not a chapter.")
+            # For chapter categories chapter_id IS the winner. For member
+            # categories chapter_id is an optional context tag ("the chapter
+            # this member was assigned to during that year") so the Personnel
+            # Brief can show it. We let admins set/clear it freely.
             if body.chapter_id and not await db.chapters.find_one({"id": body.chapter_id}, {"_id": 1}):
                 raise HTTPException(status_code=404, detail="Selected chapter not found.")
             sets["chapter_id"] = body.chapter_id

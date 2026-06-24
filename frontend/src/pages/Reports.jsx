@@ -843,7 +843,7 @@ function PersonnelBriefSection() {
             </div>
 
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" data-testid="brief-dialog">
+                <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto" data-testid="brief-dialog">
                     <DialogHeader className="print:pb-2 print:border-b print:border-black">
                         <DialogTitle className="font-heading text-2xl flex items-center justify-between gap-3">
                             Personnel Brief
@@ -939,25 +939,41 @@ function BriefBody({ b }) {
     });
 
     return (
-        <div className="space-y-5 print:text-black" data-testid="brief-body">
-            {/* Header — photo + title + name + line + email + phone */}
-            <div className="flex items-start gap-4 border-b border-border pb-4">
+        <div className="space-y-4 print:text-black" data-testid="brief-body">
+            {/* ORB-style header strip — wide identity bar with right-aligned meta */}
+            <div className="flex items-start gap-4 border-b-2 border-primary pb-4">
                 {m.avatar_url ? (
-                    <img src={mediaUrl(m.avatar_url)} alt="" className="w-20 h-20 rounded-lg object-contain border border-border" />
+                    <img src={mediaUrl(m.avatar_url)} alt="" className="w-20 h-20 rounded-md object-contain border border-border shrink-0" />
                 ) : (
-                    <div className="w-20 h-20 rounded-lg bg-primary/15 text-primary grid place-items-center font-heading font-black text-3xl shrink-0">
+                    <div className="w-20 h-20 rounded-md bg-primary/15 text-primary grid place-items-center font-heading font-black text-3xl shrink-0">
                         {(m.name || m.email)[0]?.toUpperCase()}
                     </div>
                 )}
                 <div className="flex-1 min-w-0">
-                    <div className="font-heading text-2xl font-black leading-tight">{m.title ? `${m.title} ` : ""}{m.name}</div>
-                    {m.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary mt-0.5">"{m.line_name}"</div>}
-                    <div className="text-sm text-muted-foreground mt-1">{m.email}</div>
-                    {m.phone && <div className="text-sm text-muted-foreground">{m.phone}</div>}
+                    <div className="font-heading text-2xl font-black leading-tight uppercase tracking-wide">{m.title ? `${m.title} ` : ""}{m.name}</div>
+                    {m.line_name && <div className="text-xs font-bold uppercase tracking-widest text-primary mt-0.5">&ldquo;{m.line_name}&rdquo;</div>}
+                    <div className="text-xs text-muted-foreground mt-1">
+                        {[m.email, m.phone].filter(Boolean).join(" · ")}
+                    </div>
+                </div>
+                <div className="text-[10px] tabular-nums shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 min-w-[180px]" data-testid="brief-orb-meta">
+                    <span className="font-bold text-muted-foreground uppercase">Member ID</span><span className="font-semibold">{(m.id || "").slice(0, 8).toUpperCase()}</span>
+                    <span className="font-bold text-muted-foreground uppercase">Status</span><span className="font-semibold">{(m.status || "—").toUpperCase()}</span>
+                    <span className="font-bold text-muted-foreground uppercase">Chapter</span><span className="font-semibold">{(chapter.name || "—").toUpperCase()}</span>
+                    <span className="font-bold text-muted-foreground uppercase">Tier</span><span className="font-semibold">{(tier.name || "—").toUpperCase()}</span>
+                    <span className="font-bold text-muted-foreground uppercase">Joined</span><span className="font-semibold">{(m.join_date || m.created_at || "—").slice(0, 10)}</span>
+                    <span className="font-bold text-muted-foreground uppercase">Renewal</span><span className="font-semibold">{(m.membership_expires_at || "—").slice(0, 10)}</span>
                 </div>
             </div>
 
-            <BriefSection num="1" title="Personal Information">
+            {/* ORB-style 3-column summary tiles */}
+            <OrbSummary b={b} awardsGrouped={[...awardsGrouped].sort((a, c) => (c.last_granted_at || "").localeCompare(a.last_granted_at || ""))} currentYear={currentYear} />
+
+            <div className="text-[11px] uppercase tracking-widest font-bold text-muted-foreground border-b border-border pb-1">
+                ▼ Detailed Record (Attachments)
+            </div>
+
+            <BriefSection num="I" title="Personal Data">
                 <KvpGrid items={[
                     ["Address", m.address],
                     ["City", m.city],
@@ -970,7 +986,7 @@ function BriefBody({ b }) {
                 ]} />
             </BriefSection>
 
-            <BriefSection num="2" title="Organization Information">
+            <BriefSection num="II" title="Organization">
                 <KvpGrid items={[
                     ["Chapter", chapter.name],
                     ["Region", chapter.region],
@@ -982,7 +998,7 @@ function BriefBody({ b }) {
                 ]} />
             </BriefSection>
 
-            <BriefSection num="3" title="Civilian Education">
+            <BriefSection num="III" title="Civilian Education">
                 {degrees.length === 0 ? <Empty /> : <TableLike headers={["Level", "Type", "Field", "Institution", "Graduated"]} rows={degrees.map((d) => [
                     d.degree_level || "—",
                     d.degree_type || "—",
@@ -992,13 +1008,13 @@ function BriefBody({ b }) {
                 ])} />}
             </BriefSection>
 
-            <BriefSection num="4" title="Languages">
+            <BriefSection num="IV" title="Language Proficiency">
                 {languages.length === 0 ? <Empty /> : <TableLike headers={["Language", "Speaking", "Reading", "Writing", "Year"]} rows={languages.map((l) => [
                     l.language || "—", l.speaking || "—", l.reading || "—", l.writing || "—", String(l.year_accomplished || "—"),
                 ])} />}
             </BriefSection>
 
-            <BriefSection num="5" title="Financial Obligations (Annual Dues)">
+            <BriefSection num="V" title="Financial Obligations (Annual Dues)">
                 {dues.length === 0 ? <Empty /> : <TableLike headers={["Date", "Amount", "Status", "Description"]} rows={dues.map((t) => [
                     (t.created_at || "").slice(0, 10),
                     `$${(t.amount || 0).toFixed(2)}`,
@@ -1007,7 +1023,7 @@ function BriefBody({ b }) {
                 ])} />}
             </BriefSection>
 
-            <BriefSection num="6" title="Donations">
+            <BriefSection num="VI" title="Donations">
                 {donations.length === 0 ? <Empty /> : <TableLike headers={["Date", "Cause", "Amount"]} rows={donations.map((t) => [
                     (t.created_at || "").slice(0, 10),
                     t.description || "General fund",
@@ -1015,7 +1031,7 @@ function BriefBody({ b }) {
                 ])} />}
             </BriefSection>
 
-            <BriefSection num="7" title={`Community Service (${currentYear})`}>
+            <BriefSection num="VII" title={`Community Service (${currentYear})`}>
                 {hoursCY.length === 0 ? <Empty /> : <TableLike headers={["Agency", "Event Type", "Hours", "Status", "Date"]} rows={hoursCY.map((h) => [
                     h.agency_name || "—",
                     (h.event_type || "other").replace("_", " "),
@@ -1025,21 +1041,17 @@ function BriefBody({ b }) {
                 ])} />}
             </BriefSection>
 
-            <BriefSection num="8" title="Awards">
+            <BriefSection num="VIII" title="Awards &amp; Decorations">
                 {awardsRows.length === 0 ? <Empty /> : <TableLike headers={["Award", "Order", "Latest Date"]} rows={awardsRows} />}
             </BriefSection>
 
             {(() => {
-                // §9 Of The Year Honors — newest 7 wins (full list lives on the
-                // backend; we cap to 7 for the brief to keep the report tight).
                 const otyAll = b.of_the_year || [];
-                const otyRecent = (b.of_the_year_recent || otyAll.slice(0, 7));
+                const otyRecent = otyAll;  // full list in detail section
                 const totalCount = b.of_the_year_count ?? otyAll.length;
-                const title = totalCount > 7
-                    ? `Of The Year Honors — Last 7 of ${totalCount}`
-                    : "Of The Year Honors";
+                const title = `Of The Year Honors${totalCount > 0 ? ` — ${totalCount} total` : ""}`;
                 return (
-                    <BriefSection num="9" title={title}>
+                    <BriefSection num="IX" title={title}>
                         {otyRecent.length === 0 ? <Empty /> : <TableLike
                             headers={["Year", "Category", "Chapter", "Note"]}
                             rows={otyRecent.map((o) => [
@@ -1053,13 +1065,13 @@ function BriefBody({ b }) {
                 );
             })()}
 
-            <BriefSection num="10" title={`Events Attended (${currentYear} check-ins)`}>
+            <BriefSection num="X" title={`Events Attended (${currentYear} check-ins)`}>
                 {eventRows.length === 0 ? <Empty /> : <TableLike headers={["Event", "Guests", "Ticket Type", "Check-in Date"]} rows={eventRows.map((e) => [
                     e.title, String(e.guests), e.ticket_type, e.date,
                 ])} />}
             </BriefSection>
 
-            <BriefSection num="11" title="Assignment History">
+            <BriefSection num="XI" title="Assignment History">
                 {assignments.length === 0 ? <Empty /> : <TableLike headers={["Start", "End", "Chapter", "State", "Location", "Duty Title", "Rank"]} rows={assignments.map((a) => [
                     (a.start_date || "—").slice(0, 10) || "—",
                     a.is_current ? "Current" : ((a.end_date || "").slice(0, 10) || "—"),
@@ -1082,9 +1094,150 @@ function BriefSection({ num, title, children }) {
     return (
         <div data-testid={`brief-section-${num}`}>
             <h3 className="font-heading text-sm uppercase tracking-widest text-white bg-[hsl(220_45%_12%)] px-3 py-1.5 rounded mb-2">
-                <span className="opacity-60 mr-2">§{num}</span>{title}
+                <span className="opacity-60 mr-2">SECTION {num} —</span>{title}
             </h3>
             <div className="space-y-1">{children}</div>
+        </div>
+    );
+}
+
+/**
+ * ORB-style 3-column summary tiles on page 1 of the brief preview. Mirrors
+ * the layout of the landscape PDF. Each column is a stack of small tiles
+ * with ALL CAPS section labels and dense data rows.
+ */
+const OrbKv = ({ k, v }) => (
+    <div className="grid grid-cols-[88px_1fr] gap-2 text-[11px] leading-tight border-b border-border/40 py-0.5">
+        <span className="text-muted-foreground font-bold uppercase">{k}</span>
+        <span className="font-semibold text-foreground/90 truncate">{v || "—"}</span>
+    </div>
+);
+const OrbTile = ({ title: tileTitle, children, ...rest }) => (
+    <div {...rest}>
+        <div className="bg-[hsl(220_45%_12%)] text-white text-[10px] uppercase tracking-[0.15em] font-black px-2 py-1 rounded-sm">
+            {tileTitle}
+        </div>
+        <div className="px-1 pt-1">{children}</div>
+    </div>
+);
+const OrbRow = ({ children }) => (
+    <div className="text-[11px] leading-tight border-b border-border/40 py-1">{children}</div>
+);
+
+function OrbSummary({ b, awardsGrouped, currentYear }) {
+    const m = b.member || {};
+    const oty = b.of_the_year_recent || [];
+    const otyCount = b.of_the_year_count || 0;
+    const assignments = (m.assignment_history || [])
+        .slice()
+        .sort((a, c) => {
+            if (a.is_current && !c.is_current) return -1;
+            if (c.is_current && !a.is_current) return 1;
+            return (c.start_date || "").localeCompare(a.start_date || "");
+        });
+    const asnTop = assignments.slice(0, 4);
+    const degreesTop = (m.civilian_degrees || []).slice().sort((a, c) => (c.graduation_year || 0) - (a.graduation_year || 0)).slice(0, 3);
+    const langsTop = (m.languages || []).slice().sort((a, c) => (c.year_accomplished || 0) - (a.year_accomplished || 0)).slice(0, 3);
+    const awardsTop = awardsGrouped.slice(0, 10);
+    const checkins = b.checkins || [];
+    const eventsCY = checkins.filter((c) => (c.checked_in_at || "").slice(0, 4) === String(currentYear));
+    const cyHours = (b.hours || []).filter((h) => (h.date || "").slice(0, 4) === String(currentYear) && h.status === "approved").reduce((s, h) => s + (h.hours || 0), 0);
+    const eventLookup = Object.fromEntries((b.events || []).map((e) => [e.id, e]));
+    const seen = new Set();
+    const recentEvents = [];
+    for (const c of [...eventsCY].sort((a, c) => (c.checked_in_at || "").localeCompare(a.checked_in_at || ""))) {
+        if (seen.has(c.event_id)) continue;
+        seen.add(c.event_id);
+        recentEvents.push({ ...c, title: (eventLookup[c.event_id] || {}).title || "—" });
+        if (recentEvents.length >= 4) break;
+    }
+    const Kv = OrbKv;
+    const Tile = OrbTile;
+    const Row = OrbRow;
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="brief-orb-summary">
+            {/* COL 1 */}
+            <div className="space-y-3">
+                <Tile tileTitle="Section I — Personal Data">
+                    <Kv k="Address" v={m.address} />
+                    <Kv k="City" v={m.city} />
+                    <Kv k="State / Zip" v={[m.state, m.zip_code].filter(Boolean).join(" / ")} />
+                    <Kv k="Country" v={m.country} />
+                    <Kv k="Birthdate" v={(m.birthdate || "").slice(0, 10)} />
+                    <Kv k="Branch" v={m.branch_of_service} />
+                </Tile>
+                <Tile tileTitle={`Section II — Education (${(m.civilian_degrees || []).length} total)`}>
+                    {degreesTop.length === 0 ? <div className="text-[11px] italic text-muted-foreground">None on record.</div>
+                        : degreesTop.map((d, i) => (
+                            <Row key={i}>
+                                <span className="font-bold uppercase">{d.degree_level || "—"}</span> · {d.field_of_study || "—"}
+                                <div className="text-muted-foreground">{[d.institution, d.graduation_year].filter(Boolean).join(" · ")}</div>
+                            </Row>
+                        ))}
+                </Tile>
+                <Tile tileTitle={`Section III — Languages (${(m.languages || []).length} total)`}>
+                    {langsTop.length === 0 ? <div className="text-[11px] italic text-muted-foreground">None on record.</div>
+                        : langsTop.map((lg, i) => (
+                            <Row key={i}>
+                                <span className="font-bold uppercase">{lg.language}</span> · S:{lg.speaking || "—"} R:{lg.reading || "—"} W:{lg.writing || "—"}
+                            </Row>
+                        ))}
+                </Tile>
+            </div>
+            {/* COL 2 */}
+            <div className="space-y-3">
+                <Tile tileTitle={`Section IV — Awards & Decorations${awardsGrouped.length > 10 ? ` (Top 10 of ${awardsGrouped.length})` : ""}`}>
+                    {awardsTop.length === 0 ? <div className="text-[11px] italic text-muted-foreground">None on record.</div>
+                        : awardsTop.map((a, i) => (
+                            <Row key={i}>
+                                <span className="font-bold">{a.award_name || "—"}</span>
+                                {a.count > 1 && <span> × {a.count}</span>}
+                                <span className="text-muted-foreground"> · {(a.last_granted_at || "").slice(0, 10)}</span>
+                            </Row>
+                        ))}
+                </Tile>
+                <Tile tileTitle={`Section V — Of The Year Honors${otyCount > 7 ? ` (Last 7 of ${otyCount})` : ""}`} data-testid="orb-oty-tile">
+                    {oty.length === 0 ? <div className="text-[11px] italic text-muted-foreground">None on record.</div>
+                        : oty.map((o) => (
+                            <Row key={o.id}>
+                                <span className="font-bold text-primary">{o.year}</span> · <span className="uppercase">{o.category_label || o.category}</span>
+                                <div className="text-muted-foreground">{[o.chapter_name, o.note].filter(Boolean).join(" · ")}</div>
+                            </Row>
+                        ))}
+                </Tile>
+            </div>
+            {/* COL 3 */}
+            <div className="space-y-3">
+                <Tile tileTitle={`Section VI — Assignment History${assignments.length > 4 ? ` (Recent 4 of ${assignments.length})` : ""}`}>
+                    {asnTop.length === 0 ? <div className="text-[11px] italic text-muted-foreground">None on record.</div>
+                        : asnTop.map((a, i) => (
+                            <Row key={i}>
+                                <span className="font-bold">{(a.start_date || "").slice(0, 7) || "—"} — {a.is_current ? "PRESENT" : ((a.end_date || "").slice(0, 7) || "—")}</span>
+                                <div className="text-muted-foreground">{[a.chapter_name, a.duty_title, a.rank].filter(Boolean).join(" · ")}</div>
+                            </Row>
+                        ))}
+                </Tile>
+                <Tile tileTitle="Section VII — Service Statistics">
+                    <Kv k={`CY ${currentYear} Hours`} v={cyHours.toFixed(1)} />
+                    <Kv k="Lifetime Hours" v={(b.approved_hours || 0).toFixed(1)} />
+                    <Kv k="Pending Hours" v={(b.pending_hours || 0).toFixed(1)} />
+                    <Kv k="Total Paid" v={`$${(b.total_paid || 0).toFixed(2)}`} />
+                    <Kv k={`Events CY ${currentYear}`} v={String(eventsCY.length)} />
+                    <Kv k="Awards Held" v={`${awardsGrouped.length} (distinct)`} />
+                    <Kv k="OTY Honors" v={String(otyCount)} />
+                </Tile>
+                <Tile tileTitle={`Section VIII — Recent Events (${currentYear})`}>
+                    {recentEvents.length === 0 ? <div className="text-[11px] italic text-muted-foreground">No check-ins this year.</div>
+                        : recentEvents.map((e) => (
+                            <Row key={e.id || e.event_id}>
+                                <span className="font-bold">{e.title}</span>
+                                <span className="text-muted-foreground"> · {(e.checked_in_at || "").slice(0, 10)}</span>
+                                <div className="text-muted-foreground uppercase">{(e.ticket_type || "general").replace("_", " ")}</div>
+                            </Row>
+                        ))}
+                </Tile>
+            </div>
         </div>
     );
 }
