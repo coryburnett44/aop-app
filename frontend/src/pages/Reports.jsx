@@ -1029,13 +1029,37 @@ function BriefBody({ b }) {
                 {awardsRows.length === 0 ? <Empty /> : <TableLike headers={["Award", "Order", "Latest Date"]} rows={awardsRows} />}
             </BriefSection>
 
-            <BriefSection num="9" title={`Events Attended (${currentYear} check-ins)`}>
+            {(() => {
+                // §9 Of The Year Honors — newest 7 wins (full list lives on the
+                // backend; we cap to 7 for the brief to keep the report tight).
+                const otyAll = b.of_the_year || [];
+                const otyRecent = (b.of_the_year_recent || otyAll.slice(0, 7));
+                const totalCount = b.of_the_year_count ?? otyAll.length;
+                const title = totalCount > 7
+                    ? `Of The Year Honors — Last 7 of ${totalCount}`
+                    : "Of The Year Honors";
+                return (
+                    <BriefSection num="9" title={title}>
+                        {otyRecent.length === 0 ? <Empty /> : <TableLike
+                            headers={["Year", "Category", "Chapter", "Note"]}
+                            rows={otyRecent.map((o) => [
+                                String(o.year || "—"),
+                                o.category_label || o.category || "—",
+                                o.chapter_name || "—",
+                                o.note || "",
+                            ])}
+                        />}
+                    </BriefSection>
+                );
+            })()}
+
+            <BriefSection num="10" title={`Events Attended (${currentYear} check-ins)`}>
                 {eventRows.length === 0 ? <Empty /> : <TableLike headers={["Event", "Guests", "Ticket Type", "Check-in Date"]} rows={eventRows.map((e) => [
                     e.title, String(e.guests), e.ticket_type, e.date,
                 ])} />}
             </BriefSection>
 
-            <BriefSection num="10" title="Assignment History">
+            <BriefSection num="11" title="Assignment History">
                 {assignments.length === 0 ? <Empty /> : <TableLike headers={["Start", "End", "Chapter", "State", "Location", "Duty Title", "Rank"]} rows={assignments.map((a) => [
                     (a.start_date || "—").slice(0, 10) || "—",
                     a.is_current ? "Current" : ((a.end_date || "").slice(0, 10) || "—"),

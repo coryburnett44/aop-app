@@ -2274,12 +2274,17 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
     const [open, setOpen] = useState(false);
     const [details, setDetails] = useState(member);
     const [grants, setGrants] = useState([]);
+    const [otyWins, setOtyWins] = useState([]);
     const [editingGrant, setEditingGrant] = useState(null);
     const loadGrants = () => api.get(`/members/${member.id}/awards`).then(({ data }) => setGrants(data || [])).catch(() => setGrants([]));
+    const loadOtyWins = () => api.get(`/of-the-year`, { params: { user_id: member.id } })
+        .then(({ data }) => setOtyWins(data || []))
+        .catch(() => setOtyWins([]));
     useEffect(() => {
         if (open) {
             api.get(`/members/${member.id}`).then(({ data }) => setDetails(data)).catch(() => {});
             loadGrants();
+            loadOtyWins();
         }
     }, [open, member.id]);
     const chapter = chapters?.find((c) => c.id === details.chapter_id);
@@ -2374,6 +2379,33 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                                                 </button>
                                             </div>
                                         )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {/* Of The Year Honors — every win the member has earned */}
+                    <div className="pt-3 border-t">
+                        <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">
+                            Of The Year Honors <span className="text-foreground/80">({otyWins.length})</span>
+                        </div>
+                        {otyWins.length === 0 ? (
+                            <div className="text-xs text-muted-foreground italic" data-testid={`member-card-${member.id}-oty-empty`}>No &ldquo;Of The Year&rdquo; honors yet.</div>
+                        ) : (
+                            <div className="space-y-1.5" data-testid={`member-card-${member.id}-oty`}>
+                                {otyWins.map((o) => (
+                                    <div key={o.id} className="flex items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-1.5" data-testid={`oty-win-${o.id}`}>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-sm font-semibold truncate">
+                                                <span className="text-primary font-heading mr-1.5">{o.year}</span>
+                                                {o.category_label || o.category}
+                                            </div>
+                                            {(o.chapter_name || o.note) && (
+                                                <div className="text-[11px] text-muted-foreground truncate">
+                                                    {[o.chapter_name, o.note].filter(Boolean).join(" · ")}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </div>

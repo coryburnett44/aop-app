@@ -92,6 +92,7 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
     async def list_of_the_year(
         year: Optional[int] = None,
         category: Optional[str] = None,
+        user_id: Optional[str] = None,
         _: dict = Depends(get_current_user),
     ):
         q: dict = {}
@@ -99,6 +100,10 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
             q["year"] = year
         if category:
             q["category"] = category
+        if user_id:
+            # Used by the Admin member card + Personnel Brief — every OTY win
+            # this specific member has earned, newest year first.
+            q["user_id"] = user_id
         rows = await db.of_the_year_awards.find(q, {"_id": 0}).sort([("year", -1), ("category", 1)]).to_list(500)
         return await _enrich(rows)
 

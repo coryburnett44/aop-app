@@ -26,6 +26,11 @@ import urllib.request
 
 from fastapi import Depends, HTTPException, Response
 
+# Category-key → human label map for "Of The Year" honors. Imported from the
+# of_the_year module so both Personnel Brief and the OTY admin views stay in
+# lockstep when categories evolve.
+from routes.of_the_year import CATEGORY_LABELS as OTY_CATEGORY_LABELS
+
 
 def register(
     api,
@@ -548,6 +553,25 @@ def register(
         checkins = await db.checkins.find({"user_id": user_id}, {"_id": 0}).sort("checked_in_at", -1).to_list(500)
         txs = await db.transactions.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
         total_paid = sum(t.get("amount", 0.0) for t in txs if t.get("status") == "completed" and t.get("type") in ("renewal", "donation", "fee", "gear"))
+
+        # "Of The Year" honors earned by this member. We pull every win so the
+        # admin Member Card can show the full history; the Personnel Brief PDF
+        # only renders the most recent 7 per the product requirement.
+        oty_rows = await db.of_the_year_awards.find(
+            {"user_id": user_id}, {"_id": 0},
+        ).sort([("year", -1), ("category", 1)]).to_list(500)
+        oty_all = [
+            {
+                "id": r.get("id"),
+                "year": r.get("year"),
+                "category": r.get("category"),
+                "category_label": OTY_CATEGORY_LABELS.get(r.get("category", ""), r.get("category", "")),
+                "chapter_id": r.get("chapter_id"),
+                "chapter_name": r.get("chapter_name"),
+                "note": r.get("note") or "",
+            }
+            for r in oty_rows
+        ]
         return {
             "member": member,
             "chapter": chapter,
@@ -556,6 +580,9 @@ def register(
             "awards_grouped": awards_grouped,
             "awards_count": len(grants),
             "awards_distinct_count": len(awards_grouped),
+            "of_the_year": oty_all,
+            "of_the_year_recent": oty_all[:7],
+            "of_the_year_count": len(oty_all),
             "hours": hours_clean,
             "approved_hours": approved_hours,
             "pending_hours": pending_hours,
@@ -814,8 +841,33 @@ def register(
             aw_rows.append([nm, ordinal_label + suffix, (row.get("last_granted_at") or "")[:10]])
         elements.append(data_table(["Award", "Order", "Latest Date"], aw_rows, [3.4 * inch, 1.8 * inch, 1.9 * inch]))
 
-        # §9 Events
-        elements.append(Paragraph(f"§9  Events Attended ({current_year} check-ins)", section))
+        # §9 Of The Year Honors (most recent 7)
+        oty_recent = data.get("of_the_year_recent") or []
+        oty_count = int(data.get("of_the_year_count") or 0)
+        section_label = (
+            f"§9  Of The Year Honors — last 7 of {oty_count}"
+            if oty_count > 7 else "§9  Of The Year Honors"
+        )
+        elements.append(Paragraph(section_label, section))
+        if not oty_recent:
+            elements.append(Paragraph("No 'Of The Year' honors on record.", small))
+        else:
+            oty_rows = []
+            for o in oty_recent:
+                oty_rows.append([
+                    str(o.get("year") or "—"),
+                    o.get("category_label") or "—",
+                    o.get("chapter_name") or "—",
+                    o.get("note") or "",
+                ])
+            elements.append(data_table(
+                ["Year", "Category", "Chapter", "Note"],
+                oty_rows,
+                [0.7 * inch, 2.4 * inch, 1.8 * inch, 2.2 * inch],
+            ))
+
+        # §10 Events
+        elements.append(Paragraph(f"§10  Events Attended ({current_year} check-ins)", section))
         checkins = [c for c in (data.get("checkins") or []) if (c.get("checked_in_at") or "")[:4] == str(current_year)]
         event_lookup = {e["id"]: e for e in (data.get("events") or [])}
         rsvp_lookup = {}
@@ -838,8 +890,8 @@ def register(
             ])
         elements.append(data_table(["Event", "Guests", "Ticket Type", "Check-in Date"], ev_rows, [3.4 * inch, 0.8 * inch, 1.5 * inch, 1.4 * inch]))
 
-        # §10 Assignments
-        elements.append(Paragraph("§10  Assignment History", section))
+        # §11 Assignments
+        elements.append(Paragraph("§11  Assignment History", section))
         assignments = list(m.get("assignment_history") or [])
         assignments = sorted(
             assignments,
