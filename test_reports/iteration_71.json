@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 71 — Bulk-add anniversary-fee endpoint + Admin Members UI fully verified. All 12 new backend tests pass and 11/11 iter69+iter70 regression tests still pass. End-to-end UI flow works: select 3 rows → counter '3 selected' → bulk button '+ Add anniversary fee to 3' → dialog prefilled with '10-Year Anniversary Fee'/'150' → confirm button text updates to 'Add to 3 members' → POST /admin/members/balance/bulk-add-line → toast 'Added to 3 member(s)' → 3 '$75.00 owed' badges render → filter pill '3 with open balance' shows → ON narrows to 3 rows, OFF restores 16. Selection survives filter toggle (verified 2 selected → toggle filter → still 2 selected). Clear button correctly resets selection. All test data was cleaned up (3x DELETE → 200).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verifications_performed": [
+    "Backend: POST /api/admin/members/balance/bulk-add-line happy path → created_count=3, skipped=0, error=0, response shape {created_count, skipped_count, error_count, created_user_ids, skipped_user_ids, errors, label, amount} validated.",
+    "Backend: Idempotency — 2nd identical call returns created_count=0, skipped_count=3, skipped_user_ids matches. Also case-insensitive (LABEL vs label.upper() both skip).",
+    "Backend: Mixed user_ids (2 valid + 1 bogus uuid) → created_count=2, error_count=1, errors[0].error contains 'not found'.",
+    "Backend: Validation 422 verified for empty user_ids, empty label, amount=0, amount=-1, amount=100001.",
+    "Backend: Maya (member) calling bulk-add → 403. Unauthenticated → 401/403.",
+    "Backend: GET /api/members surfaces outstanding_balance_total = sum(unpaid amounts) for each member; verified 42.0 after bulk-add of $42.",
+    "Frontend (E2E): admin login → /admin → Members → 3 checkboxes ticked → 'bulk-selection-count' shows '3 selected', 'bulk-add-anniversary-fee' shows '+ Add anniversary fee to 3', 'bulk-clear-selection' present.",
+    "Frontend: Dialog prefilled bulk-line-label='10-Year Anniversary Fee', bulk-line-amount='150'; bulk-confirm text 'Add to 3 members'.",
+    "Frontend: After editing inputs to {label:'TEST_iter71_e2e', amount:'75'} and clicking bulk-confirm → toast 'Added to 3 member(s)'; 3 owes-badge-{id} all render '$75.00 owed'.",
+    "Frontend: filter-outstanding-balance pill appears with text '3 with open balance'. Click ON → 3 rows visible (of original 16). Click OFF → 16 rows restored.",
+    "Frontend: Selection persistence — selected 2 rows (counter '2 selected'), toggled filter ON, counter still '2 selected' (Set keyed by user id survives filtering).",
+    "Frontend: bulk-clear-selection click → counter disappears (count=0).",
+    "Cleanup: 3 DELETE /api/admin/members/{id}/balance/lines/{lid} → all 200. Demo dataset clean.",
+    "Regression: /app/backend/tests/test_iteration69_outstanding_balance.py (10/10) + /app/backend/tests/test_iteration70_zeffy_url_isolation.py (1/1) → 11/11 PASS in 8.58s."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration71_bulk_add_line.py",
+    "/app/test_reports/pytest/iter71_results.xml",
+    "/app/test_reports/pytest/iter71_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "balances.py L181 `unique_ids = list({uid for uid in body.user_ids if uid})` — set dedups but loses order; created_user_ids ordering is non-deterministic. Not a bug for the UI (frontend doesn't rely on order), but worth a sorted() if a future caller does.",
+    "balances.py L184 projection includes is_lifetime_member and member_status but neither is consulted in the loop. Either gate (skip lifetime members or inactive) or drop those projected fields — currently dead weight on the query.",
+    "balances.py L209: per-user $push happens in a loop (N round-trips). For the user_ids cap of 2000 this could be slow under load. Consider a single bulk_write with UpdateOne per uid — same number of writes but pipelined. Acceptable for the documented 'small N' admin use case.",
+    "server.py L187-190 outstanding_balance_total is recomputed on every GET /api/members. For a chapter with many members this is O(N×lines) per list call. Currently cheap (lines small), but worth caching/storing if balance_lines arrays grow.",
+    "Idempotency case-insensitive match (L194) uses .strip().lower() — correct, matches the docstring at L171-173. Confirmed by test_bulk_add_idempotency_is_case_insensitive."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration71_bulk_add_line.py (NEW — 12 tests, all green)"
+  ],
+  "success_rate": {"backend": "100% (12/12 iter71 + 11/11 regression)", "frontend": "100% (all data-testid wiring verified, E2E + filter + persistence + cleanup)"},
+  "test_credentials": "admin@clubhaven.app / Admin123!  ·  maya.patel@clubhaven.app / Demo123! — both working",
+  "seed_data_creation": "Added/removed transient TEST_iter71_* balance lines on 3 demo members (maya, jordan, harper or whichever 3 were available). The autouse cleanup fixture in test_iteration71_bulk_add_line.py wipes them before and after each test. Frontend E2E also did its own 3x DELETE after the run. Demo dataset returned to clean state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The /api/members endpoint returns only ~16 members (some demo seeds may be absent — e.g., sam.okafor was not present during this run). When picking 'three_member_ids' fixture, prefer demo emails but fall back to any non-admin member. Admin login does NOT redirect to /dashboard — it lands on '/' (root). Use page.get_by_role('button', name='Log in') to click the submit button, not a generic loop. The bulk endpoint Pydantic model uses min_length=1 on user_ids list — empty array returns 422 (not 400). Frontend filter pill is conditionally rendered only when at least one member has total>0; expect count=0 when no balances exist.",
+  "rca of the issue": "Not a bug fix — clean feature add. No defects found in iteration 71 backend or frontend implementation. Implementation correctly: (a) returns the documented response shape, (b) is idempotent via case-insensitive unpaid-label match, (c) per-row checkboxes use a Set selectedIds that survives filter changes (matches user requirement 1c), (d) one shared label+amount applied to all (req 2a), (e) skips per-user URL prompts during bulk (req 3a), (f) shows the '$X owed' primary-color pill in the name cell exactly when outstanding_balance_total>0."
+}

@@ -919,8 +919,68 @@ function MembersAdmin() {
     }
 
     const [pendingOnly, setPendingOnly] = useState(false);
+    const [outstandingOnly, setOutstandingOnly] = useState(false);
+    // Row-selection state for the bulk-action menu. Keyed by user id so we
+    // can survive search/filter changes (selection persists across narrowing).
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [bulkOpen, setBulkOpen] = useState(false);
+    const [bulkForm, setBulkForm] = useState({ label: "10-Year Anniversary Fee", amount: "150" });
+    const [bulkBusy, setBulkBusy] = useState(false);
     const pendingCount = members.filter((x) => x.pending_set_password).length;
-    const visibleMembers = pendingOnly ? members.filter((x) => x.pending_set_password) : members;
+    const outstandingCount = members.filter((x) => (x.outstanding_balance_total || 0) > 0).length;
+    let visibleMembers = members;
+    if (pendingOnly) visibleMembers = visibleMembers.filter((x) => x.pending_set_password);
+    if (outstandingOnly) visibleMembers = visibleMembers.filter((x) => (x.outstanding_balance_total || 0) > 0);
+
+    const toggleSelectMember = (id) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+    const toggleSelectAllVisible = () => {
+        setSelectedIds((prev) => {
+            const visibleIds = visibleMembers.map((m) => m.id);
+            const allSelected = visibleIds.every((id) => prev.has(id));
+            const next = new Set(prev);
+            if (allSelected) visibleIds.forEach((id) => next.delete(id));
+            else visibleIds.forEach((id) => next.add(id));
+            return next;
+        });
+    };
+    const clearSelection = () => setSelectedIds(new Set());
+
+    async function runBulkAddLine() {
+        const amount = parseFloat(bulkForm.amount);
+        if (!bulkForm.label.trim() || !(amount > 0)) {
+            toast.error("Enter a label and a positive amount.");
+            return;
+        }
+        if (selectedIds.size === 0) {
+            toast.error("Select at least one member.");
+            return;
+        }
+        setBulkBusy(true);
+        try {
+            const { data } = await api.post("/admin/members/balance/bulk-add-line", {
+                user_ids: Array.from(selectedIds),
+                label: bulkForm.label.trim(),
+                amount,
+            });
+            const parts = [`Added to ${data.created_count} member(s)`];
+            if (data.skipped_count) parts.push(`skipped ${data.skipped_count} (already had "${data.label}")`);
+            if (data.error_count) parts.push(`${data.error_count} error(s)`);
+            toast.success(parts.join(" · "));
+            setBulkOpen(false);
+            clearSelection();
+            await load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Bulk add failed");
+        }
+        setBulkBusy(false);
+    }
 
     const chapterName = (id) => chapters.find((c) => c.id === id)?.name || "—";
     const tierName = (id) => tiers.find((t) => t.id === id)?.name || "—";
@@ -931,7 +991,42 @@ function MembersAdmin() {
             <PendingIntakeChangesPanel onChanged={load} />
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                    {selectedIds.size > 0 && (
+                        <>
+                            <span className="text-xs font-semibold text-primary px-2" data-testid="bulk-selection-count">
+                                {selectedIds.size} selected
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setBulkOpen(true)}
+                                className="rounded-full px-3 py-1.5 text-xs font-semibold border border-primary bg-primary text-primary-foreground hover:bg-primary/90 transition"
+                                data-testid="bulk-add-anniversary-fee"
+                                title="Add the same balance line to every selected member"
+                            >
+                                + Add anniversary fee to {selectedIds.size}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={clearSelection}
+                                className="rounded-full px-3 py-1.5 text-xs font-semibold border border-border text-muted-foreground hover:bg-muted transition"
+                                data-testid="bulk-clear-selection"
+                            >
+                                Clear
+                            </button>
+                        </>
+                    )}
+                    {outstandingCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setOutstandingOnly((v) => !v)}
+                            className={`rounded-full px-3 py-1.5 text-xs font-semibold border transition ${outstandingOnly ? "bg-primary/15 text-primary border-primary" : "bg-white text-primary border-primary/30 hover:bg-primary/5"}`}
+                            data-testid="filter-outstanding-balance"
+                            title="Show only members who have an unpaid balance"
+                        >
+                            {outstandingOnly ? `Showing ${outstandingCount} with balance` : `${outstandingCount} with open balance`}
+                        </button>
+                    )}
                     {pendingCount > 0 && (
                         <>
                             <button
@@ -962,6 +1057,16 @@ function MembersAdmin() {
                 <table className="w-full text-sm min-w-[1000px]">
                     <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
                         <tr>
+                            <th className="px-3 py-3 w-10">
+                                <input
+                                    type="checkbox"
+                                    aria-label="Select all visible"
+                                    onChange={toggleSelectAllVisible}
+                                    checked={visibleMembers.length > 0 && visibleMembers.every((m) => selectedIds.has(m.id))}
+                                    className="h-4 w-4 rounded cursor-pointer"
+                                    data-testid="select-all-visible"
+                                />
+                            </th>
                             <th className="text-left px-4 py-3">Name</th>
                             <th className="text-left px-4 py-3">Role</th>
                             <th className="text-left px-4 py-3">Chapter</th>
@@ -974,10 +1079,28 @@ function MembersAdmin() {
                     <tbody>
                         {visibleMembers.map((m) => (
                             <tr key={m.id} className="border-t border-border hover:bg-muted/30" data-testid={`admin-member-${m.id}`}>
+                                <td className="px-3 py-3">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedIds.has(m.id)}
+                                        onChange={() => toggleSelectMember(m.id)}
+                                        className="h-4 w-4 rounded cursor-pointer"
+                                        data-testid={`select-member-${m.id}`}
+                                    />
+                                </td>
                                 <td className="px-4 py-3">
                                     <div className="font-medium">
                                         {m.name}
-                                        {m.line_name && <span className="text-xs ml-2 text-primary font-bold">"{m.line_name}"</span>}
+                                        {m.line_name && <span className="text-xs ml-2 text-primary font-bold">&quot;{m.line_name}&quot;</span>}
+                                        {(m.outstanding_balance_total || 0) > 0 && (
+                                            <span
+                                                className="ml-2 inline-flex items-center text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/15 text-primary border border-primary/30"
+                                                title={`Open balance: $${(m.outstanding_balance_total || 0).toFixed(2)}`}
+                                                data-testid={`owes-badge-${m.id}`}
+                                            >
+                                                ${(m.outstanding_balance_total || 0).toFixed(2)} owed
+                                            </span>
+                                        )}
                                         {m.pending_set_password && (
                                             <span
                                                 className="ml-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-amber-100 text-amber-800 border border-amber-300"
@@ -1057,6 +1180,47 @@ function MembersAdmin() {
                     </tbody>
                 </table>
             </div>
+            <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+                <DialogContent className="rounded-2xl max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading">Add balance line to {selectedIds.size} member{selectedIds.size === 1 ? "" : "s"}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 text-sm">
+                        <div className="rounded-xl bg-primary/5 border border-primary/20 p-3 text-xs text-foreground/80">
+                            The same label + amount will be applied to each selected member. Members who already have an unpaid line with this exact label are skipped (re-runs are safe). You can still edit amounts per-member afterward.
+                        </div>
+                        <div>
+                            <Label className="text-xs">Line label</Label>
+                            <Input
+                                value={bulkForm.label}
+                                onChange={(e) => setBulkForm({ ...bulkForm, label: e.target.value })}
+                                placeholder="10-Year Anniversary Fee"
+                                className="rounded-xl mt-1"
+                                data-testid="bulk-line-label"
+                            />
+                        </div>
+                        <div>
+                            <Label className="text-xs">Amount (USD)</Label>
+                            <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={bulkForm.amount}
+                                onChange={(e) => setBulkForm({ ...bulkForm, amount: e.target.value })}
+                                placeholder="150.00"
+                                className="rounded-xl mt-1"
+                                data-testid="bulk-line-amount"
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-2">
+                            <Button variant="outline" onClick={() => setBulkOpen(false)} className="rounded-full" data-testid="bulk-cancel">Cancel</Button>
+                            <Button onClick={runBulkAddLine} disabled={bulkBusy} className="rounded-full bg-primary hover:bg-primary/90" data-testid="bulk-confirm">
+                                {bulkBusy ? "Adding…" : `Add to ${selectedIds.size} member${selectedIds.size === 1 ? "" : "s"}`}
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

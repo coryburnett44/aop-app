@@ -64,6 +64,14 @@ class _SubmitReceiptIn(BaseModel):
     line_ids: List[str] = Field(default_factory=list)
 
 
+class _BulkAddLineIn(BaseModel):
+    """Apply the same balance line to many members in one call. Used by the
+    Admin → Members → 'Add anniversary fee' bulk action."""
+    user_ids: List[str] = Field(min_length=1, max_length=2000)
+    label: str = Field(min_length=1, max_length=200)
+    amount: float = Field(gt=0, le=100000)
+
+
 def _outstanding_total(lines: list[dict]) -> float:
     return round(
         sum(float(ln.get("amount", 0)) for ln in (lines or []) if not ln.get("paid_at")),
@@ -151,6 +159,65 @@ def register(api, *, db, get_current_user, admin_tab_dep, require_admin, iso, no
         )
         u = await db.users.find_one({"id": user_id}, {"_id": 0})
         return _balance_payload(u)
+
+    # ---------- Admin: bulk-add the same line to many members ----------
+    @api.post("/admin/members/balance/bulk-add-line")
+    async def admin_bulk_add_line(
+        body: _BulkAddLineIn,
+        admin: dict = Depends(admin_tab_dep("members")),
+    ):
+        """Add an identical balance line (e.g. '10-Year Anniversary Fee') to
+        each `user_id`. Skips members who already have an UNPAID line with the
+        same label (case-insensitive) so admins can re-run safely without
+        creating duplicates. Returns counts + lists of created/skipped/errored
+        user ids so the UI can show a clear summary."""
+        label = body.label.strip()
+        amount = round(float(body.amount), 2)
+        now_iso = iso(now_utc())
+        created: list[str] = []
+        skipped: list[str] = []
+        errors: list[dict] = []
+        # Fetch all referenced users in one round-trip. We only need id + balance_lines.
+        unique_ids = list({uid for uid in body.user_ids if uid})
+        users = await db.users.find(
+            {"id": {"$in": unique_ids}},
+            {"_id": 0, "id": 1, "balance_lines": 1, "is_lifetime_member": 1, "member_status": 1},
+        ).to_list(len(unique_ids) or 1)
+        users_by_id = {u["id"]: u for u in users}
+        for uid in unique_ids:
+            u = users_by_id.get(uid)
+            if not u:
+                errors.append({"user_id": uid, "error": "not found"})
+                continue
+            existing = u.get("balance_lines") or []
+            already = any(
+                (ln.get("label", "").strip().lower() == label.lower()) and not ln.get("paid_at")
+                for ln in existing
+            )
+            if already:
+                skipped.append(uid)
+                continue
+            line = {
+                "id": str(uuid.uuid4()),
+                "label": label,
+                "amount": amount,
+                "created_at": now_iso,
+                "created_by": admin["id"],
+                "created_by_name": admin.get("name", "Admin"),
+                "paid_at": None,
+            }
+            await db.users.update_one({"id": uid}, {"$push": {"balance_lines": line}})
+            created.append(uid)
+        return {
+            "created_count": len(created),
+            "skipped_count": len(skipped),
+            "error_count": len(errors),
+            "created_user_ids": created,
+            "skipped_user_ids": skipped,
+            "errors": errors,
+            "label": label,
+            "amount": amount,
+        }
 
     # ---------- Admin: edit an unpaid line ----------
     @api.put("/admin/members/{user_id}/balance/lines/{line_id}")
