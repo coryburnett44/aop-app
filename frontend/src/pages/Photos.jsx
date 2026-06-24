@@ -44,6 +44,9 @@ export default function Photos() {
     const [selectMode, setSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState([]);
     const [downloading, setDownloading] = useState(false);
+    // Lightbox state — index into the currently-visible `photos` array. `null`
+    // means closed. Kept at parent level so prev/next can walk the whole album.
+    const [lightboxIndex, setLightboxIndex] = useState(null);
 
     async function loadAlbums() {
         try {
@@ -202,7 +205,7 @@ export default function Photos() {
                     </div>
                 ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4" data-testid="photo-grid">
-                        {photos.map((p) => (
+                        {photos.map((p, i) => (
                             <PhotoTile
                                 key={p.id}
                                 photo={p}
@@ -213,6 +216,7 @@ export default function Photos() {
                                 selectMode={selectMode}
                                 selected={selectedIds.includes(p.id)}
                                 onToggleSelect={() => toggleSelect(p.id)}
+                                onOpenLightbox={() => setLightboxIndex(i)}
                             />
                         ))}
                     </div>
@@ -221,6 +225,13 @@ export default function Photos() {
 
             <CreateAlbumDialog open={creatingAlbum} onClose={() => setCreatingAlbum(false)} onCreated={async (a) => { setCreatingAlbum(false); await loadAlbums(); setActiveAlbum(a); }} />
             <EditAlbumDialog album={editingAlbum} onClose={() => setEditingAlbum(null)} onSaved={async () => { setEditingAlbum(null); await loadAlbums(); }} />
+            <PhotoLightbox
+                photos={photos}
+                index={lightboxIndex}
+                onClose={() => setLightboxIndex(null)}
+                onPrev={() => setLightboxIndex((i) => (i === null ? null : (i - 1 + photos.length) % photos.length))}
+                onNext={() => setLightboxIndex((i) => (i === null ? null : (i + 1) % photos.length))}
+            />
         </div>
     );
 }
@@ -333,7 +344,7 @@ function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
     );
 }
 
-function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, selectMode, selected, onToggleSelect }) {
+function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, selectMode, selected, onToggleSelect, onOpenLightbox }) {
     const [src, setSrc] = useState("");
 
     useEffect(() => {
@@ -384,18 +395,26 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
 
     return (
         <div className="group relative aspect-square rounded-2xl overflow-hidden bg-muted border border-slate-200 shadow-warm" data-testid={`photo-${photo.id}`}>
-            {src ? (
-                <img src={src} alt={photo.title} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
-            ) : (
-                <div className="w-full h-full animate-pulse bg-muted" />
-            )}
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="text-xs font-semibold truncate">{photo.title || "Untitled"}</div>
-                <div className="text-[10px] opacity-80">
-                    by {photo.uploaded_by_name} · {photo.created_at && format(parseISO(photo.created_at), "MMM d")}
+            <button
+                type="button"
+                onClick={onOpenLightbox}
+                className="absolute inset-0 w-full h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-zoom-in"
+                aria-label={`Open ${photo.title || "photo"}`}
+                data-testid={`photo-open-${photo.id}`}
+            >
+                {src ? (
+                    <img src={src} alt={photo.title} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
+                ) : (
+                    <div className="w-full h-full animate-pulse bg-muted" />
+                )}
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    <div className="text-xs font-semibold truncate text-left">{photo.title || "Untitled"}</div>
+                    <div className="text-[10px] opacity-80 text-left">
+                        by {photo.uploaded_by_name} · {photo.created_at && format(parseISO(photo.created_at), "MMM d")}
+                    </div>
                 </div>
-            </div>
-            <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            </button>
+            <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                 <button
                     onClick={downloadOne}
                     className="rounded-full bg-white/95 hover:bg-white p-1.5 shadow text-primary"
@@ -406,7 +425,7 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
                 </button>
                 {albumCanEdit && (
                     <button
-                        onClick={() => onSetCover(true)}
+                        onClick={(e) => { e.stopPropagation(); onSetCover(true); }}
                         className="rounded-full bg-white/95 hover:bg-white p-1.5 shadow text-amber-500"
                         title="Make album cover"
                         data-testid={`set-cover-${photo.id}`}
@@ -416,13 +435,165 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
                 )}
                 {canDelete && (
                     <button
-                        onClick={() => onDelete(photo.id)}
+                        onClick={(e) => { e.stopPropagation(); onDelete(photo.id); }}
                         className="rounded-full bg-white/90 hover:bg-white p-1.5 shadow"
                         data-testid={`delete-photo-${photo.id}`}
                     >
                         <Trash2 className="h-3.5 w-3.5 text-destructive" />
                     </button>
                 )}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Full-screen lightbox for the photo grid.
+ *
+ * Why parent-owned state: the prev/next arrows have to walk the parent's
+ * filtered `photos` list. Keeping `index` here means we don't need to mirror
+ * the list inside the dialog and we get free updates if a photo is deleted
+ * while the lightbox is open (we cap the index in an effect).
+ *
+ * Why we re-fetch the blob inside this component rather than reusing the
+ * tile's blob URL: photos are served through the authenticated `/api/files/*`
+ * route. The tile uses `api.get(..., responseType: 'blob')` + `createObjectURL`.
+ * Reaching across components for the blob would couple the two; re-fetching
+ * is cheap (the photo is already in the browser cache from the tile load).
+ */
+function PhotoLightbox({ photos, index, onClose, onPrev, onNext }) {
+    const open = index !== null && index >= 0 && index < photos.length;
+    const photo = open ? photos[index] : null;
+    const [src, setSrc] = useState("");
+    const [loading, setLoading] = useState(false);
+
+    // Re-fetch the underlying image whenever the displayed photo changes.
+    useEffect(() => {
+        if (!photo) { setSrc(""); return; }
+        let revoked = null;
+        let cancelled = false;
+        setLoading(true);
+        (async () => {
+            try {
+                const path = photo.url.startsWith("/api") ? photo.url.slice(4) : photo.url;
+                const { data } = await api.get(path, { responseType: "blob" });
+                if (cancelled) return;
+                const url = URL.createObjectURL(data);
+                revoked = url;
+                setSrc(url);
+            } catch {
+                /* ignore */
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; if (revoked) URL.revokeObjectURL(revoked); };
+    }, [photo]);
+
+    // Keyboard nav: Esc to close, ← / → to walk the album.
+    useEffect(() => {
+        if (!open) return;
+        function onKey(e) {
+            if (e.key === "Escape") onClose();
+            else if (e.key === "ArrowLeft" && photos.length > 1) onPrev();
+            else if (e.key === "ArrowRight" && photos.length > 1) onNext();
+        }
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [open, photos.length, onClose, onPrev, onNext]);
+
+    if (!open || !photo) return null;
+
+    async function downloadCurrent() {
+        try {
+            const path = photo.url.startsWith("/api") ? photo.url.slice(4) : photo.url;
+            const res = await api.get(path, { responseType: "blob" });
+            const ext = (photo.original_filename || photo.url).split(".").pop().toLowerCase();
+            const base = (photo.title || photo.original_filename || "photo").replace(/[^a-z0-9._ -]/gi, "_");
+            const name = base.toLowerCase().endsWith(`.${ext}`) ? base : `${base}.${ext}`;
+            triggerDownload(res.data, name);
+        } catch { toast.error("Download failed"); }
+    }
+
+    return (
+        <div
+            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center"
+            onClick={onClose}
+            data-testid="photo-lightbox"
+            role="dialog"
+            aria-modal="true"
+            aria-label={photo.title || "Photo preview"}
+        >
+            {/* Close (top-right) */}
+            <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onClose(); }}
+                className="absolute top-4 right-4 rounded-full bg-white/10 hover:bg-white/20 text-white p-2 transition-colors"
+                aria-label="Close"
+                data-testid="lightbox-close"
+            >
+                <X className="h-6 w-6" />
+            </button>
+            {/* Download (top-right, next to close) */}
+            <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); downloadCurrent(); }}
+                className="absolute top-4 right-16 rounded-full bg-white/10 hover:bg-white/20 text-white p-2 transition-colors"
+                aria-label="Download photo"
+                title="Download"
+                data-testid="lightbox-download"
+            >
+                <Download className="h-5 w-5" />
+            </button>
+            {/* Prev / Next arrows (hide when only 1 photo) */}
+            {photos.length > 1 && (
+                <>
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onPrev(); }}
+                        className="absolute left-4 sm:left-8 top-1/2 -translate-y-1/2 rounded-full bg-white/10 hover:bg-white/20 text-white p-3 transition-colors"
+                        aria-label="Previous photo"
+                        data-testid="lightbox-prev"
+                    >
+                        <ArrowLeft className="h-6 w-6" />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onNext(); }}
+                        className="absolute right-4 sm:right-8 top-1/2 -translate-y-1/2 rounded-full bg-white/10 hover:bg-white/20 text-white p-3 transition-colors"
+                        aria-label="Next photo"
+                        data-testid="lightbox-next"
+                    >
+                        <ArrowLeft className="h-6 w-6 rotate-180" />
+                    </button>
+                </>
+            )}
+            {/* Image — clicking the image itself does NOT close (so users can drag/zoom) */}
+            <div
+                className="relative max-w-[92vw] max-h-[88vh] flex flex-col items-center"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {loading && !src ? (
+                    <Loader2 className="h-10 w-10 text-white/70 animate-spin" />
+                ) : src ? (
+                    <img
+                        src={src}
+                        alt={photo.title || "Photo"}
+                        className="max-w-[92vw] max-h-[80vh] object-contain rounded-lg shadow-2xl"
+                        data-testid="lightbox-image"
+                    />
+                ) : (
+                    <div className="text-white/70 text-sm">Failed to load image.</div>
+                )}
+                {/* Caption */}
+                <div className="mt-4 text-center text-white max-w-2xl">
+                    <div className="font-heading text-lg font-bold" data-testid="lightbox-title">{photo.title || "Untitled"}</div>
+                    <div className="text-xs opacity-75 mt-1">
+                        by {photo.uploaded_by_name || "Unknown"}
+                        {photo.created_at && ` · ${format(parseISO(photo.created_at), "MMM d, yyyy")}`}
+                        {photos.length > 1 && ` · ${index + 1} of ${photos.length}`}
+                    </div>
+                </div>
             </div>
         </div>
     );
