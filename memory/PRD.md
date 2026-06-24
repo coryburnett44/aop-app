@@ -15,6 +15,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Phase BL — Iteration 73: RSVP ticket fix, OTY chapter, ORB-style Personnel Brief (2026-02-15)
+
+**User requests addressed (4):**
+A. **Bug** — Admin → Reports → RSVPs showed blank `ticket_type` when no check-in existed yet (only checkin's ticket_type was sourced). Fix: fall back to `rsvp.ticket_type` then 'general' (routes/reports.py L125).
+B. **Bug** — Personnel Brief "Of The Year" rows had blank chapter when the OTY doc had no denormalized chapter_name. Fix: 4-step waterfall — denorm name → lookup by chapter_id → walk `users.assignment_history` for the OTY year (new `_chapter_for_year` helper) → fall back to current chapter.
+C. **Enhancement** — Admins can now optionally tag a chapter on member-category OTY awards. Backend PUT/POST relaxed (chapter_id no longer rejected). Awards.jsx exposes a "Chapter context (optional)" Select with placeholder "Auto-resolve from assignment history" (`oty-member-chapter-select`).
+D. **Enhancement** — Personnel Brief completely rebuilt to look like an Army Officer Record Brief.
+   - **PDF:** landscape letter. Page 1 = ORB-style identity header (photo + name in ALL CAPS + right-side 7-field meta grid) + a 3-column ORB grid (Personal Data / Awards & OTY / Assignment-Stats-Events) using new helpers (`orb_kvp`, `orb_list`, `_column`). Pages 2+ = detail tables for SECTION III–XI in ALL CAPS.
+   - **On-screen preview:** matching ORB header + new `OrbSummary` component rendering 3-column tile grid (`brief-orb-summary`, `brief-orb-meta`, `orb-oty-tile`) followed by "▼ Detailed Record (Attachments)" divider and the existing detailed sections renumbered to Roman numerals (`brief-section-I` through `brief-section-XI`).
+
+**Verification (iteration 73):** 28/28 active tests pass across iter69–72 regression + iter73 frontend/backend tests. Testing agent verified all 4 user requests end-to-end. PDF text-extraction confirms landscape size + ALL CAPS section headers + section order + dual-page rendering.
+
+
 ### Phase BL — Iteration 72: "Of The Year" on Personnel Brief + Admin Member Card (2026-02-15)
 
 **User request:** "On the personnel brief, add the last 7 'Of The Year' Awards as a section after the Awards section. Also, show every 'Of The Year' award that the member won on the member card in the admin → members section."

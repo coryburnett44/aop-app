@@ -146,13 +146,23 @@ def test_personnel_brief_pdf_has_section9_oty(admin_client, maya_id):
     assert r.status_code == 200, r.text
     assert r.headers.get("content-type", "").startswith("application/pdf")
     text = _extract_pdf_text(r.content)
-    # Required strings
-    for needle in ("§9", "Of The Year", "Member of the Year",
-                    "Top Community Service Member", "§10", "§11"):
+    # Required strings (iter73: §-markers replaced by ALL CAPS Roman-numeral SECTION headers).
+    # Use case-insensitive check for "Of The Year" since the header now reads
+    # ALL CAPS while the category labels carry through in title case.
+    for needle in ("SECTION IX", "Member of the Year",
+                    "Top Community Service Member", "SECTION X", "SECTION XI"):
         assert needle in text, f"missing '{needle}' in PDF text. Got:\n{text[:2000]}"
-    # Order: §9 before §10 before §11
-    i9, i10, i11 = text.find("§9"), text.find("§10"), text.find("§11")
-    assert i9 < i10 < i11, f"section order wrong: §9={i9} §10={i10} §11={i11}"
+    assert re.search(r"of\s+the\s+year", text, re.IGNORECASE), (
+        f"PDF must contain 'Of The Year' (any case). Got:\n{text[:2000]}"
+    )
+    # Order: SECTION IX before SECTION X before SECTION XI
+    # ("SECTION X " with trailing space disambiguates from "SECTION XI")
+    i9 = text.find("SECTION IX")
+    i11 = text.find("SECTION XI")
+    # 'SECTION X' substring appears inside 'SECTION XI', so search for it with a trailing non-letter.
+    m_x = re.search(r"SECTION X(?![IVL])", text)
+    i10 = m_x.start() if m_x else -1
+    assert 0 <= i9 < i10 < i11, f"section order wrong: IX={i9} X={i10} XI={i11}"
 
 
 # ---------- Edge: >7 wins ----------
@@ -220,7 +230,9 @@ def test_personnel_brief_pdf_header_includes_last_7_of_n(admin_client, maya_id, 
     r = admin_client.get(f"{API}/reports/personnel-brief/{maya_id}/pdf")
     assert r.status_code == 200
     text = _extract_pdf_text(r.content)
-    # Should mention "last 7 of 8"
+    # Should mention "last 7 of 8" — extraction may insert a newline / spaces
+    # between tokens, hence the \s* relaxation. Case-insensitive because the
+    # ORB renames to ALL CAPS "LAST 7 OF 8".
     assert re.search(r"last\s*7\s*of\s*8", text, re.IGNORECASE), (
         f"PDF should note 'last 7 of 8' when N>7. Snippet:\n{text[:3000]}"
     )
@@ -240,7 +252,15 @@ def test_personnel_brief_pdf_zero_wins_placeholder(admin_client, admin_user_id):
     r = admin_client.get(f"{API}/reports/personnel-brief/{admin_user_id}/pdf")
     assert r.status_code == 200
     text = _extract_pdf_text(r.content)
-    assert "§9" in text
-    assert "Of The Year" in text
-    # Placeholder for no wins
-    assert "No Of The Year honors on record" in text or "No \"Of The Year\"" in text or "no" in text.lower()
+    assert "SECTION IX" in text
+    assert re.search(r"of\s+the\s+year", text, re.IGNORECASE)
+    # Placeholder for no wins — italic text "No 'Of The Year' honors on record." may
+    # carry through pdfplumber as either smart or straight quotes; allow both.
+    placeholder_found = any(
+        s in text for s in (
+            "No Of The Year honors on record",
+            "No 'Of The Year' honors on record",
+            "No \"Of The Year\" honors on record",
+        )
+    )
+    assert placeholder_found or "no" in text.lower()

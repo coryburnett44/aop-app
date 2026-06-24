@@ -1112,8 +1112,8 @@ const OrbKv = ({ k, v }) => (
         <span className="font-semibold text-foreground/90 truncate">{v || "—"}</span>
     </div>
 );
-const OrbTile = ({ title: tileTitle, children, ...rest }) => (
-    <div {...rest}>
+const OrbTile = ({ title: tileTitle, children, "data-testid": testId }) => (
+    <div data-testid={testId}>
         <div className="bg-[hsl(220_45%_12%)] text-white text-[10px] uppercase tracking-[0.15em] font-black px-2 py-1 rounded-sm">
             {tileTitle}
         </div>
