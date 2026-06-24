@@ -15,6 +15,13 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 79 — Guest check-in dropdown with search + manual fallback (2026-02-24)
+- **Frontend `EventDetail.jsx`**: The admin Check-In dialog's "Guest" tab now mirrors the Member tab — flattens every RSVP'd guest across all member RSVPs into a searchable list (search by guest name, email, or host member name). Picking a guest pre-fills their RSVP'd ticket type and links the check-in to their host member via `host_user_id` so reports group them correctly.
+- **Already-checked-in guests are hidden** (matched by `(host_user_id, normalized_name)` against the existing checkins list, same shape used by the backend `/check-in-roster` endpoint).
+- **Manual fallback**: "+ Guest not listed? Type their name manually" toggles a free-text input for walk-ins (no host linkage). "← Back to RSVP guest list" returns to the dropdown.
+- **Reset on close**: Closing the dialog resets all form state so next open is clean.
+- **Tests**: `test_iteration79_guest_checkin_dropdown.py` — 3/3 pass (guest+host linkage, duplicate-guest 400 guard, walk-in escape hatch).
+
 ### Iteration 78 — Pending Password Setup badge stays permanent until member resets (2026-02-24)
 - **Bug fix (root cause)**: `routes/auth.py` no longer auto-clears `pending_set_password` on a successful login. Bulk-imported members can sign in with an admin-set temporary password without ever completing the `/set-password` welcome flow — the old behaviour silently flipped the flag off in that case.
 - **Proper clears (member-driven)**: `/auth/reset-password` and `/auth/change-password` now clear `pending_set_password` (in addition to `/auth/set-password`, which already did). The flag only clears when the member themselves completes a password action.

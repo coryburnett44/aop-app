@@ -258,7 +258,7 @@ export default function EventDetail() {
                 />
             )}
 
-            {user?.role === "admin" && <CheckInPanel eventId={id} eventTitle={event.title} allowsTickets={event.allows_ticket_types} />}
+            {user?.role === "admin" && <CheckInPanel eventId={id} eventTitle={event.title} allowsTickets={event.allows_ticket_types} rsvps={rsvps} />}
         </div>
     );
 }
@@ -1032,7 +1032,7 @@ function GuestManager({ guests, onSave, disabled, allowsTickets, enabledTicketTy
     );
 }
 
-function CheckInPanel({ eventId, eventTitle, allowsTickets }) {
+function CheckInPanel({ eventId, eventTitle, allowsTickets, rsvps }) {
     const [checkins, setCheckins] = useState([]);
     const [members, setMembers] = useState([]);
 
@@ -1043,6 +1043,30 @@ function CheckInPanel({ eventId, eventTitle, allowsTickets }) {
     }, [eventId]);
 
     const checkedInIds = new Set(checkins.filter((c) => c.user_id).map((c) => c.user_id));
+    // Match guest check-ins by (host_user_id, normalized name) — same shape used
+    // by the /check-in-roster backend so the two stay consistent.
+    const _normalize = (s) => (s || "").trim().toLowerCase();
+    const checkedInGuestKeys = new Set(
+        checkins
+            .filter((c) => c.is_guest || (!c.user_id && c.user_name))
+            .map((c) => `${c.host_user_id || ""}|${_normalize(c.user_name)}`)
+    );
+    // Flatten every RSVP'd guest into a single dropdown list with their host.
+    const memberById = new Map((members || []).map((m) => [m.id, m]));
+    const allGuests = (rsvps || []).flatMap((r) =>
+        (r.guests || []).map((g) => {
+            const host = memberById.get(r.user_id);
+            return {
+                host_user_id: r.user_id,
+                host_name: host?.name || r.user_name || "",
+                name: g.name || "",
+                email: g.email || "",
+                ticket_type: g.ticket_type || "guest",
+                ticket_id: g.ticket_id || "",
+                checked_in: checkedInGuestKeys.has(`${r.user_id}|${_normalize(g.name)}`),
+            };
+        })
+    );
     const totals = checkins.reduce((acc, c) => { acc[c.ticket_type] = (acc[c.ticket_type] || 0) + 1; return acc; }, {});
 
     async function remove(id) {
@@ -1062,7 +1086,7 @@ function CheckInPanel({ eventId, eventTitle, allowsTickets }) {
                         {["vip", "all_access", "general", "guest", "speaker", "volunteer"].map((t) => totals[t] ? `${totals[t]} ${t.replace("_", " ")}` : null).filter(Boolean).join(" · ") || "No check-ins yet"}
                     </div>
                 </div>
-                <CheckInDialog eventId={eventId} eventTitle={eventTitle} members={members} checkedInIds={checkedInIds} allowsTickets={allowsTickets} onDone={load} />
+                <CheckInDialog eventId={eventId} eventTitle={eventTitle} members={members} checkedInIds={checkedInIds} guests={allGuests} allowsTickets={allowsTickets} onDone={load} />
             </div>
             {checkins.length === 0 ? (
                 <div className="text-sm text-muted-foreground py-6 text-center">No check-ins yet. Add the first attendee.</div>
@@ -1091,13 +1115,23 @@ function CheckInPanel({ eventId, eventTitle, allowsTickets }) {
     );
 }
 
-function CheckInDialog({ eventId, eventTitle, members, checkedInIds, allowsTickets, onDone }) {
+function CheckInDialog({ eventId, eventTitle, members, checkedInIds, guests, allowsTickets, onDone }) {
     const [open, setOpen] = useState(false);
     const [mode, setMode] = useState("member");
     const [userId, setUserId] = useState("");
     const [guestName, setGuestName] = useState("");
+    const [guestHostId, setGuestHostId] = useState(""); // empty = walk-in (no host)
+    const [guestKey, setGuestKey] = useState(""); // host|name marker for which guest row is selected
+    const [manualGuest, setManualGuest] = useState(false); // toggle to free-type a guest not on the list
     const [ticketType, setTicketType] = useState("general");
     const [search, setSearch] = useState("");
+    const [guestSearch, setGuestSearch] = useState("");
+
+    function resetForm() {
+        setUserId(""); setGuestName(""); setGuestHostId(""); setGuestKey("");
+        setManualGuest(false); setSearch(""); setGuestSearch("");
+        setTicketType("general"); setMode("member");
+    }
 
     async function submit() {
         try {
@@ -1108,10 +1142,11 @@ function CheckInDialog({ eventId, eventTitle, members, checkedInIds, allowsTicke
             } else {
                 if (!guestName.trim()) { toast.error("Enter a guest name"); return; }
                 payload.guest_name = guestName.trim();
+                if (guestHostId) payload.host_user_id = guestHostId;
             }
             await api.post(`/events/${eventId}/check-in`, payload);
-            toast.success("Checked in ✅");
-            setUserId(""); setGuestName(""); setSearch(""); setTicketType("general"); setMode("member");
+            toast.success("Checked in");
+            resetForm();
             setOpen(false);
             onDone();
         } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
@@ -1124,14 +1159,35 @@ function CheckInDialog({ eventId, eventTitle, members, checkedInIds, allowsTicke
         return m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q) || m.line_name?.toLowerCase().includes(q);
     }).slice(0, 30);
 
+    // Guest dropdown — flatten + filter to not-yet-checked-in + search.
+    const filteredGuests = (guests || [])
+        .filter((g) => !g.checked_in && g.name)
+        .filter((g) => {
+            if (!guestSearch) return true;
+            const q = guestSearch.toLowerCase();
+            return g.name.toLowerCase().includes(q)
+                || (g.email || "").toLowerCase().includes(q)
+                || (g.host_name || "").toLowerCase().includes(q);
+        })
+        .slice(0, 30);
+
+    function pickGuest(g) {
+        const key = `${g.host_user_id || ""}|${g.name}`;
+        setGuestKey(key);
+        setGuestName(g.name);
+        setGuestHostId(g.host_user_id || "");
+        // Pre-fill the ticket type from the RSVP record but admin can override.
+        if (g.ticket_type) setTicketType(g.ticket_type);
+    }
+
     return (
         <>
             <Button onClick={() => setOpen(true)} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="add-checkin-btn">
                 <UserCheck className="h-4 w-4 mr-1.5" /> Check in
             </Button>
-            <Dialog open={open} onOpenChange={setOpen}>
+            <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) resetForm(); }}>
                 <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-                    <DialogHeader><DialogTitle className="font-heading text-2xl">Check in to "{eventTitle}"</DialogTitle></DialogHeader>
+                    <DialogHeader><DialogTitle className="font-heading text-2xl">Check in to &ldquo;{eventTitle}&rdquo;</DialogTitle></DialogHeader>
                     <div className="space-y-4 mt-2">
                         <div className="flex gap-2">
                             <button onClick={() => setMode("member")} className={`flex-1 rounded-full py-2 text-sm font-semibold ${mode === "member" ? "bg-primary text-white shadow-warm" : "bg-muted"}`} data-testid="checkin-mode-member">Member</button>
@@ -1157,9 +1213,74 @@ function CheckInDialog({ eventId, eventTitle, members, checkedInIds, allowsTicke
                                 </div>
                             </div>
                         ) : (
-                            <div>
-                                <Label>Guest name</Label>
-                                <Input value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="John Doe" className="rounded-xl mt-1.5" data-testid="checkin-guest-name" />
+                            <div className="space-y-2">
+                                {!manualGuest ? (
+                                    <>
+                                        <Input
+                                            placeholder="Search guest by name, email, or host member…"
+                                            value={guestSearch}
+                                            onChange={(e) => setGuestSearch(e.target.value)}
+                                            className="rounded-xl"
+                                            data-testid="checkin-guest-search"
+                                        />
+                                        <div className="max-h-56 overflow-y-auto border border-border rounded-xl" data-testid="checkin-guest-list">
+                                            {filteredGuests.length === 0 ? (
+                                                <div className="p-4 text-sm text-muted-foreground text-center" data-testid="checkin-guest-empty">
+                                                    {(guests || []).length === 0
+                                                        ? "No guests on the RSVP list yet."
+                                                        : "No matching guests (already checked in are hidden)."}
+                                                </div>
+                                            ) : filteredGuests.map((g) => {
+                                                const key = `${g.host_user_id || ""}|${g.name}`;
+                                                return (
+                                                    <button
+                                                        key={key}
+                                                        onClick={() => pickGuest(g)}
+                                                        className={`w-full text-left px-3 py-2 hover:bg-muted/60 border-b last:border-0 ${guestKey === key ? "bg-primary/10" : ""}`}
+                                                        data-testid={`checkin-guest-pick-${key}`}
+                                                    >
+                                                        <div className="text-sm font-medium">{g.name}</div>
+                                                        <div className="text-xs text-muted-foreground">
+                                                            {g.host_name ? `Invited by ${g.host_name}` : "Walk-in"}
+                                                            {g.ticket_type && g.ticket_type !== "guest" ? ` · ${g.ticket_type.replace("_", " ")}` : ""}
+                                                            {g.email ? ` · ${g.email}` : ""}
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setManualGuest(true); setGuestKey(""); setGuestName(""); setGuestHostId(""); }}
+                                            className="text-primary hover:underline text-xs font-medium"
+                                            data-testid="checkin-guest-manual-toggle"
+                                        >
+                                            + Guest not listed? Type their name manually
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Label>Guest name (walk-in)</Label>
+                                        <Input
+                                            value={guestName}
+                                            onChange={(e) => setGuestName(e.target.value)}
+                                            placeholder="John Doe"
+                                            className="rounded-xl mt-1.5"
+                                            data-testid="checkin-guest-name"
+                                        />
+                                        <p className="text-[11px] text-muted-foreground mt-1">
+                                            This guest is not tied to a member RSVP. They&apos;ll appear as a walk-in on the roster.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setManualGuest(false); setGuestName(""); }}
+                                            className="text-primary hover:underline text-xs font-medium"
+                                            data-testid="checkin-guest-back-to-list"
+                                        >
+                                            ← Back to RSVP guest list
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         )}
                         <div>
