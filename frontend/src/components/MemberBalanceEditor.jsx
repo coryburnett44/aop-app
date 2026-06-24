@@ -23,6 +23,13 @@ import { format, parseISO } from "date-fns";
 export default function MemberBalanceEditor({ memberId, memberName }) {
     const [balance, setBalance] = useState(null);
     const [zeffyUrl, setZeffyUrl] = useState("");
+    // Track the URL value last confirmed by the server so we can show a clear
+    // "Unsaved / Saving / Saved" hint and auto-save on blur. Without this hint
+    // admins paste the URL, click the dialog's bottom "Save changes" (which
+    // does NOT touch `outstanding_zeffy_url` — that's an isolated endpoint),
+    // close the dialog, and the URL silently disappears.
+    const [serverZeffyUrl, setServerZeffyUrl] = useState("");
+    const [urlSaving, setUrlSaving] = useState(false);
     const [editingLineId, setEditingLineId] = useState(null);
     const [editForm, setEditForm] = useState({ label: "", amount: "" });
     const [newLine, setNewLine] = useState({ label: "", amount: "" });
@@ -34,6 +41,7 @@ export default function MemberBalanceEditor({ memberId, memberName }) {
             const { data } = await api.get(`/admin/members/${memberId}/balance`);
             setBalance(data);
             setZeffyUrl(data.zeffy_url || "");
+            setServerZeffyUrl(data.zeffy_url || "");
             // Pending receipts come from /transactions?user_id=&type_filter=fee
             // and we filter to balance+pending in the UI for accuracy.
             const { data: txs } = await api.get(`/transactions?user_id=${memberId}`).catch(() => ({ data: [] }));
@@ -45,15 +53,22 @@ export default function MemberBalanceEditor({ memberId, memberName }) {
         }
     }
 
-    useEffect(() => { if (memberId) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [memberId]);
+    useEffect(() => { if (memberId) load(); }, [memberId]);
 
-    async function saveZeffyUrl() {
+    async function saveZeffyUrl({ silent = false } = {}) {
+        const next = zeffyUrl.trim();
+        if (next === serverZeffyUrl.trim()) return; // nothing to save
+        setUrlSaving(true);
         setBusy(true);
         try {
-            await api.put(`/admin/members/${memberId}/balance/zeffy-url`, { url: zeffyUrl.trim() });
-            toast.success("Zeffy URL saved");
+            await api.put(`/admin/members/${memberId}/balance/zeffy-url`, { url: next });
+            setServerZeffyUrl(next);
+            if (!silent) toast.success(next ? "Zeffy URL saved" : "Zeffy URL cleared");
+            // Re-fetch the canonical balance so the "Open this member's Zeffy
+            // form" preview link refreshes too.
             await load();
         } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+        setUrlSaving(false);
         setBusy(false);
     }
 
@@ -154,34 +169,53 @@ export default function MemberBalanceEditor({ memberId, memberName }) {
 
             {/* Zeffy URL */}
             <div className="bg-card rounded-xl p-3 border border-border">
-                <Label className="text-xs">Per-member Zeffy payment URL</Label>
+                <Label className="text-xs flex items-center justify-between">
+                    <span>Per-member Zeffy payment URL</span>
+                    {(() => {
+                        const dirty = zeffyUrl.trim() !== serverZeffyUrl.trim();
+                        if (urlSaving) return <span className="text-[10px] uppercase tracking-wider font-bold text-amber-700" data-testid="balance-zeffy-url-status-saving">Saving…</span>;
+                        if (dirty) return <span className="text-[10px] uppercase tracking-wider font-bold text-amber-700" data-testid="balance-zeffy-url-status-unsaved">Unsaved · auto-saves on blur</span>;
+                        if (serverZeffyUrl) return <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-700" data-testid="balance-zeffy-url-status-saved">Saved</span>;
+                        return null;
+                    })()}
+                </Label>
                 <div className="flex gap-2 mt-1.5">
                     <Input
                         value={zeffyUrl}
                         onChange={(e) => setZeffyUrl(e.target.value)}
+                        onBlur={() => { void saveZeffyUrl({ silent: true }); }}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                                e.preventDefault();
+                                e.currentTarget.blur(); // triggers onBlur auto-save
+                            }
+                        }}
                         placeholder="https://www.zeffy.com/en-US/ticketing/..."
                         className="rounded-xl flex-1"
                         data-testid="balance-zeffy-url-input"
                     />
                     <Button
                         size="sm"
-                        onClick={saveZeffyUrl}
-                        disabled={busy}
+                        onClick={() => saveZeffyUrl()}
+                        disabled={busy || zeffyUrl.trim() === serverZeffyUrl.trim()}
                         className="rounded-full bg-primary hover:bg-primary/90"
                         data-testid="balance-zeffy-url-save"
                     >
                         Save URL
                     </Button>
                 </div>
-                {balance.zeffy_url && (
+                <div className="text-[11px] text-muted-foreground mt-1.5">
+                    Paste the member&apos;s personal Zeffy payment-plan link here. <strong>Auto-saves</strong> when you click elsewhere — the dialog&apos;s main &ldquo;Save changes&rdquo; button does not save this field.
+                </div>
+                {serverZeffyUrl && (
                     <a
-                        href={balance.zeffy_url}
+                        href={serverZeffyUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-primary hover:underline inline-flex items-center gap-1 mt-1.5"
                         data-testid="balance-zeffy-url-preview"
                     >
-                        <ExternalLink className="h-3 w-3" /> Open this member's Zeffy form
+                        <ExternalLink className="h-3 w-3" /> Open this member&apos;s Zeffy form
                     </a>
                 )}
             </div>

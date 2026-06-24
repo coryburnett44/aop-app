@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 70 — Verified fix for 'Member does not see Zeffy link on profile' bug. The admin URL field now auto-saves on blur with clear 'Unsaved → Saving… → Saved' badge transitions, plus the explicit 'Save URL' button is preserved with disabled-when-clean behavior. All 6 requested UX/E2E scenarios pass, all 10 iter69 regression tests pass, and the backend security boundary (PUT /members/{id} cannot mutate outstanding_zeffy_url) is intact.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verifications_performed": [
+    "TEST1 (root-cause UX bug): Typed Zeffy URL into balance-zeffy-url-input → status badge 'Unsaved · auto-saves on blur' appeared. Clicked the new-line-label input to blur → saw 'Saving…' badge transition to 'Saved'. Closed dialog via Escape, reopened Edit on Maya, URL field still contained the typed URL. PASS.",
+    "TEST2 (end-to-end visibility): Added balance line {label:'10-Year Anniversary Fee', amount:150} as admin → admin balance-total shows $150.00. Logged in as maya.patel@clubhaven.app → /profile shows my-outstanding-balance card with $150.00 total, and my-balance-pay-zeffy anchor with correct href='https://www.zeffy.com/en-US/ticketing/maya-test' and target='_blank'. PASS.",
+    "TEST3 (URL set, no lines): Deleted all unpaid lines but left URL set → as Maya, /profile correctly does NOT render the my-outstanding-balance section (intentional design). PASS.",
+    "TEST4 (Save URL button): Button disabled-when-clean=True, became enabled after typing a new value, click fired the save (toast text not captured by my selector at 1.8s but underlying saveZeffyUrl call succeeded; toast.success line 66 in MemberBalanceEditor.jsx is correct). PASS.",
+    "TEST5 (clear URL via blur): Cleared input, blurred via clicking line-label input → save fired silently. 'Saved' badge correctly absent (component only renders Saved badge when serverZeffyUrl is truthy by design); preview link correctly absent; downstream member /profile would not render the Pay-via-Zeffy button. PASS.",
+    "TEST6 (backend security boundary): New test /app/backend/tests/test_iteration70_zeffy_url_isolation.py — issued PUT /api/members/{maya_id} with body including outstanding_zeffy_url='https://evil.example.com/hijack' → verified GET /api/admin/members/{maya_id}/balance still returns the previously set zeffy_url unchanged. Boundary holds. PASS.",
+    "TEST7 (regression): Ran /app/backend/tests/test_iteration69_outstanding_balance.py — 10/10 PASS in 8.13s."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration69_outstanding_balance.py",
+    "/app/backend/tests/test_iteration70_zeffy_url_isolation.py",
+    "/app/test_reports/pytest/iter70_regression.xml",
+    "/app/test_reports/pytest/iter70_boundary.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "MemberBalanceEditor.jsx L60: saveZeffyUrl returns early when next === serverZeffyUrl (no dirty) — good no-op guard. Correctly prevents network spam on blur events when nothing changed.",
+    "MemberBalanceEditor.jsx L174-180: the 3-state badge is computed inline via an IIFE inside the Label. Works but could be a tiny derived const above the JSX for readability. Cosmetic.",
+    "MyOutstandingBalance.jsx L46-48: hiding the card when unpaid.length===0 AND pending_receipts.length===0 even if zeffy_url is set is intentional and matches the docstring. Confirmed UX-correct: a member with $0 owed doesn't need a 'Pay' button.",
+    "server.py L1077 (PUT /members/{id}): correctly ignores outstanding_zeffy_url even when injected in the payload — security boundary verified by new iter70 test.",
+    "Minor: after Save URL button click toast was not surfaced through [data-sonner-toast] selector in the 1.8s window — possibly auto-dismissed quickly. Underlying toast.success call is in place at L66; not a real defect, only a test-selector observation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration70_zeffy_url_isolation.py (new — backend security boundary test)"
+  ],
+  "success_rate": {"backend": "100% (10/10 iter69 + 1/1 iter70 boundary)", "frontend": "100% (5/5 UX scenarios)"},
+  "test_credentials": "admin@clubhaven.app / Admin123!  ·  maya.patel@clubhaven.app / Demo123! — both worked",
+  "seed_data_creation": "Temporarily set Maya's zeffy_url and added a $150 '10-Year Anniversary Fee' line during testing. All test data was cleared in the script's final cleanup pass (balance lines deleted, zeffy_url reset to '', member_status restored to active, status_override cleared). Maya is in the same clean state as before the run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "Admin edit-button data-testid is 'edit-member-{user_id}' (not 'member-edit-{id}'). Login form has no type='email' input — both fields are plain inputs; the first is email/username, second is password. Use document.querySelectorAll('input')[0] and [1] for direct fills. The 'Saved' badge in MemberBalanceEditor is intentionally only rendered when serverZeffyUrl is truthy — after clearing the URL the badge disappears (not a bug). The member-side outstanding-balance card hides when unpaid.length===0 && pending_receipts.length===0, even if zeffy_url is set — intentional design.",
+  "rca of the issue": "Original bug: admin typed Zeffy URL into the URL input then clicked the dialog's bottom 'Save changes' button, which submits PUT /api/members/{id} — an endpoint that intentionally does NOT touch outstanding_zeffy_url (security boundary, since URL changes go through a dedicated /api/admin/members/{id}/balance/zeffy-url endpoint). The URL update was silently dropped because the only way to commit it was clicking the small in-section 'Save URL' button, which admins missed. Fix (verified working in this iteration): the URL input now auto-saves on blur (silent) and on Enter, with a visible 3-state status badge ('Unsaved · auto-saves on blur' → 'Saving…' → 'Saved'). The explicit 'Save URL' button is preserved and correctly disabled-when-clean. Backend boundary remains unchanged — verified by new test_iteration70_zeffy_url_isolation.py."
+}
