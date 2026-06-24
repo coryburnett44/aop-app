@@ -15,6 +15,14 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 78 — Pending Password Setup badge stays permanent until member resets (2026-02-24)
+- **Bug fix (root cause)**: `routes/auth.py` no longer auto-clears `pending_set_password` on a successful login. Bulk-imported members can sign in with an admin-set temporary password without ever completing the `/set-password` welcome flow — the old behaviour silently flipped the flag off in that case.
+- **Proper clears (member-driven)**: `/auth/reset-password` and `/auth/change-password` now clear `pending_set_password` (in addition to `/auth/set-password`, which already did). The flag only clears when the member themselves completes a password action.
+- **Admin override unchanged**: `PUT /api/members/{id}` with `new_password` still clears the flag (intentional — admin has explicitly verified onboarding).
+- **Boot migration**: New `reconcile_pending_set_password()` runs at startup. It re-flags any member whose `pending_set_password` is currently false BUT who had a `password_set_tokens` row issued AND never consumed one via `/auth/set-password` (only invalidated-on-resend rows present). Idempotent — re-runs are no-ops once the data is consistent.
+- **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
+- **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
+
 ### Iteration 77 — Per-event ticket type filtering on all guest selectors (2026-02-24)
 - **Frontend `EventDetail.jsx`**: The member-side `GuestManager`, the admin-side `AdminRsvpForMemberDialog` member-ticket select, and its per-guest-ticket select all now read `event.enabled_ticket_types` and render only the options actually enabled for that event. Legacy events with an empty `enabled_ticket_types` fall back to the canonical four (VIP / All Access / General / Guest) so behaviour is unchanged for un-migrated rows.
 - Member-side member-ticket picker already followed this pattern (`MemberTicketPicker`) — admin-side selectors now match.

@@ -141,9 +141,12 @@ def register(
             raise HTTPException(status_code=400, detail="Invalid or already-used reset link.")
         if t.get("expires_at") and t["expires_at"] < iso(now_utc()):
             raise HTTPException(status_code=400, detail="This reset link has expired. Request a new one.")
+        # Resetting a password counts as the member completing onboarding, so
+        # clear the pending_set_password flag and bump token_version to log
+        # out any active sessions on other devices.
         await db.users.update_one(
             {"id": t["user_id"]},
-            {"$set": {"password_hash": hash_password(body.new_password)}, "$inc": {"token_version": 1}},
+            {"$set": {"password_hash": hash_password(body.new_password), "pending_set_password": False}, "$inc": {"token_version": 1}},
         )
         await db.password_reset_tokens.update_one({"token": body.token}, {"$set": {"used": True, "used_at": iso(now_utc())}})
         return {"ok": True}
@@ -153,7 +156,12 @@ def register(
         full = await db.users.find_one({"id": user["id"]})
         if not full or not verify_password(body.current_password, full["password_hash"]):
             raise HTTPException(status_code=400, detail="Current password is incorrect")
-        await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
+        # If the member is logged in and changes their own password, that also
+        # counts as completing the password-setup step — clear the flag.
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"password_hash": hash_password(body.new_password), "pending_set_password": False}},
+        )
         return {"ok": True}
 
     # Expose email senders on `register` so server.py can call them for bulk-import

@@ -1403,6 +1403,49 @@ async def seed_default_photo_albums():
     async for a in db.photo_albums.find({"category": {"$in": [None, ""]}}, {"_id": 0, "id": 1, "name": 1}):
         await db.photo_albums.update_one({"id": a["id"]}, {"$set": {"category": auto_categorize_album(a["name"])}})
 
+async def reconcile_pending_set_password():
+    """One-shot boot-time reconciliation for the iter78 fix.
+
+    Re-flags members whose `pending_set_password` was incorrectly cleared by the
+    old auth-login path. A user is considered "never completed setup" when:
+      - They have at least one row in `password_set_tokens` (i.e. a welcome /
+        resend email was issued for them), AND
+      - None of those rows show evidence of being consumed via /auth/set-password
+        (`used=true` AND no `invalidated_by` field).
+
+    Only users currently flagged `pending_set_password=false` are touched.
+    Idempotent: subsequent boots are no-ops because re-flagged users won't match
+    the "currently false" filter.
+    """
+    # Build a set of user_ids who *did* consume a token (proves completion).
+    consumed_uids = set()
+    async for t in db.password_set_tokens.find(
+        {"used": True, "invalidated_by": {"$exists": False}},
+        {"_id": 0, "user_id": 1},
+    ):
+        if t.get("user_id"):
+            consumed_uids.add(t["user_id"])
+    # Users who were issued any token at all.
+    issued_uids = set()
+    async for t in db.password_set_tokens.find({}, {"_id": 0, "user_id": 1}):
+        if t.get("user_id"):
+            issued_uids.add(t["user_id"])
+    # Re-flag candidates: issued but never consumed AND currently not flagged.
+    candidates = issued_uids - consumed_uids
+    if not candidates:
+        logger.info("[reconcile-pending-setpw] no candidates to re-flag")
+        return
+    res = await db.users.update_many(
+        {"id": {"$in": list(candidates)}, "pending_set_password": {"$ne": True}},
+        {"$set": {"pending_set_password": True}},
+    )
+    if res.modified_count:
+        logger.info(f"[reconcile-pending-setpw] re-flagged {res.modified_count} member(s) who never completed /set-password")
+    else:
+        logger.info("[reconcile-pending-setpw] all candidates already correctly flagged")
+
+
+
 
 @api.get("/photos/albums")
 async def list_photo_albums(category: Optional[str] = None):
@@ -2281,6 +2324,7 @@ async def startup():
     await reconcile_awards()
     await seed_anniversary_subevents()
     await seed_default_photo_albums()
+    await reconcile_pending_set_password()
     await seed_builtin_automated_emails()
     await seed_builtin_dues_reminders()
     from routes import email as _routes_email  # local import to avoid load-time cycle
