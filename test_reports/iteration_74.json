@@ -1,0 +1,26 @@
+{
+  "summary": "Iter74 end-to-end testing — admin un-RSVP + admin remove-guest endpoints + ManageRsvps dialog. Backend: 8/8 new pytest cases pass (auth, idempotency, 404s, counters integrity, member self-RSVP regression). Frontend: full UI happy-path verified (trigger visible, dialog opens, search filter narrows results, per-guest remove works, un-RSVP removes whole row with toast, event header counters refresh, browser confirm() auto-accepted). Regression: iter39 + iter50 + iter51 RSVP suites all green (41/41).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration74_admin_unrsvp.py",
+    "/app/test_reports/pytest/iter74_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/rsvps.py is now ~950 lines and still mixes RSVP toggles, paid-event flows, ticket emails, check-in scan, admin RSVPs, bulk CSV, admin un-RSVP + admin remove-guest. Consider splitting into rsvps_self.py / rsvps_admin.py / rsvps_csv.py / checkin.py to keep each module < 400 lines.",
+    "admin_un_rsvp_member returns 200 + was_present=false for missing RSVPs (intentional idempotency), but admin_remove_guest with same missing RSVP returns 404 'No RSVP found'. Inconsistent contract — consider documenting this on the OpenAPI summary so the UI doesn't surprise admins.",
+    "AdminManageRsvpsDialog.jsx uses window.confirm() which blocks the event loop and can't be auto-accepted by Playwright unless the page.on('dialog') hook is attached BEFORE click. Works today, but switching to a shadcn AlertDialog (already in the codebase) would be a more testable + accessible pattern.",
+    "AdminManageRsvpsDialog effect re-loads on every {open, event.id} change but does not key on a parent refresh signal — if onChanged() bumps a counter in the parent, the dialog won't see it unless reopened. Fine for current flows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration74_admin_unrsvp.py (new)"
+  ],
+  "success_rate": {"backend": "100% (8/8 new + 41/41 RSVP regression)", "frontend": "100% (all 6 testids verified, toast + counter refresh observed)"},
+  "test_credentials": "Admin: admin@clubhaven.app / Admin123!; Member self-RSVP regression used jordan.reed@clubhaven.app (Maya is inactive in seed → 403 'membership inactive' on /rsvp; admin-rsvp on her behalf is unaffected).",
+  "seed_data_creation": "None persisted. Backend test cleanup_maya_state runs last; UI E2E ends with a DELETE on Maya's RSVP. Counters returned to baseline.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iteration74_admin_unrsvp.py is reusable for regression. Note that Maya is currently marked inactive in the seed DB, so member self-RSVP regression should use jordan.reed (or any other active demo member). Event 3a9ee2e9-7852-4586-9b3f-a94b3da8af84 is the canonical upcoming Iter35 Test Event. Login form inputs are plain text (no type=email) — locate by order or by placeholder 'you@example.com or your username'. Auto-accept window.confirm in Playwright with page.on('dialog', d => asyncio.create_task(d.accept())) before click.",
+  "rca of the issue": "No bugs found in iter74. Initial backend-test setup failure was a wrong helper endpoint (/api/admin/members → 405); switched to /api/members which is the correct admin-visible listing. Initial regression failure on Maya self-RSVP was pre-existing data state (Maya inactive) — switched to Jordan."
+}

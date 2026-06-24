@@ -12,6 +12,7 @@ import { fmtET } from "../lib/eventTime";
 import { MapPin, Users, Calendar, ArrowLeft, UserCheck, Trash2, Plus, X, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import PaidEventCheckout from "../components/PaidEventCheckout";
+import AdminManageRsvpsDialog from "../components/AdminManageRsvpsDialog";
 
 export default function EventDetail() {
     const { id } = useParams();
@@ -226,7 +227,10 @@ export default function EventDetail() {
                         </div>
                     )}
                     {user?.role === "admin" && !event.cancelled && (
-                        <AdminRsvpForMemberDialog event={event} existingRsvps={rsvps} onAdded={load} allowsTickets={allowsTickets} />
+                        <div className="space-y-2">
+                            <AdminRsvpForMemberDialog event={event} existingRsvps={rsvps} onAdded={load} allowsTickets={allowsTickets} />
+                            <AdminManageRsvpsDialog event={event} onChanged={load} />
+                        </div>
                     )}
                 </aside>
             </div>

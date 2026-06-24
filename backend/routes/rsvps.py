@@ -778,6 +778,80 @@ def register(
             logger.warning(f"Failed to schedule re-send ticket email: {ex}")
         return {"ok": True, "guests": len(new_guests)}
 
+    @api.delete("/events/{event_id}/rsvps/{user_id}")
+    async def admin_un_rsvp_member(
+        event_id: str,
+        user_id: str,
+        admin: dict = Depends(require_admin),
+    ):
+        """Admin-side un-RSVP. Removes a member's RSVP from an event entirely
+        (including all of their guests) plus any check-in record. Decrements
+        the event's `rsvp_count` and `guest_count` counters so the displayed
+        attendance numbers stay accurate.
+
+        Side effects intentionally NOT performed:
+          * Pending or completed payment transactions are NOT touched. If the
+            member paid via Zeffy, the admin reconciles the refund separately.
+        Returns `{ok, was_present, guests_removed}` so the UI can confirm the
+        action even when the row was already gone (idempotent)."""
+        rsvp = await db.rsvps.find_one({"event_id": event_id, "user_id": user_id})
+        if not rsvp:
+            return {"ok": True, "was_present": False, "guests_removed": 0}
+        guest_count = len(rsvp.get("guests", []) or [])
+        await db.rsvps.delete_one({"_id": rsvp["_id"]})
+        await db.events.update_one(
+            {"id": event_id},
+            {"$inc": {"rsvp_count": -1, "guest_count": -guest_count}},
+        )
+        # Wipe any check-in artifacts so we don't show ghost attendees.
+        ck_res = await db.checkins.delete_many({"event_id": event_id, "user_id": user_id})
+        logger.info(
+            f"[admin-un-rsvp] admin={admin.get('email')} removed user={user_id} from event={event_id}: "
+            f"guests={guest_count}, checkins_removed={ck_res.deleted_count}"
+        )
+        return {
+            "ok": True,
+            "was_present": True,
+            "guests_removed": guest_count,
+            "checkins_removed": ck_res.deleted_count,
+        }
+
+    @api.delete("/events/{event_id}/rsvps/{user_id}/guests/{ticket_id}")
+    async def admin_remove_guest(
+        event_id: str,
+        user_id: str,
+        ticket_id: str,
+        admin: dict = Depends(require_admin),
+    ):
+        """Admin removes ONE specific guest from a member's RSVP. The guest is
+        identified by their per-guest `ticket_id` (a uuid created when the
+        RSVP was made) so we can target precisely even when guests share names.
+        Decrements `guest_count` on the event by 1. Also removes any guest
+        check-in tied to that ticket so reports stay consistent."""
+        rsvp = await db.rsvps.find_one({"event_id": event_id, "user_id": user_id})
+        if not rsvp:
+            raise HTTPException(status_code=404, detail="No RSVP found for that member.")
+        guests = list(rsvp.get("guests", []) or [])
+        target = next((g for g in guests if g.get("ticket_id") == ticket_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="Guest not found on this RSVP.")
+        new_guests = [g for g in guests if g.get("ticket_id") != ticket_id]
+        await db.rsvps.update_one({"_id": rsvp["_id"]}, {"$set": {"guests": new_guests}})
+        await db.events.update_one({"id": event_id}, {"$inc": {"guest_count": -1}})
+        # Remove the guest's check-in too if present (checkin docs for guests
+        # carry the same ticket_id stamped at scan-time).
+        ck_res = await db.checkins.delete_many({"event_id": event_id, "ticket_id": ticket_id})
+        logger.info(
+            f"[admin-remove-guest] admin={admin.get('email')} removed guest ticket={ticket_id} "
+            f"from user={user_id}/event={event_id}; checkins_removed={ck_res.deleted_count}"
+        )
+        return {
+            "ok": True,
+            "removed_guest": {"name": target.get("name", ""), "ticket_id": ticket_id},
+            "remaining_guests": len(new_guests),
+            "checkins_removed": ck_res.deleted_count,
+        }
+
     @api.get("/me/events")
     async def my_events(user: dict = Depends(get_current_user)):
         rsvps = await db.rsvps.find({"user_id": user["id"]}, {"_id": 0}).to_list(500)
