@@ -181,6 +181,13 @@ def public_user(u: dict) -> dict:
         # until an admin approves it. Frontend shows the saved value (above) plus a pill
         # noting that {pending_intake_completed_at} is awaiting review.
         "pending_intake_completed_at": u.get("pending_intake_completed_at", ""),
+        # Outstanding balance surface (anniversary fees, back dues — separate
+        # from the annual-dues lifecycle). Total is sum of unpaid line amounts.
+        "outstanding_zeffy_url": u.get("outstanding_zeffy_url", ""),
+        "outstanding_balance_total": round(
+            sum(float(ln.get("amount", 0)) for ln in (u.get("balance_lines") or []) if not ln.get("paid_at")),
+            2,
+        ),
     }
 
 # ---------- Object Storage ----------
@@ -5318,6 +5325,17 @@ routes_of_the_year.register(
     iso=iso,
     now_utc=now_utc,
     logger=logger,
+)
+
+from routes import balances as routes_balances  # noqa: E402
+routes_balances.register(
+    api,
+    db=db,
+    get_current_user=get_current_user,
+    admin_tab_dep=admin_tab_dep,
+    require_admin=require_admin,
+    iso=iso,
+    now_utc=now_utc,
 )
 
 

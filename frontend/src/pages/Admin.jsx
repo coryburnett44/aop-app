@@ -23,6 +23,7 @@ import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
 import ProfileLayoutAdmin from "../components/ProfileLayoutAdmin";
 import PageBuilder from "../components/cms/PageBuilder";
 import BulkImportMembersDialog from "../components/BulkImportMembersDialog";
+import MemberBalanceEditor from "../components/MemberBalanceEditor";
 import AssignmentHistoryEditor from "../components/AssignmentHistoryEditor";
 
 export default function Admin() {
@@ -1563,6 +1564,7 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                         </label>
                     </div>
                     <div><Label>Reset password (optional)</Label><Input type="password" value={form.new_password || ""} onChange={(e) => setForm({ ...form, new_password: e.target.value })} className="rounded-xl mt-1.5" placeholder="Leave blank to keep current" data-testid="em-new-password" /></div>
+                    <MemberBalanceEditor memberId={member.id} memberName={member.name} />
                     <AssignmentHistoryEditor
                         value={form.assignment_history}
                         onChange={(v) => setForm({ ...form, assignment_history: v })}

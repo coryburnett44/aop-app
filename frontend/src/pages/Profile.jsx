@@ -20,6 +20,7 @@ import {
     Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Download,
 } from "lucide-react";
 import ZeffyCheckout from "../components/ZeffyCheckout";
+import MyOutstandingBalance from "../components/MyOutstandingBalance";
 import AvatarUploader from "../components/AvatarUploader";
 import { MaritalStatusField, LanguagesEditor, CivilianDegreesEditor } from "../components/ProfileExtrasEditor";
 
@@ -225,6 +226,8 @@ export default function Profile() {
                     </div>
                 )}
             </div>
+
+            <MyOutstandingBalance />
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
                 <StatCard icon={<Trophy className="h-4 w-4" />} label="Awards" value={new Set(awards.map((g) => g.award_id || g.award_name)).size} testid="stat-awards" />

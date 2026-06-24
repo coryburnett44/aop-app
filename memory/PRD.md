@@ -15,6 +15,37 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Phase BL — Iteration 69: Outstanding-balance lifecycle for 10-year anniversary (2026-02-15)
+
+**User request:** "We have a 10 year anniversary and members still have outstanding balances. We use Zeffy, and we want to add a Zeffy link to individual profiles for them to make payments." Confirmed scope: per-member Zeffy URL, multi-line balance, admin-set per-member, both confirmation flows (admin mark-paid + member-submit-receipt), does NOT extend membership.
+
+**Backend** — new module `/app/backend/routes/balances.py` registered onto `/api`:
+- Storage embedded on `users`: `outstanding_zeffy_url`, `balance_lines[]` (each line carries id, label, amount, created/paid metadata).
+- Routes:
+  - `GET /admin/members/{id}/balance` — read
+  - `PUT /admin/members/{id}/balance/zeffy-url` — set per-member URL (https-only)
+  - `POST /admin/members/{id}/balance/lines` — add line
+  - `PUT/DELETE /admin/members/{id}/balance/lines/{line_id}` — edit / remove unpaid line
+  - `POST /admin/members/{id}/balance/lines/{line_id}/mark-paid` — admin clears one line + creates `transactions` record (purpose=balance, provider=zeffy, status=completed)
+  - `PUT /admin/transactions/{tx_id}/approve-balance` — admin approves a member-submitted receipt and stamps the linked line(s) paid
+  - `GET /me/balance` — member reads own balance + pending receipts
+  - `POST /me/balance/submit-receipt` — member confirms Zeffy payment for chosen line(s); creates PENDING transaction; double-submit blocked
+- User serializer extended with `outstanding_zeffy_url` and computed `outstanding_balance_total`.
+
+**Frontend** — two new components:
+- `/app/frontend/src/components/MemberBalanceEditor.jsx` — embedded in Admin → Members → Edit. Shows URL field with save, pending-receipts panel with one-click approve, open lines with edit/mark-paid/delete, add-line form, and collapsible payment history.
+- `/app/frontend/src/components/MyOutstandingBalance.jsx` — rendered on Profile right below the dues block (auto-hides when total = 0). Shows total, "Pay via Zeffy" CTA opening the per-member URL, line checkboxes, and a receipt-submission form. Lines tied to a pending receipt are locked to prevent double-submit.
+
+**Verification:**
+- 10/10 pytest cases pass (`test_iteration69_outstanding_balance.py`): URL set + https guard, line CRUD, mark-paid creates the transaction, edit/delete on paid lines blocked (400), member-only auth, admin-only auth, member submit + admin approve flow, double-submit blocked, paid-line submission blocked.
+- Live end-to-end curl flow validated (admin → 2 lines → member submit → admin approve → admin mark-paid → total $0).
+- Screenshots confirm both member and admin views render correctly.
+
+**Notes:**
+- Membership lifecycle (`membership_expires_at`) is intentionally untouched by this flow (user choice #5a).
+- Paid lines are preserved on the user doc as immutable history (so members and admins see receipts); only unpaid amounts sum into `outstanding_balance_total`.
+
+
 ### Phase BL — Iteration 68: CSV importers accept name in lieu of email (2026-02-15)
 
 **User request:** "When uploading CSV files, allow to add either full names, or first and last names in lieu of the email address because the members use different email addresses." User-chosen options: apply to both Hours + Donations; ambiguous names → ERROR (admin must add email); exact case-insensitive matching.
