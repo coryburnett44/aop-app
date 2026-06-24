@@ -118,7 +118,7 @@ export default function EventDetail() {
                     className="mt-6 rounded-2xl border-2 border-red-300 bg-red-50 p-5 text-red-900"
                     data-testid="event-cancelled-notice"
                 >
-                    <div className="font-heading font-bold text-lg">This event has been cancelled.</div>
+                    <div className="font-heading font-bold text-lg">{event.cancelled_via_parent ? "The parent event has been cancelled." : "This event has been cancelled."}</div>
                     {event.cancellation_note && (
                         <div className="text-sm mt-1 text-red-800">{event.cancellation_note}</div>
                     )}

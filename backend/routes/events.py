@@ -64,14 +64,53 @@ def register(api, *, db, admin_tab_dep, event_out, iso, now_utc):
             else:
                 updates[k] = v
         # Stamp cancelled_at the first time cancelled flips on; clear it on revert.
+        # Direct admin toggles always clear `cancelled_via_parent` so subsequent
+        # parent-uncancel cascades don't revert manual decisions.
+        cascade_cancel = False
+        cascade_uncancel = False
         if "cancelled" in updates:
             if updates["cancelled"] and not existing.get("cancelled"):
                 updates["cancelled_at"] = iso(now_utc())
-            elif not updates["cancelled"]:
+                updates["cancelled_via_parent"] = False
+                cascade_cancel = True
+            elif not updates["cancelled"] and existing.get("cancelled"):
                 updates["cancelled_at"] = None
                 updates["cancellation_note"] = updates.get("cancellation_note", "") or ""
+                updates["cancelled_via_parent"] = False
+                cascade_uncancel = True
         if updates:
             await db.events.update_one({"id": event_id}, {"$set": updates})
+
+        # Cascade cancellation to sub-events. When a parent (umbrella) event is
+        # cancelled, all its children must be cancelled too so members can no
+        # longer RSVP to them. Children flipped by the cascade are tagged with
+        # `cancelled_via_parent=true` so that un-cancelling the parent only
+        # reverts the inherited cancellations and preserves any sub-event the
+        # admin had previously cancelled individually.
+        if cascade_cancel:
+            child_set = {
+                "cancelled": True,
+                "cancelled_at": updates.get("cancelled_at") or iso(now_utc()),
+                "cancelled_via_parent": True,
+            }
+            note = updates.get("cancellation_note")
+            if note:
+                child_set["cancellation_note"] = note
+            await db.events.update_many(
+                {"parent_event_id": event_id, "cancelled": {"$ne": True}},
+                {"$set": child_set},
+            )
+        elif cascade_uncancel:
+            await db.events.update_many(
+                {"parent_event_id": event_id, "cancelled_via_parent": True},
+                {"$set": {
+                    "cancelled": False,
+                    "cancelled_at": None,
+                    "cancelled_via_parent": False,
+                    "cancellation_note": "",
+                }},
+            )
+
         e = await db.events.find_one({"id": event_id}, {"_id": 0})
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")

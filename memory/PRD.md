@@ -15,6 +15,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 75 — Cascade cancellation of sub-events (2026-02-24)
+- **Behaviour**: When an admin cancels a parent (umbrella) event via PUT `/api/events/{id}`, every sub-event (`parent_event_id == id`) is also marked `cancelled=true` and tagged `cancelled_via_parent=true`. The cancellation note propagates to children that didn't have their own.
+- **Un-cancel cascade**: Un-cancelling the parent only reverts children that still carry `cancelled_via_parent=true`; sub-events the admin had cancelled independently stay cancelled.
+- **Defense-in-depth**: The RSVP helper `_ensure_not_cancelled` in `routes/rsvps.py` also rejects RSVPs / payment / guest edits whenever the parent event is cancelled, even if a particular sub-event somehow has `cancelled=false` (e.g. seeded after parent cancel, or admin manually un-cancelled a child while parent stays cancelled).
+- **Direct toggle clears cascade flag**: any direct PUT on an event clears `cancelled_via_parent` so subsequent parent-uncancel cascades don't override manual decisions.
+- **Frontend**: `EventDetail.jsx` banner reads "The parent event has been cancelled." when `cancelled_via_parent` is true, otherwise the standard "This event has been cancelled."
+- **Tests**: `/app/backend/tests/test_iteration75_cancel_cascade.py` — 4/4 new pass + iter74 (12 cases) regression green.
+
+### Phase BL — Iteration 74: Admin un-RSVP + remove-guest (2026-02-20)
+- Backend: `DELETE /api/events/{event_id}/admin/rsvp/{rsvp_id}` and `DELETE /api/events/{event_id}/admin/guest/{guest_id}` in `routes/rsvps.py`. Idempotent (un-RSVP returns 200 with `was_present=false` if missing).
+- Frontend: `AdminManageRsvpsDialog.jsx` wired into `EventDetail.jsx` with searchable RSVP list, per-row remove + per-guest remove, browser-confirm, toast + counter refresh on success.
+- Tests: 8/8 backend pytest pass; 41/41 RSVP regression green (`test_iteration74_admin_unrsvp.py`).
+
 ### Phase BL — Iteration 73: RSVP ticket fix, OTY chapter, ORB-style Personnel Brief (2026-02-15)
 
 **User requests addressed (4):**

@@ -73,6 +73,20 @@ def register(
     def decode_ticket_token(token: str) -> dict:
         return jwt.decode(token, jwt_secret(), algorithms=[jwt_algorithm])
 
+    async def _ensure_not_cancelled(event: dict, action_label: str = "RSVPs are closed") -> None:
+        """Block actions on cancelled events. If the event is a sub-event whose
+        parent has been cancelled, treat the sub-event as cancelled too — this
+        protects against any sub-event that wasn't reached by the cascade in
+        events.PUT (e.g. seeded after the parent was cancelled, or a stale
+        legacy row missing `cancelled_via_parent`)."""
+        if event.get("cancelled"):
+            raise HTTPException(status_code=400, detail=f"This event has been cancelled — {action_label}.")
+        parent_id = event.get("parent_event_id")
+        if parent_id:
+            parent = await db.events.find_one({"id": parent_id}, {"_id": 0, "cancelled": 1})
+            if parent and parent.get("cancelled"):
+                raise HTTPException(status_code=400, detail=f"The parent event has been cancelled — {action_label}.")
+
     def make_qr_png_b64(payload_url: str) -> str:
         """Return a base64-encoded PNG for inline embedding (data: URI)."""
         qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
@@ -229,11 +243,7 @@ def register(
         e = await db.events.find_one({"id": event_id}, {"_id": 0})
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")
-        if e.get("cancelled"):
-            raise HTTPException(
-                status_code=400,
-                detail="This event has been cancelled — RSVPs are closed.",
-            )
+        await _ensure_not_cancelled(e, "RSVPs are closed")
         if e.get("is_paid"):
             raise HTTPException(
                 status_code=402,
@@ -293,8 +303,7 @@ def register(
         e = await db.events.find_one({"id": event_id}, {"_id": 0})
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")
-        if e.get("cancelled"):
-            raise HTTPException(status_code=400, detail="This event has been cancelled — RSVPs are closed.")
+        await _ensure_not_cancelled(e, "RSVPs are closed")
         has_children = await db.events.find_one({"parent_event_id": event_id})
         if has_children:
             raise HTTPException(status_code=400, detail="This event is an umbrella — RSVP each sub-event individually.")
@@ -429,8 +438,7 @@ def register(
         e = await db.events.find_one({"id": event_id}, {"_id": 0})
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")
-        if e.get("cancelled"):
-            raise HTTPException(status_code=400, detail="This event has been cancelled — RSVPs are closed.")
+        await _ensure_not_cancelled(e, "RSVPs are closed")
         if e.get("is_paid"):
             raise HTTPException(status_code=400, detail="Paid events use the payment-confirm flow, not bulk RSVPs.")
         has_children = await db.events.find_one({"parent_event_id": event_id})
@@ -628,8 +636,7 @@ def register(
         e = await db.events.find_one({"id": event_id}, {"_id": 0})
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")
-        if e.get("cancelled"):
-            raise HTTPException(status_code=400, detail="This event has been cancelled — payments are closed.")
+        await _ensure_not_cancelled(e, "payments are closed")
         if not e.get("is_paid"):
             raise HTTPException(status_code=400, detail="This event is free — RSVP directly without payment.")
         # Block double-payments: if there's already a pending or completed event_ticket
@@ -746,8 +753,7 @@ def register(
         e = await db.events.find_one({"id": event_id}, {"_id": 0})
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")
-        if e.get("cancelled"):
-            raise HTTPException(status_code=400, detail="This event has been cancelled — guest list is locked.")
+        await _ensure_not_cancelled(e, "guest list is locked")
         prev_guests = rsvp.get("guests", []) or []
         prev_by_name = {(g.get("name") or "").strip().lower(): g for g in prev_guests}
         new_guests = []
