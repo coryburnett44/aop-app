@@ -14,6 +14,16 @@ import { toast } from "sonner";
 import PaidEventCheckout from "../components/PaidEventCheckout";
 import AdminManageRsvpsDialog from "../components/AdminManageRsvpsDialog";
 
+const TICKET_TYPE_LABELS = {
+    vip: "VIP",
+    all_access: "All Access",
+    general: "General Admission",
+    guest: "Guest",
+    speaker: "Speaker",
+    volunteer: "Volunteer",
+};
+const ticketTypeLabel = (t) => TICKET_TYPE_LABELS[t] || (t || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
 export default function EventDetail() {
     const { id } = useParams();
     const { user } = useAuth();
@@ -190,6 +200,7 @@ export default function EventDetail() {
                             onSave={async (guests) => setPendingGuests(guests)}
                             disabled={loading}
                             allowsTickets={allowsTickets}
+                            enabledTicketTypes={event.enabled_ticket_types || []}
                             pendingMode
                         />
                     )}
@@ -213,7 +224,7 @@ export default function EventDetail() {
                         </Button>
                     )}
                     {hasRsvped && !event.cancelled && (
-                        <GuestManager guests={myGuests} onSave={updateGuests} disabled={loading} allowsTickets={allowsTickets} />
+                        <GuestManager guests={myGuests} onSave={updateGuests} disabled={loading} allowsTickets={allowsTickets} enabledTicketTypes={event.enabled_ticket_types || []} />
                     )}
                     {rsvps.length > 0 && (
                         <div>
@@ -507,10 +518,24 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
     const [members, setMembers] = useState([]);
     const [query, setQuery] = useState("");
     const [selectedId, setSelectedId] = useState("");
-    const [ticketType, setTicketType] = useState("general");
     const [guests, setGuests] = useState([]);
     const [sendEmail, setSendEmail] = useState(true);
     const [busy, setBusy] = useState(false);
+
+    // Respect the admin's per-event ticket-type configuration. Members are
+    // people (no "guest" type), so we drop "guest" from the member-side list
+    // but keep it for guest rows. Legacy events with no enabled_ticket_types
+    // fall back to the canonical four.
+    const allTicketOptions = (event?.enabled_ticket_types && event.enabled_ticket_types.length > 0)
+        ? event.enabled_ticket_types
+        : ["vip", "all_access", "general", "guest"];
+    const memberTicketOptions = allTicketOptions.filter((t) => t !== "guest");
+    const guestTicketOptions = allTicketOptions;
+    const defaultMemberType = memberTicketOptions[0] || "general";
+    const defaultGuestType = guestTicketOptions.includes("guest") ? "guest" : (guestTicketOptions[0] || "general");
+
+    const [ticketType, setTicketType] = useState(defaultMemberType);
+    useEffect(() => { if (!memberTicketOptions.includes(ticketType)) setTicketType(defaultMemberType); /* eslint-disable-next-line */ }, [event?.id]);
 
     useEffect(() => {
         if (!open || members.length) return;
@@ -527,7 +552,7 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
         })
         .slice(0, 50);
 
-    function addGuestRow() { setGuests([...guests, { name: "", email: "", phone: "", ticket_type: allowsTickets ? "general" : "guest" }]); }
+    function addGuestRow() { setGuests([...guests, { name: "", email: "", phone: "", ticket_type: allowsTickets ? defaultGuestType : "guest" }]); }
     function removeGuest(i) { setGuests(guests.filter((_, idx) => idx !== i)); }
     function updateGuest(i, field, val) { setGuests(guests.map((g, idx) => idx === i ? { ...g, [field]: val } : g)); }
 
@@ -538,7 +563,7 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
             name: g.name.trim(),
             email: g.email?.trim() || "",
             phone: g.phone?.trim() || "",
-            ticket_type: g.ticket_type || (allowsTickets ? "general" : "guest"),
+            ticket_type: g.ticket_type || (allowsTickets ? defaultGuestType : "guest"),
         }));
         setBusy(true);
         try {
@@ -552,7 +577,7 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
                 `${data.user_name} is going!${data.guests ? ` +${data.guests} guests.` : ""}${data.email_sent ? " Ticket emailed." : " Email suppressed."}`,
             );
             setOpen(false);
-            setSelectedId(""); setGuests([]); setQuery(""); setTicketType("general"); setSendEmail(true);
+            setSelectedId(""); setGuests([]); setQuery(""); setTicketType(defaultMemberType); setSendEmail(true);
             onAdded?.();
         } catch (err) {
             toast.error(err.response?.data?.detail || "Could not RSVP this member");
@@ -600,15 +625,15 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
                                 ))}
                             </div>
                         </div>
-                        {allowsTickets && (
+                        {allowsTickets && memberTicketOptions.length > 0 && (
                             <div>
                                 <Label>Member ticket type</Label>
                                 <Select value={ticketType} onValueChange={setTicketType}>
                                     <SelectTrigger className="rounded-xl mt-1.5" data-testid="admin-rsvp-ticket-type"><SelectValue /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="vip">VIP</SelectItem>
-                                        <SelectItem value="all_access">All Access</SelectItem>
-                                        <SelectItem value="general">General Admission</SelectItem>
+                                        {memberTicketOptions.map((t) => (
+                                            <SelectItem key={t} value={t} className="capitalize">{ticketTypeLabel(t)}</SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -635,13 +660,12 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
                                         {allowsTickets && (
                                             <div>
                                                 <Label className="text-xs">Ticket type for this guest</Label>
-                                                <Select value={g.ticket_type || "general"} onValueChange={(v) => updateGuest(i, "ticket_type", v)}>
+                                                <Select value={g.ticket_type || defaultGuestType} onValueChange={(v) => updateGuest(i, "ticket_type", v)}>
                                                     <SelectTrigger className="rounded-xl mt-1 text-sm" data-testid={`admin-rsvp-guest-ticket-type-${i}`}><SelectValue /></SelectTrigger>
                                                     <SelectContent>
-                                                        <SelectItem value="vip">VIP</SelectItem>
-                                                        <SelectItem value="all_access">All Access</SelectItem>
-                                                        <SelectItem value="general">General Admission</SelectItem>
-                                                        <SelectItem value="guest">Guest</SelectItem>
+                                                        {guestTicketOptions.map((t) => (
+                                                            <SelectItem key={t} value={t} className="capitalize">{ticketTypeLabel(t)}</SelectItem>
+                                                        ))}
                                                     </SelectContent>
                                                 </Select>
                                             </div>
@@ -907,12 +931,22 @@ function AdminRsvpCsvDialog({ event, onImported }) {
 }
 
 
-function GuestManager({ guests, onSave, disabled, allowsTickets, pendingMode }) {
+function GuestManager({ guests, onSave, disabled, allowsTickets, enabledTicketTypes, pendingMode }) {
     const [open, setOpen] = useState(false);
     const [list, setList] = useState(guests || []);
     useEffect(() => { setList(guests || []); }, [guests]);
 
-    function add() { setList([...list, { name: "", email: "", phone: "", ticket_type: allowsTickets ? "general" : "guest" }]); }
+    // Mirror the same fallback used by MemberTicketPicker: respect the admin's
+    // configured subset of ticket types if present, else fall back to the
+    // canonical four for legacy events that haven't been migrated.
+    const ticketOptions = (enabledTicketTypes && enabledTicketTypes.length > 0)
+        ? enabledTicketTypes
+        : ["vip", "all_access", "general", "guest"];
+    const defaultGuestType = ticketOptions.includes("guest")
+        ? "guest"
+        : (ticketOptions[0] || "general");
+
+    function add() { setList([...list, { name: "", email: "", phone: "", ticket_type: allowsTickets ? defaultGuestType : "guest" }]); }
     function remove(i) { setList(list.filter((_, idx) => idx !== i)); }
     function update(i, field, val) { setList(list.map((g, idx) => idx === i ? { ...g, [field]: val } : g)); }
 
@@ -921,7 +955,7 @@ function GuestManager({ guests, onSave, disabled, allowsTickets, pendingMode }) 
             name: g.name.trim(),
             email: g.email?.trim() || "",
             phone: g.phone?.trim() || "",
-            ticket_type: g.ticket_type || (allowsTickets ? "general" : "guest"),
+            ticket_type: g.ticket_type || (allowsTickets ? defaultGuestType : "guest"),
         }));
         await onSave(cleaned);
         setOpen(false);
@@ -973,13 +1007,12 @@ function GuestManager({ guests, onSave, disabled, allowsTickets, pendingMode }) 
                                 {allowsTickets && (
                                     <div>
                                         <Label className="text-xs">Ticket type for this guest</Label>
-                                        <Select value={g.ticket_type || "general"} onValueChange={(v) => update(i, "ticket_type", v)}>
+                                        <Select value={g.ticket_type || defaultGuestType} onValueChange={(v) => update(i, "ticket_type", v)}>
                                             <SelectTrigger className="rounded-xl mt-1 text-sm" data-testid={`guest-ticket-type-${i}`}><SelectValue /></SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="vip">VIP</SelectItem>
-                                                <SelectItem value="all_access">All Access</SelectItem>
-                                                <SelectItem value="general">General Admission</SelectItem>
-                                                <SelectItem value="guest">Guest</SelectItem>
+                                                {ticketOptions.map((t) => (
+                                                    <SelectItem key={t} value={t} className="capitalize">{ticketTypeLabel(t)}</SelectItem>
+                                                ))}
                                             </SelectContent>
                                         </Select>
                                     </div>

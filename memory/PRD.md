@@ -15,6 +15,12 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 77 — Per-event ticket type filtering on all guest selectors (2026-02-24)
+- **Frontend `EventDetail.jsx`**: The member-side `GuestManager`, the admin-side `AdminRsvpForMemberDialog` member-ticket select, and its per-guest-ticket select all now read `event.enabled_ticket_types` and render only the options actually enabled for that event. Legacy events with an empty `enabled_ticket_types` fall back to the canonical four (VIP / All Access / General / Guest) so behaviour is unchanged for un-migrated rows.
+- Member-side member-ticket picker already followed this pattern (`MemberTicketPicker`) — admin-side selectors now match.
+- Added small `ticketTypeLabel()` helper + `TICKET_TYPE_LABELS` map at the top of `EventDetail.jsx` to keep human-readable labels consistent.
+- "guest" is automatically filtered out of the member-ticket select (members aren't guests) but kept available for guest rows.
+
 ### Iteration 76 — Admin delete default albums + per-guest ticket type on admin RSVP (2026-02-24)
 - **Backend**: `DELETE /api/photos/albums/{id}` now lets admins delete *any* album, including default canonical ones. A tombstone is written to a new `deleted_default_albums` collection and the boot-time seeder skips tombstoned names so deletion sticks across restarts. Non-admin members still get 403 on default albums.
 - **Frontend**: `Photos.jsx` AlbumCard — admins now see the delete (trash) button on default albums too; member creators still only see it on their own custom albums. Confirm dialog includes an extra warning when targeting a default album.
