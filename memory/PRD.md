@@ -15,6 +15,27 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Phase BL — Iteration 71: Bulk "add anniversary fee" + outstanding-balance filter pill (2026-02-15)
+
+**User choices:** 1c (manual row-selection), 2a (one shared label+amount), 3a (skip URL during bulk); filter as a pill next to search.
+
+**Backend:**
+- New endpoint `POST /api/admin/members/balance/bulk-add-line` in `/app/backend/routes/balances.py`. Body `{user_ids[], label, amount}`. Idempotent: case-insensitive label match against existing UNPAID lines per member skips dupes. Returns `{created_count, skipped_count, error_count, created_user_ids, skipped_user_ids, errors, label, amount}`.
+- `public_user` serializer already surfaces `outstanding_balance_total` on `/api/members` rows (added iter69) — frontend uses this for the badge + filter.
+
+**Frontend (`/app/frontend/src/pages/Admin.jsx`):**
+- New filter pill `filter-outstanding-balance` next to the search bar, shows `N with open balance` when any member has total > 0. Click toggles narrowing.
+- Per-row checkbox column (`select-member-{id}`) + header select-all (`select-all-visible`). `selectedIds` is a `Set` keyed by user id so selection survives filter/search changes.
+- Selection actions strip shows `N selected` counter + `+ Add anniversary fee to N` button + `Clear`.
+- Bulk dialog (Dialog with `bulk-line-label` / `bulk-line-amount` / `bulk-confirm`) prefilled with "10-Year Anniversary Fee" / $150 and a clear duplicate-skip explainer.
+- `$X owed` badge (`owes-badge-{id}`) renders in each row's name cell when total > 0.
+
+**Verification (iteration 71):**
+- 12/12 new pytest cases pass (`test_iteration71_bulk_add_line.py`): happy path, idempotency (case-insensitive), mixed valid/bogus ids, 422 validation, member-auth rejection (403), GET /members surfaces total.
+- 11/11 iter69 + iter70 regression tests still pass.
+- Full E2E UI flow verified by testing agent: select 3 rows → confirm → 3 `$75.00 owed` badges → filter pill narrows view → cleanup via DELETE 200.
+
+
 ### Phase BL — Iteration 70: Fix "Member doesn't see Zeffy link on profile" (2026-02-15)
 
 **Bug report:** Members weren't seeing the per-member Zeffy link on their /profile after admin "set" it.
