@@ -557,9 +557,20 @@ def register(
         # "Of The Year" honors earned by this member. We pull every win so the
         # admin Member Card can show the full history; the Personnel Brief PDF
         # only renders the most recent 7 per the product requirement.
+        # Chapter names are denormalized on the OTY doc at write time, but for
+        # legacy rows that only carry chapter_id we fall back to a one-shot
+        # lookup so the PDF/table never shows a bare "—".
         oty_rows = await db.of_the_year_awards.find(
             {"user_id": user_id}, {"_id": 0},
         ).sort([("year", -1), ("category", 1)]).to_list(500)
+        missing_chap_ids = [r["chapter_id"] for r in oty_rows if r.get("chapter_id") and not r.get("chapter_name")]
+        chap_name_by_id: dict = {}
+        if missing_chap_ids:
+            async for c in db.chapters.find(
+                {"id": {"$in": list(set(missing_chap_ids))}},
+                {"_id": 0, "id": 1, "name": 1},
+            ):
+                chap_name_by_id[c["id"]] = c.get("name", "")
         oty_all = [
             {
                 "id": r.get("id"),
@@ -567,7 +578,7 @@ def register(
                 "category": r.get("category"),
                 "category_label": OTY_CATEGORY_LABELS.get(r.get("category", ""), r.get("category", "")),
                 "chapter_id": r.get("chapter_id"),
-                "chapter_name": r.get("chapter_name"),
+                "chapter_name": r.get("chapter_name") or chap_name_by_id.get(r.get("chapter_id", ""), ""),
                 "note": r.get("note") or "",
             }
             for r in oty_rows

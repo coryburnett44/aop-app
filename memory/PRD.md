@@ -15,6 +15,26 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Phase BL — Iteration 72: "Of The Year" on Personnel Brief + Admin Member Card (2026-02-15)
+
+**User request:** "On the personnel brief, add the last 7 'Of The Year' Awards as a section after the Awards section. Also, show every 'Of The Year' award that the member won on the member card in the admin → members section."
+
+**Backend:**
+- `GET /api/of-the-year` now accepts optional `user_id` query param → returns just that user's wins (sorted year DESC).
+- `personnel_brief_data` (routes/reports.py) returns three new keys: `of_the_year` (full list), `of_the_year_recent` (capped at 7), `of_the_year_count` (int).
+- PDF builder renders a new `§9  Of The Year Honors` section between Awards and Events with a 4-column table (Year, Category, Chapter, Note). When a member has >7 wins, the header reads "last 7 of N". Subsequent sections renumbered: §10 Events, §11 Assignment History.
+- Defensive chapter-name enrichment: legacy OTY rows missing the denormalized `chapter_name` are looked up against `db.chapters` so the PDF/table never shows a bare "—".
+
+**Frontend:**
+- `Admin.jsx` `MemberCardDialog` — loads `/of-the-year?user_id={id}` on dialog open and renders a new "OF THE YEAR HONORS (N)" section below the Ribbons & Achievements section. Each win shown with year + category label + chapter/note. Empty state has `data-testid='member-card-{id}-oty-empty'`. Wins list at `data-testid='member-card-{id}-oty'` with per-row `data-testid='oty-win-{award_id}'`.
+- `Reports.jsx` `BriefBody` — new `data-testid='brief-section-9'` titled "Of The Year Honors" rendering the same data as a 4-column table in the JSON brief preview. Existing §9/§10 sections shifted to §10/§11.
+
+**Verification (iteration 72):**
+- 7/7 new pytest cases pass + 23/23 regression (iter69/70/71) still pass.
+- Backend test file `test_iteration72_of_the_year_brief.py` is self-seeding via an autouse module fixture (creates Maya's two canonical wins on entry, cleans up on teardown — idempotent, dataset-state preserved).
+- PDF text-extraction asserts §9 → §10 → §11 ordering and presence of "Of The Year" / "Member of the Year" / "Top Community Service Member".
+
+
 ### Phase BL — Iteration 71: Bulk "add anniversary fee" + outstanding-balance filter pill (2026-02-15)
 
 **User choices:** 1c (manual row-selection), 2a (one shared label+amount), 3a (skip URL during bulk); filter as a pill next to search.

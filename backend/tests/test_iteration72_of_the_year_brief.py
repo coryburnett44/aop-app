@@ -62,6 +62,36 @@ def admin_user_id(admin_client):
     pytest.skip("admin user not found")
 
 
+@pytest.fixture(scope="module", autouse=True)
+def maya_oty_baseline(admin_client, maya_id):
+    """Ensure Maya has the two canonical OTY wins this module assumes.
+
+    Idempotent: if the wins already exist (POST returns 400 on duplicate
+    category+year via the unique index in routes/of_the_year.py) we treat
+    that as success. Cleanup wipes them again on module teardown so the
+    fixture leaves the dataset in the same state it found it (unless wins
+    pre-existed before the run, in which case we leave those alone).
+    """
+    created: list[str] = []
+    for cat, year, note in [
+        ("member_of_year", 2024, "Exceptional service"),
+        ("top_cs_member", 2023, ""),
+    ]:
+        r = admin_client.post(
+            f"{API}/of-the-year",
+            json={"category": cat, "year": year, "user_id": maya_id, "note": note},
+        )
+        if r.status_code == 200:
+            created.append(r.json()["id"])
+        # 400 = already exists (unique idx clash) → leave the existing row alone
+    yield
+    for aid in created:
+        try:
+            admin_client.delete(f"{API}/of-the-year/{aid}")
+        except Exception:
+            pass
+
+
 # ---------- /of-the-year?user_id= ----------
 def test_oty_list_by_user_id(admin_client, maya_id):
     r = admin_client.get(f"{API}/of-the-year", params={"user_id": maya_id})
