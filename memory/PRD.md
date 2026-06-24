@@ -15,6 +15,12 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 76 — Admin delete default albums + per-guest ticket type on admin RSVP (2026-02-24)
+- **Backend**: `DELETE /api/photos/albums/{id}` now lets admins delete *any* album, including default canonical ones. A tombstone is written to a new `deleted_default_albums` collection and the boot-time seeder skips tombstoned names so deletion sticks across restarts. Non-admin members still get 403 on default albums.
+- **Frontend**: `Photos.jsx` AlbumCard — admins now see the delete (trash) button on default albums too; member creators still only see it on their own custom albums. Confirm dialog includes an extra warning when targeting a default album.
+- **Frontend**: `EventDetail.jsx` admin RSVP-for-member dialog now exposes a per-guest ticket-type Select (VIP / All Access / General / Guest) when the event has `allows_ticket_types=true`, matching the member-side guest manager. Backend already accepted the field; data flows end-to-end.
+- **Tests**: `test_iteration76_album_delete_and_guest_tickets.py` — 2/2 pass. iter74/75 regression green (14/14 total).
+
 ### Iteration 75 — Cascade cancellation of sub-events (2026-02-24)
 - **Behaviour**: When an admin cancels a parent (umbrella) event via PUT `/api/events/{id}`, every sub-event (`parent_event_id == id`) is also marked `cancelled=true` and tagged `cancelled_via_parent=true`. The cancellation note propagates to children that didn't have their own.
 - **Un-cancel cascade**: Un-cancelling the parent only reverts children that still carry `cancelled_via_parent=true`; sub-events the admin had cancelled independently stay cancelled.

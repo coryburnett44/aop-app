@@ -632,6 +632,20 @@ function AdminRsvpForMemberDialog({ event, existingRsvps, onAdded, allowsTickets
                                             <Input placeholder="Email (optional)" value={g.email || ""} onChange={(e) => updateGuest(i, "email", e.target.value)} className="rounded-xl text-sm" data-testid={`admin-rsvp-guest-email-${i}`} />
                                             <Input placeholder="Phone (optional)" value={g.phone || ""} onChange={(e) => updateGuest(i, "phone", e.target.value)} className="rounded-xl text-sm" data-testid={`admin-rsvp-guest-phone-${i}`} />
                                         </div>
+                                        {allowsTickets && (
+                                            <div>
+                                                <Label className="text-xs">Ticket type for this guest</Label>
+                                                <Select value={g.ticket_type || "general"} onValueChange={(v) => updateGuest(i, "ticket_type", v)}>
+                                                    <SelectTrigger className="rounded-xl mt-1 text-sm" data-testid={`admin-rsvp-guest-ticket-type-${i}`}><SelectValue /></SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="vip">VIP</SelectItem>
+                                                        <SelectItem value="all_access">All Access</SelectItem>
+                                                        <SelectItem value="general">General Admission</SelectItem>
+                                                        <SelectItem value="guest">Guest</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>

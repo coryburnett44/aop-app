@@ -117,7 +117,10 @@ export default function Photos() {
     }
 
     async function removeAlbum(album) {
-        if (!window.confirm(`Delete the "${album.name}" album? Photos inside are kept but will lose their grouping.`)) return;
+        const warn = album.is_default
+            ? `Delete the default "${album.name}" album? It will be permanently removed and will NOT be re-created automatically. Photos inside are kept but lose their grouping.`
+            : `Delete the "${album.name}" album? Photos inside are kept but will lose their grouping.`;
+        if (!window.confirm(warn)) return;
         try {
             await api.delete(`/photos/albums/${album.id}`);
             toast.success("Album removed");
@@ -280,7 +283,12 @@ function AlbumGrid({ albums, onOpen, onDelete, onEdit, currentUser }) {
 
 function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
     const canEdit = currentUser && (currentUser.role === "admin" || album.created_by === currentUser.id);
-    const canDelete = canEdit && !album.is_default;
+    // Admins can delete any album (including default canonical ones). Members
+    // can only delete their own custom albums.
+    const canDelete = currentUser && (
+        currentUser.role === "admin" ||
+        (album.created_by === currentUser.id && !album.is_default)
+    );
     return (
         <div
             onClick={onOpen}

@@ -1375,8 +1375,16 @@ def auto_categorize_album(name: str) -> str:
 async def seed_default_photo_albums():
     """Insert each canonical album as a row in the photo_albums collection.
     Only inserts new ones; never overwrites custom albums. Idempotent.
+    Skips any canonical name listed in `deleted_default_albums` so an admin's
+    deletion isn't undone on next boot.
     Also backfills category on every album each boot (cheap, allows recategorizing)."""
+    tombstoned = {
+        t["name"]
+        async for t in db.deleted_default_albums.find({}, {"_id": 0, "name": 1})
+    }
     for name in DEFAULT_PHOTO_ALBUMS:
+        if name in tombstoned:
+            continue
         await db.photo_albums.update_one(
             {"name": name},
             {"$setOnInsert": {
@@ -1501,18 +1509,32 @@ async def update_photo_album(album_id: str, body: AlbumUpdateIn, user: dict = De
 
 @api.delete("/photos/albums/{album_id}")
 async def delete_photo_album(album_id: str, user: dict = Depends(get_current_user)):
-    """Creator or any admin may delete a custom album. Default albums cannot
-    be deleted. Photos inside the album are NOT deleted — their `album` field
-    stays so they remain queryable."""
+    """Admins can delete any album (including default/canonical ones). Members
+    can only delete custom albums they created. Default albums that an admin
+    deletes are tombstoned in `deleted_default_albums` so the boot-time seeder
+    does not silently resurrect them. Photos inside the album are NOT deleted —
+    their `album` field stays so they remain queryable."""
     a = await db.photo_albums.find_one({"id": album_id})
     if not a:
         raise HTTPException(status_code=404, detail="Album not found")
-    if a.get("is_default"):
-        raise HTTPException(status_code=400, detail="Default albums cannot be deleted.")
     is_admin = user.get("role") == "admin"
     is_creator = a.get("created_by") == user["id"]
+    if not is_admin and a.get("is_default"):
+        raise HTTPException(status_code=403, detail="Default albums can only be removed by an admin.")
     if not (is_admin or is_creator):
         raise HTTPException(status_code=403, detail="Only the album creator or an admin may delete this album.")
+    # Tombstone default albums so the seeder doesn't resurrect them on next boot.
+    if a.get("is_default") and is_admin:
+        await db.deleted_default_albums.update_one(
+            {"name": a["name"]},
+            {"$setOnInsert": {
+                "name": a["name"],
+                "deleted_by": user["id"],
+                "deleted_by_name": user.get("name", ""),
+                "deleted_at": iso(now_utc()),
+            }},
+            upsert=True,
+        )
     await db.photo_albums.delete_one({"id": album_id})
     return {"ok": True}
 
