@@ -15,6 +15,24 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Phase BL — Iteration 70: Fix "Member doesn't see Zeffy link on profile" (2026-02-15)
+
+**Bug report:** Members weren't seeing the per-member Zeffy link on their /profile after admin "set" it.
+
+**Root cause:** The Zeffy URL field had its OWN dedicated endpoint (`PUT /admin/members/{id}/balance/zeffy-url`) — by design, since the main `PUT /members/{id}` does not touch `outstanding_zeffy_url` (security boundary). The in-section "Save URL" button was the only path that committed the URL, but admins naturally clicked the dialog's bottom "Save changes" button after pasting the URL → silent data loss.
+
+**Fix** (`/app/frontend/src/components/MemberBalanceEditor.jsx`):
+- URL input now auto-saves silently on **blur** and on **Enter** (Enter triggers blur).
+- 3-state status badge next to the label: `Unsaved · auto-saves on blur` → `Saving…` → `Saved` so the admin can see the persistence state at a glance.
+- Explicit "Save URL" button preserved but disabled when input matches server value (no-op guard).
+- Help text under the field explicitly calls out that the bottom Save Changes button does NOT save this field.
+
+**Verification (iteration 70):**
+- 6/6 UX scenarios pass: auto-save on blur, end-to-end visibility on member profile, URL-set-but-no-lines edge, Save-URL button state, clear-URL via blur, backend security boundary.
+- 10/10 iter69 regression tests still pass.
+- New `/app/backend/tests/test_iteration70_zeffy_url_isolation.py` proves PUT `/members/{id}` cannot mutate `outstanding_zeffy_url` even with injected payload.
+
+
 ### Phase BL — Iteration 69: Outstanding-balance lifecycle for 10-year anniversary (2026-02-15)
 
 **User request:** "We have a 10 year anniversary and members still have outstanding balances. We use Zeffy, and we want to add a Zeffy link to individual profiles for them to make payments." Confirmed scope: per-member Zeffy URL, multi-line balance, admin-set per-member, both confirmation flows (admin mark-paid + member-submit-receipt), does NOT extend membership.
