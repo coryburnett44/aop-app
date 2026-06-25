@@ -193,6 +193,11 @@ function EventDialog({ event, onSaved, trigger }) {
                             cover_image: "",
                             parent_event_id: parentId,
                             allows_ticket_types: !!s.allows_ticket_types,
+                            is_paid: !!s.is_paid,
+                            payment_url: s.is_paid ? (s.payment_url || "") : "",
+                            payment_amount: s.is_paid ? Number(s.payment_amount || 0) : 0,
+                            external_url: s.external_url || "",
+                            external_button_label: s.external_url ? (s.external_button_label || "") : "",
                         });
                         okCount++;
                     } catch { failCount++; }
@@ -219,6 +224,11 @@ function EventDialog({ event, onSaved, trigger }) {
             end_at: "",
             location: form.location || "",
             allows_ticket_types: false,
+            is_paid: false,
+            payment_url: "",
+            payment_amount: 0,
+            external_url: "",
+            external_button_label: "",
         }]);
     }
     function updateSubDraft(idx, patch) {
@@ -506,6 +516,75 @@ function EventDialog({ event, onSaved, trigger }) {
                                         />
                                         Allow ticket types (VIP / All Access / General Admission)
                                     </label>
+                                    {/* Payment / RSVP mode for the sub-event — sub-events are the
+                                        items members actually RSVP to, so paid/external lives here.
+                                        Mirrors the parent's payment-mode radio but compact. */}
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 space-y-1.5" data-testid={`subevent-draft-payment-${idx}`}>
+                                        <div className="text-[9px] uppercase tracking-widest font-bold text-slate-500">RSVP / Payment mode</div>
+                                        {[
+                                            { value: "free", label: "Free RSVP", color: "border-slate-300" },
+                                            { value: "zeffy", label: "Paid via Zeffy", color: "border-emerald-400 bg-emerald-50" },
+                                            { value: "external", label: "External link", color: "border-sky-400 bg-sky-50" },
+                                        ].map((m) => {
+                                            const cur = s.external_url ? "external" : (s.is_paid ? "zeffy" : "free");
+                                            const sel = cur === m.value;
+                                            return (
+                                                <label key={m.value} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 cursor-pointer text-xs transition-colors ${sel ? m.color : "border-slate-200 bg-white hover:border-slate-300"}`} data-testid={`subevent-draft-mode-${m.value}-${idx}`}>
+                                                    <input
+                                                        type="radio"
+                                                        name={`sub-mode-${idx}`}
+                                                        checked={sel}
+                                                        onChange={() => {
+                                                            if (m.value === "free") updateSubDraft(idx, { is_paid: false, payment_url: "", payment_amount: 0, external_url: "", external_button_label: "" });
+                                                            else if (m.value === "zeffy") updateSubDraft(idx, { is_paid: true, external_url: "", external_button_label: "" });
+                                                            else updateSubDraft(idx, { is_paid: false, payment_url: "", payment_amount: 0, external_url: s.external_url || "https://", external_button_label: s.external_button_label || "" });
+                                                        }}
+                                                        className="h-3.5 w-3.5 accent-primary"
+                                                    />
+                                                    <span className="font-medium">{m.label}</span>
+                                                </label>
+                                            );
+                                        })}
+                                        {s.is_paid && !s.external_url && (
+                                            <div className="grid sm:grid-cols-[1fr_100px] gap-2 pt-1.5 border-t border-emerald-200">
+                                                <Input
+                                                    value={s.payment_url || ""}
+                                                    onChange={(e) => updateSubDraft(idx, { payment_url: e.target.value })}
+                                                    placeholder="https://www.zeffy.com/…"
+                                                    className="rounded-lg text-xs"
+                                                    data-testid={`subevent-draft-payment-url-${idx}`}
+                                                />
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value={s.payment_amount || 0}
+                                                    onChange={(e) => updateSubDraft(idx, { payment_amount: Number(e.target.value) })}
+                                                    placeholder="Amount"
+                                                    className="rounded-lg text-xs"
+                                                    data-testid={`subevent-draft-payment-amount-${idx}`}
+                                                />
+                                            </div>
+                                        )}
+                                        {s.external_url && (
+                                            <div className="grid sm:grid-cols-[1fr_140px] gap-2 pt-1.5 border-t border-sky-200">
+                                                <Input
+                                                    value={s.external_url || ""}
+                                                    onChange={(e) => updateSubDraft(idx, { external_url: e.target.value })}
+                                                    placeholder="https://eventbrite.com/…"
+                                                    className="rounded-lg text-xs"
+                                                    data-testid={`subevent-draft-external-url-${idx}`}
+                                                />
+                                                <Input
+                                                    value={s.external_button_label || ""}
+                                                    onChange={(e) => updateSubDraft(idx, { external_button_label: e.target.value })}
+                                                    placeholder="Button label"
+                                                    className="rounded-lg text-xs"
+                                                    data-testid={`subevent-draft-external-label-${idx}`}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             ))}
                         </div>

@@ -15,6 +15,12 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 80 — Sub-events accept free / Zeffy-paid / external-link modes (2026-02-24)
+- **Frontend `Admin.jsx`**: The sub-event draft form (used when creating a new parent + sub-events together) now exposes a compact 3-option RSVP/payment mode selector (Free RSVP / Paid via Zeffy / External link), mirroring the parent's selector. Selecting Zeffy reveals payment URL + amount inputs; selecting External reveals URL + button-label inputs.
+- **Save path**: `is_paid`, `payment_url`, `payment_amount`, `external_url`, `external_button_label` are now included on every sub-event POST so the umbrella's child events can independently be free, paid (Zeffy), or external-link-driven. Editing an existing sub-event via the standard event-edit dialog already exposed these — only the bulk-draft form lacked them.
+- **Backend behaviour** (already correct, now exercised by tests): paid sub-events route members through the existing `/events/{id}/payment/confirm` Zeffy flow (free RSVP returns 402 with the routing hint); external sub-events are surfaced as a "Get tickets" button on the frontend (backend RSVP still permitted as a UI escape hatch).
+- **Tests**: `test_iteration80_subevent_modes.py` — 4/4 pass (mode persistence + free RSVP / paid 402 routing / external no-block behaviour).
+
 ### Iteration 79 — Guest check-in dropdown with search + manual fallback (2026-02-24)
 - **Frontend `EventDetail.jsx`**: The admin Check-In dialog's "Guest" tab now mirrors the Member tab — flattens every RSVP'd guest across all member RSVPs into a searchable list (search by guest name, email, or host member name). Picking a guest pre-fills their RSVP'd ticket type and links the check-in to their host member via `host_user_id` so reports group them correctly.
 - **Already-checked-in guests are hidden** (matched by `(host_user_id, normalized_name)` against the existing checkins list, same shape used by the backend `/check-in-roster` endpoint).
