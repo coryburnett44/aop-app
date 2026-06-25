@@ -1086,7 +1086,7 @@ function CheckInPanel({ eventId, eventTitle, allowsTickets, rsvps }) {
                         {["vip", "all_access", "general", "guest", "speaker", "volunteer"].map((t) => totals[t] ? `${totals[t]} ${t.replace("_", " ")}` : null).filter(Boolean).join(" · ") || "No check-ins yet"}
                     </div>
                 </div>
-                <CheckInDialog eventId={eventId} eventTitle={eventTitle} members={members} checkedInIds={checkedInIds} guests={allGuests} allowsTickets={allowsTickets} onDone={load} />
+                <CheckInDialog eventId={eventId} eventTitle={eventTitle} members={members} checkedInIds={checkedInIds} guests={allGuests} allowsTickets={allowsTickets} onDone={load} rsvps={rsvps} />
             </div>
             {checkins.length === 0 ? (
                 <div className="text-sm text-muted-foreground py-6 text-center">No check-ins yet. Add the first attendee.</div>
@@ -1115,7 +1115,7 @@ function CheckInPanel({ eventId, eventTitle, allowsTickets, rsvps }) {
     );
 }
 
-function CheckInDialog({ eventId, eventTitle, members, checkedInIds, guests, allowsTickets, onDone }) {
+function CheckInDialog({ eventId, eventTitle, members, checkedInIds, guests, allowsTickets, onDone, rsvps }) {
     const [open, setOpen] = useState(false);
     const [mode, setMode] = useState("member");
     const [userId, setUserId] = useState("");
@@ -1126,11 +1126,16 @@ function CheckInDialog({ eventId, eventTitle, members, checkedInIds, guests, all
     const [ticketType, setTicketType] = useState("general");
     const [search, setSearch] = useState("");
     const [guestSearch, setGuestSearch] = useState("");
+    // Quick mode: families-arriving-together batch check-in
+    const [quickSearch, setQuickSearch] = useState("");
+    const [quickSelection, setQuickSelection] = useState(() => new Set());
+    const [quickBusy, setQuickBusy] = useState(false);
 
     function resetForm() {
         setUserId(""); setGuestName(""); setGuestHostId(""); setGuestKey("");
         setManualGuest(false); setSearch(""); setGuestSearch("");
         setTicketType("general"); setMode("member");
+        setQuickSearch(""); setQuickSelection(new Set());
     }
 
     async function submit() {
@@ -1180,6 +1185,82 @@ function CheckInDialog({ eventId, eventTitle, members, checkedInIds, guests, all
         if (g.ticket_type) setTicketType(g.ticket_type);
     }
 
+    // Build family groups for Quick mode: each member RSVP becomes one row
+    // containing the member + their guests (only uncheckedin entries).
+    const families = (rsvps || []).map((r) => {
+        const m = members.find((mm) => mm.id === r.user_id);
+        if (!m) return null;
+        const memberDone = checkedInIds.has(m.id);
+        const guestRows = (r.guests || [])
+            .filter((g) => g.name)
+            .map((g) => ({
+                key: `g:${m.id}|${(g.name || "").trim().toLowerCase()}`,
+                kind: "guest",
+                name: g.name,
+                host_user_id: m.id,
+                ticket_type: g.ticket_type || "guest",
+                done: (guests || []).find((q) => q.host_user_id === m.id && (q.name || "").trim().toLowerCase() === (g.name || "").trim().toLowerCase())?.checked_in || false,
+            }))
+            .filter((g) => !g.done);
+        // Hide families with no uncheckedin members or guests.
+        if (memberDone && guestRows.length === 0) return null;
+        return {
+            id: m.id,
+            member: { key: `m:${m.id}`, kind: "member", name: m.name, email: m.email, user_id: m.id, ticket_type: r.ticket_type || "general", done: memberDone },
+            guests: guestRows,
+        };
+    }).filter(Boolean).filter((f) => {
+        if (!quickSearch) return true;
+        const q = quickSearch.toLowerCase();
+        return f.member.name?.toLowerCase().includes(q)
+            || f.member.email?.toLowerCase().includes(q)
+            || f.guests.some((g) => g.name.toLowerCase().includes(q));
+    });
+
+    function toggleQuick(key) {
+        const next = new Set(quickSelection);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setQuickSelection(next);
+    }
+    function toggleFamily(f) {
+        // If every selectable row in this family is selected, unselect them all;
+        // otherwise select them all (the most common "family arriving" use-case).
+        const allKeys = [
+            !f.member.done && f.member.key,
+            ...f.guests.map((g) => g.key),
+        ].filter(Boolean);
+        const allSelected = allKeys.every((k) => quickSelection.has(k));
+        const next = new Set(quickSelection);
+        for (const k of allKeys) {
+            if (allSelected) next.delete(k); else next.add(k);
+        }
+        setQuickSelection(next);
+    }
+
+    async function submitQuick() {
+        if (quickSelection.size === 0) { toast.error("Select at least one person"); return; }
+        setQuickBusy(true);
+        let ok = 0, fail = 0;
+        for (const f of families) {
+            for (const row of [f.member, ...f.guests]) {
+                if (!quickSelection.has(row.key)) continue;
+                try {
+                    const payload = { ticket_type: row.ticket_type || (row.kind === "guest" ? "guest" : "general") };
+                    if (row.kind === "member") payload.user_id = row.user_id;
+                    else { payload.guest_name = row.name; payload.host_user_id = row.host_user_id; }
+                    await api.post(`/events/${eventId}/check-in`, payload);
+                    ok++;
+                } catch { fail++; }
+            }
+        }
+        setQuickBusy(false);
+        if (ok) toast.success(`Checked in ${ok}${fail ? ` · ${fail} failed` : ""}`);
+        if (!ok && fail) toast.error(`All ${fail} check-ins failed`);
+        resetForm();
+        setOpen(false);
+        onDone();
+    }
+
     return (
         <>
             <Button onClick={() => setOpen(true)} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="add-checkin-btn">
@@ -1192,8 +1273,59 @@ function CheckInDialog({ eventId, eventTitle, members, checkedInIds, guests, all
                         <div className="flex gap-2">
                             <button onClick={() => setMode("member")} className={`flex-1 rounded-full py-2 text-sm font-semibold ${mode === "member" ? "bg-primary text-white shadow-warm" : "bg-muted"}`} data-testid="checkin-mode-member">Member</button>
                             <button onClick={() => setMode("guest")} className={`flex-1 rounded-full py-2 text-sm font-semibold ${mode === "guest" ? "bg-primary text-white shadow-warm" : "bg-muted"}`} data-testid="checkin-mode-guest">Guest</button>
+                            <button onClick={() => setMode("quick")} className={`flex-1 rounded-full py-2 text-sm font-semibold ${mode === "quick" ? "bg-primary text-white shadow-warm" : "bg-muted"}`} data-testid="checkin-mode-quick">Quick · Family</button>
                         </div>
-                        {mode === "member" ? (
+                        {mode === "quick" ? (
+                            <div className="space-y-2">
+                                <Input
+                                    placeholder="Search member or guest name…"
+                                    value={quickSearch}
+                                    onChange={(e) => setQuickSearch(e.target.value)}
+                                    className="rounded-xl"
+                                    data-testid="checkin-quick-search"
+                                />
+                                <p className="text-[11px] text-muted-foreground leading-snug">
+                                    Tip: tap the family header to select the member + all their guests at once. Great for families arriving together.
+                                </p>
+                                <div className="max-h-72 overflow-y-auto border border-border rounded-xl" data-testid="checkin-quick-list">
+                                    {families.length === 0 ? (
+                                        <div className="p-4 text-sm text-muted-foreground text-center">Everyone&apos;s already checked in. ✨</div>
+                                    ) : families.map((f) => {
+                                        const familyKeys = [!f.member.done && f.member.key, ...f.guests.map((g) => g.key)].filter(Boolean);
+                                        const familyAllSelected = familyKeys.length > 0 && familyKeys.every((k) => quickSelection.has(k));
+                                        return (
+                                            <div key={f.id} className="border-b last:border-0" data-testid={`checkin-quick-family-${f.id}`}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleFamily(f)}
+                                                    className={`w-full text-left px-3 py-2 flex items-center gap-2 ${familyAllSelected ? "bg-primary/15" : "hover:bg-muted/40"}`}
+                                                    data-testid={`checkin-quick-family-toggle-${f.id}`}
+                                                >
+                                                    <input type="checkbox" readOnly checked={familyAllSelected} className="h-4 w-4 accent-primary pointer-events-none" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="text-sm font-semibold">{f.member.name} {f.member.done && <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-700 ml-1">checked in</span>}</div>
+                                                        <div className="text-[11px] text-muted-foreground">{f.guests.length} guest{f.guests.length !== 1 ? "s" : ""} pending</div>
+                                                    </div>
+                                                </button>
+                                                {!f.member.done && (
+                                                    <label className={`flex items-center gap-2 pl-9 pr-3 py-1.5 cursor-pointer text-sm ${quickSelection.has(f.member.key) ? "bg-primary/10" : ""}`} data-testid={`checkin-quick-pick-member-${f.id}`}>
+                                                        <input type="checkbox" checked={quickSelection.has(f.member.key)} onChange={() => toggleQuick(f.member.key)} className="h-3.5 w-3.5 accent-primary" />
+                                                        <span>{f.member.name} <span className="text-[10px] uppercase font-semibold text-muted-foreground">· {(f.member.ticket_type || "general").replace("_", " ")}</span></span>
+                                                    </label>
+                                                )}
+                                                {f.guests.map((g) => (
+                                                    <label key={g.key} className={`flex items-center gap-2 pl-9 pr-3 py-1.5 cursor-pointer text-sm ${quickSelection.has(g.key) ? "bg-primary/10" : ""}`} data-testid={`checkin-quick-pick-${g.key.replace("|", "-")}`}>
+                                                        <input type="checkbox" checked={quickSelection.has(g.key)} onChange={() => toggleQuick(g.key)} className="h-3.5 w-3.5 accent-primary" />
+                                                        <span>{g.name} <span className="text-[10px] uppercase font-semibold text-muted-foreground">· guest · {(g.ticket_type || "guest").replace("_", " ")}</span></span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <div className="text-xs text-muted-foreground" data-testid="checkin-quick-count">{quickSelection.size} selected</div>
+                            </div>
+                        ) : mode === "member" ? (
                             <div>
                                 <Input placeholder="Search by name or email…" value={search} onChange={(e) => setSearch(e.target.value)} className="rounded-xl" data-testid="checkin-search" />
                                 <div className="max-h-56 overflow-y-auto mt-2 border border-border rounded-xl">
@@ -1283,6 +1415,7 @@ function CheckInDialog({ eventId, eventTitle, members, checkedInIds, guests, all
                                 )}
                             </div>
                         )}
+                        {mode !== "quick" && (
                         <div>
                             <Label>Ticket type</Label>
                             <Select value={ticketType} onValueChange={setTicketType}>
@@ -1299,8 +1432,17 @@ function CheckInDialog({ eventId, eventTitle, members, checkedInIds, guests, all
                             </Select>
                             {allowsTickets && <p className="text-[11px] text-muted-foreground mt-1">VIP / All Access / General Admission are available for this sub-event.</p>}
                         </div>
+                        )}
                     </div>
-                    <DialogFooter className="mt-4"><Button onClick={submit} className="rounded-full bg-primary hover:bg-primary/90" data-testid="checkin-confirm-btn">Check in</Button></DialogFooter>
+                    <DialogFooter className="mt-4">
+                        {mode === "quick" ? (
+                            <Button onClick={submitQuick} disabled={quickBusy || quickSelection.size === 0} className="rounded-full bg-primary hover:bg-primary/90" data-testid="checkin-quick-submit-btn">
+                                {quickBusy ? "Checking in…" : `Check in ${quickSelection.size} selected`}
+                            </Button>
+                        ) : (
+                            <Button onClick={submit} className="rounded-full bg-primary hover:bg-primary/90" data-testid="checkin-confirm-btn">Check in</Button>
+                        )}
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </>

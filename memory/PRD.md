@@ -15,6 +15,12 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 82 — Quick family check-in + umbrella payment hide + Photos modularization (2026-02-24)
+- **Quick "Family" check-in mode (Task 1)**: `EventDetail.jsx` CheckInDialog gains a 3rd tab "Quick · Family". Shows every member RSVP grouped with their guests; tap the family header to multi-select member + all their guests (the common "family arriving together" pattern) or check individual rows. Submit fires sequential `/check-in` POSTs and reports `Checked in N · M failed` via toast.
+- **Hide payment-mode selector on umbrella parents (Task 2)**: `Admin.jsx` event editor now detects umbrellas via `subDrafts.length > 0 || existingChildrenCount > 0` (loads `/events/{id}/sub-events` once on mount for existing events) and replaces the Free/Zeffy/External card with a dashed-border note "Payment / Tickets · configured per sub-event". Eliminates the dead-config footgun.
+- **Photos module modularization (Task 3)**: Extracted `/api/photos*` + `/api/photos/albums*` routes from `server.py` to `routes/photos.py` (~310 lines moved). Seed helpers (`DEFAULT_PHOTO_ALBUMS`, `seed_default_photo_albums`, `auto_categorize_album`, `PHOTO_ALBUM_CATEGORIES`) stay in `server.py` since they run at startup before route registration. `server.py`: **5,643 → 5,345 lines** (5.3% reduction). Routes registered via `routes_photos.register(...)` with explicit dependency injection.
+- **Tests**: `test_iteration82_photos_module_and_quick_checkin.py` — 3/3 pass (photos endpoints smoke + album round-trip + quick-family batched check-in). Full regression iter74-82 → **37/37 green**.
+
 ### Iteration 81 — Reports RSVPs parity + cancellation emails + admin inbox tickets (2026-02-24)
 - **Reports → RSVPs filter parity** (Task A): `RsvpsReport` in `pages/Reports.jsx` now matches Hours/Donations — Year (incl. "All Years"), Period (Q1-Q4, Jan-Dec), Parent event, Sub-event, Ticket type filters + 4 view pills (Individual entries / By member / By chapter / By period). Backend `/api/reports/rsvps` accepts `year, quarter, month, ticket_type, parent_event_id, event_id`; new `/api/reports/rsvps/summary?group_by=member|chapter|period` returns totals + buckets.
 - **Calendar "This month at a glance" cancelled label** (Task B): cancelled events now render with a red border, struck-through title, and a `● Cancelled` pill (`data-testid="cal-event-cancelled-{id}"`).

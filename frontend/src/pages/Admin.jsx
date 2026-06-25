@@ -158,6 +158,17 @@ function EventDialog({ event, onSaved, trigger }) {
     const [coverUploading, setCoverUploading] = useState(false);
     // Sub-events drafted during NEW event creation. Each: {title, category, start_at, end_at, location, allows_ticket_types}
     const [subDrafts, setSubDrafts] = useState([]);
+    // For an EXISTING event we ask the backend whether it already has children
+    // so we can hide the payment-mode selector on umbrella parents (members
+    // can't RSVP to umbrella events directly — backend blocks it).
+    const [existingChildrenCount, setExistingChildrenCount] = useState(0);
+    useEffect(() => {
+        if (!event?.id) return;
+        api.get(`/events/${event.id}/sub-events`)
+            .then(({ data }) => setExistingChildrenCount((data || []).length))
+            .catch(() => {});
+    }, [event?.id]);
+    const isUmbrella = subDrafts.length > 0 || existingChildrenCount > 0;
 
     async function save() {
         const payload = {
@@ -342,7 +353,18 @@ function EventDialog({ event, onSaved, trigger }) {
                             <p className="text-[11px] text-muted-foreground">Members will RSVP without choosing a ticket type. Best for casual gatherings.</p>
                         )}
                     </div>
-                    {/* Payment mode — pick one: free, Zeffy, or external link */}
+                    {/* Payment mode — pick one: free, Zeffy, or external link.
+                        Hidden on umbrella parents (events that have sub-events)
+                        because members can't RSVP to umbrella events directly —
+                        each sub-event configures its own payment mode. */}
+                    {isUmbrella ? (
+                        <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600" data-testid="event-payment-mode-umbrella-hidden">
+                            <div className="font-semibold mb-1">Payment / Tickets · configured per sub-event</div>
+                            <div className="text-xs leading-snug">
+                                This event is an umbrella that groups sub-events. Members don&apos;t RSVP to it directly — they RSVP to each sub-event below, and each sub-event has its own Free / Zeffy / External link selector.
+                            </div>
+                        </div>
+                    ) : (
                     <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 space-y-2.5" data-testid="event-payment-mode">
                         <div className="text-[10px] uppercase tracking-widest font-bold text-slate-500 mb-1">Payment / Tickets</div>
                         {[
@@ -426,6 +448,7 @@ function EventDialog({ event, onSaved, trigger }) {
                             </div>
                         )}
                     </div>
+                    )}
                     {event && (
                         <div className={`rounded-2xl border-2 p-4 ${form.cancelled ? "border-red-300 bg-red-50" : "border-slate-200 bg-slate-50"}`}>
                             <label className="flex items-center gap-3 cursor-pointer">
