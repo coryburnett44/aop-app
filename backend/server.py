@@ -2186,11 +2186,30 @@ async def admin_stats(admin: dict = Depends(require_admin)):
         "tier": u.get("membership_tier"),
     } async for u in new_cursor]
 
+    # Pending Zeffy event-ticket payments awaiting admin review.
+    pending_tx_cursor = db.transactions.find(
+        {"purpose": "event_ticket", "status": "pending"},
+        {"_id": 0},
+    ).sort("created_at", 1).limit(20)
+    pending_event_tickets = []
+    async for t in pending_tx_cursor:
+        pending_event_tickets.append({
+            "id": t.get("id"),
+            "user_id": t.get("user_id"),
+            "user_name": t.get("user_name", ""),
+            "event_id": t.get("event_id"),
+            "event_title": t.get("event_title", ""),
+            "amount": t.get("amount", 0),
+            "zeffy_confirmation": t.get("zeffy_confirmation", ""),
+            "created_at": t.get("created_at"),
+        })
+
     inbox = {
         "hours_to_review": hours_to_review,
         "in_grace": in_grace,
         "new_members": new_members,
-        "total": len(hours_to_review) + len(in_grace) + len(new_members),
+        "pending_event_tickets": pending_event_tickets,
+        "total": len(hours_to_review) + len(in_grace) + len(new_members) + len(pending_event_tickets),
     }
 
     return {
@@ -5319,7 +5338,7 @@ routes_auth_email_flows.register(
 # bulk-import + apply-approval + resend-link paths keep working.
 _send_set_password_email._impl = routes_auth_email_flows.register.send_set_password_email
 
-routes_events.register(api, db=db, admin_tab_dep=admin_tab_dep, event_out=event_out, iso=iso, now_utc=now_utc)
+routes_events.register(api, db=db, admin_tab_dep=admin_tab_dep, event_out=event_out, iso=iso, now_utc=now_utc, resend_sdk=resend_sdk, resend_api_key=RESEND_API_KEY, resend_from=RESEND_FROM, logger=logger)
 routes_members.register(api, db=db, admin_tab_dep=admin_tab_dep, public_user=public_user, iso=iso, now_utc=now_utc)
 routes_applications.register(
     api,

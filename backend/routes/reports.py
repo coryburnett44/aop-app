@@ -95,16 +95,25 @@ def register(
     async def report_rsvps(
         event_id: Optional[str] = None,
         parent_event_id: Optional[str] = None,
+        ticket_type: Optional[str] = None,
+        year: Optional[int] = None,
+        quarter: Optional[int] = None,
+        month: Optional[int] = None,
         admin: dict = Depends(admin_tab_dep("reports")),
     ):
+        # Period filter is applied to the event's start_at (RSVPs are bucketed
+        # by the event they belong to, not by when the member clicked RSVP).
+        period_from, period_to = period_to_range(year, quarter, month)
         event_q: dict = {}
         if event_id:
             event_q["id"] = event_id
         elif parent_event_id:
             event_q["$or"] = [{"id": parent_event_id}, {"parent_event_id": parent_event_id}]
+        if period_from:
+            event_q["start_at"] = {"$gte": period_from, "$lte": period_to}
         events_for_filter = []
         if event_q:
-            events_for_filter = await db.events.find(event_q, {"_id": 0, "id": 1, "title": 1, "start_at": 1}).to_list(200)
+            events_for_filter = await db.events.find(event_q, {"_id": 0, "id": 1, "title": 1, "start_at": 1, "parent_event_id": 1}).to_list(500)
             event_ids = [e["id"] for e in events_for_filter]
             if not event_ids:
                 return []
@@ -118,32 +127,122 @@ def register(
         rsvps = await cursor.to_list(5000)
         if not events_for_filter:
             all_event_ids = list({r["event_id"] for r in rsvps})
-            events_for_filter = await db.events.find({"id": {"$in": all_event_ids}}, {"_id": 0, "id": 1, "title": 1, "start_at": 1}).to_list(2000)
+            events_for_filter = await db.events.find({"id": {"$in": all_event_ids}}, {"_id": 0, "id": 1, "title": 1, "start_at": 1, "parent_event_id": 1}).to_list(2000)
         event_by_id = {e["id"]: e for e in events_for_filter}
+        # Pre-load chapter info for "by chapter" summaries downstream.
+        uids = list({r["user_id"] for r in rsvps})
+        user_docs = await db.users.find({"id": {"$in": uids}}, {"_id": 0, "id": 1, "chapter_id": 1, "name": 1}).to_list(len(uids)) if uids else []
+        users_by_id = {u["id"]: u for u in user_docs}
+        chap_ids = list({u.get("chapter_id") for u in user_docs if u.get("chapter_id")})
+        chap_docs = await db.chapters.find({"id": {"$in": chap_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(chap_ids)) if chap_ids else []
+        chaps_by_id = {c["id"]: c for c in chap_docs}
         rows = []
         for r in rsvps:
             ev = event_by_id.get(r["event_id"], {})
             ck = await db.checkins.find_one({"event_id": r["event_id"], "user_id": r["user_id"]}, {"_id": 0, "ticket_type": 1, "checked_in_at": 1})
-            # Ticket type sourcing: prefer the value captured at check-in (it
-            # reflects any last-minute upgrade) but fall back to the RSVP's
-            # own ticket_type so reports show VIP/All-Access/etc. for members
-            # who RSVPed but have not yet checked in. Previously this column
-            # was blank for everyone who hadn't checked in.
-            ticket_type = (ck or {}).get("ticket_type") or r.get("ticket_type") or "general"
+            tt = (ck or {}).get("ticket_type") or r.get("ticket_type") or "general"
+            if ticket_type and tt != ticket_type:
+                continue
+            udoc = users_by_id.get(r["user_id"], {})
+            cid = udoc.get("chapter_id")
             rows.append({
                 "rsvp_id": r["id"],
                 "event_id": r["event_id"],
                 "event_title": ev.get("title", ""),
                 "event_start_at": ev.get("start_at"),
+                "parent_event_id": ev.get("parent_event_id"),
                 "user_id": r["user_id"],
-                "user_name": r.get("user_name", ""),
+                "user_name": r.get("user_name", "") or udoc.get("name", ""),
+                "chapter_id": cid,
+                "chapter_name": chaps_by_id.get(cid, {}).get("name", "") if cid else "Unassigned",
                 "rsvped_at": r.get("created_at"),
                 "guests": r.get("guests", []) or [],
                 "guest_count": len(r.get("guests", []) or []),
-                "ticket_type": ticket_type,
+                "ticket_type": tt,
                 "checked_in_at": (ck or {}).get("checked_in_at"),
             })
         return rows
+
+    # ---------- /reports/rsvps/summary ----------
+    @api.get("/reports/rsvps/summary")
+    async def report_rsvps_summary(
+        event_id: Optional[str] = None,
+        parent_event_id: Optional[str] = None,
+        ticket_type: Optional[str] = None,
+        year: Optional[int] = None,
+        quarter: Optional[int] = None,
+        month: Optional[int] = None,
+        group_by: str = "member",
+        admin: dict = Depends(admin_tab_dep("reports")),
+    ):
+        """Aggregated RSVP report — mirrors `/reports/hours/summary` shape.
+        Groups by: member | chapter | period (month buckets keyed by event date)."""
+        # Re-use the rows endpoint to keep filtering DRY.
+        rows = await report_rsvps(  # type: ignore[misc]
+            event_id=event_id,
+            parent_event_id=parent_event_id,
+            ticket_type=ticket_type,
+            year=year, quarter=quarter, month=month,
+            admin=admin,
+        )
+        totals = {
+            "rsvp_count": len(rows),
+            "guest_count": sum(r.get("guest_count", 0) for r in rows),
+            "checked_in_count": sum(1 for r in rows if r.get("checked_in_at")),
+        }
+        out_rows: list = []
+        if group_by == "member":
+            groups: dict = {}
+            for r in rows:
+                uid = r["user_id"]
+                groups.setdefault(uid, {"user_name": r["user_name"], "chapter_id": r.get("chapter_id"), "chapter_name": r.get("chapter_name", ""), "rsvp_count": 0, "guest_count": 0, "checked_in_count": 0})
+                groups[uid]["rsvp_count"] += 1
+                groups[uid]["guest_count"] += r.get("guest_count", 0)
+                if r.get("checked_in_at"):
+                    groups[uid]["checked_in_count"] += 1
+            for uid, g in groups.items():
+                out_rows.append({"user_id": uid, **g})
+            out_rows.sort(key=lambda r: r["rsvp_count"], reverse=True)
+        elif group_by == "chapter":
+            groups2: dict = {}
+            for r in rows:
+                cid = r.get("chapter_id") or "unassigned"
+                groups2.setdefault(cid, {"chapter_name": r.get("chapter_name") or "Unassigned", "rsvp_count": 0, "guest_count": 0, "checked_in_count": 0, "members": set()})
+                groups2[cid]["rsvp_count"] += 1
+                groups2[cid]["guest_count"] += r.get("guest_count", 0)
+                if r.get("checked_in_at"):
+                    groups2[cid]["checked_in_count"] += 1
+                groups2[cid]["members"].add(r["user_id"])
+            for cid, g in groups2.items():
+                out_rows.append({
+                    "chapter_id": cid if cid != "unassigned" else None,
+                    "chapter_name": g["chapter_name"],
+                    "rsvp_count": g["rsvp_count"],
+                    "guest_count": g["guest_count"],
+                    "checked_in_count": g["checked_in_count"],
+                    "member_count": len(g["members"]),
+                })
+            out_rows.sort(key=lambda r: r["rsvp_count"], reverse=True)
+        else:
+            # by period — bucket by event-start month (YYYY-MM)
+            buckets: dict = {}
+            for r in rows:
+                ds = (r.get("event_start_at") or "")[:7]  # YYYY-MM
+                if not ds:
+                    continue
+                buckets.setdefault(ds, {"label": ds, "rsvp_count": 0, "guest_count": 0, "checked_in_count": 0})
+                buckets[ds]["rsvp_count"] += 1
+                buckets[ds]["guest_count"] += r.get("guest_count", 0)
+                if r.get("checked_in_at"):
+                    buckets[ds]["checked_in_count"] += 1
+            for k, v in sorted(buckets.items()):
+                try:
+                    label = _dt.strptime(k, "%Y-%m").strftime("%b %Y")
+                except Exception:
+                    label = k
+                out_rows.append({"period_key": k, "period_label": label, "rsvp_count": v["rsvp_count"], "guest_count": v["guest_count"], "checked_in_count": v["checked_in_count"]})
+        period_from, period_to = period_to_range(year, quarter, month)
+        return {"totals": totals, "rows": out_rows, "period": {"year": year, "quarter": quarter, "month": month, "from": period_from, "to": period_to}, "group_by": group_by}
 
     # ---------- /reports/hours ----------
     @api.get("/reports/hours")

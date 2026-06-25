@@ -8,6 +8,8 @@ extracted here covers the bulk of event lookups served to the frontend.
 `event_out` lives in server.py (used by many other endpoints) and is injected
 as a kwarg into register().
 """
+import asyncio
+import html as _html
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -17,7 +19,70 @@ from fastapi import Depends, HTTPException
 from models import EventIn, EventUpdateIn
 
 
-def register(api, *, db, admin_tab_dep, event_out, iso, now_utc):
+def register(api, *, db, admin_tab_dep, event_out, iso, now_utc, resend_sdk=None, resend_api_key=None, resend_from=None, logger=None):
+
+    async def _send_cancellation_emails(event: dict, child_events: list = None):
+        """Email every RSVP'd member (and their guests with emails) that this
+        event has been cancelled. Best-effort — failures are logged but never
+        block the API response.
+
+        When the cancelled event is an umbrella (has child_events), the email
+        includes the list of cancelled sub-events for clarity.
+        """
+        if not resend_api_key or not resend_sdk:
+            if logger:
+                logger.info(f"[cancel-email] skipped (no RESEND_API_KEY) for event={event.get('id')}")
+            return
+        # Gather every event_id touched (the event itself + its cancelled children).
+        affected_ids = [event["id"]] + [c["id"] for c in (child_events or [])]
+        rsvps = await db.rsvps.find({"event_id": {"$in": affected_ids}}, {"_id": 0}).to_list(5000)
+        # De-dup recipients by email — one umbrella cancellation = one email per
+        # member even if they RSVP'd to multiple sub-events.
+        recipients: dict = {}
+        for r in rsvps:
+            u = await db.users.find_one({"id": r.get("user_id")}, {"_id": 0, "email": 1, "name": 1})
+            if u and u.get("email"):
+                recipients.setdefault(u["email"].lower(), {"name": u.get("name", ""), "is_guest": False})
+            for g in (r.get("guests") or []):
+                gem = (g.get("email") or "").lower().strip()
+                if gem:
+                    recipients.setdefault(gem, {"name": g.get("name", ""), "is_guest": True})
+        if not recipients:
+            if logger:
+                logger.info(f"[cancel-email] no RSVP'd recipients for event={event.get('id')}")
+            return
+        title = event.get("title", "this event")
+        note = (event.get("cancellation_note") or "").strip()
+        child_lines = ""
+        if child_events:
+            child_lines = "<ul>" + "".join(
+                f"<li>{_html.escape(c.get('title') or 'Untitled')}</li>" for c in child_events
+            ) + "</ul>"
+        for email, meta in recipients.items():
+            salutation = meta["name"] or ("Guest" if meta["is_guest"] else "Member")
+            html_body = f"""
+              <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111">
+                <h2 style="color:#C8102E;margin-bottom:8px">Event cancelled: {_html.escape(title)}</h2>
+                <p>Hi {_html.escape(salutation)},</p>
+                <p>We're writing to let you know that <strong>{_html.escape(title)}</strong> has been cancelled.</p>
+                {f'<p style="background:#fff3cd;border-left:4px solid #f0ad4e;padding:10px 12px;border-radius:4px"><strong>Note from the team:</strong> {_html.escape(note)}</p>' if note else ''}
+                {f'<p>Cancelled sub-events under this umbrella:</p>{child_lines}' if child_lines else ''}
+                <p>Any RSVPs you placed for this event have been preserved on the calendar for reference but are no longer required. We'll be in touch with any reschedule plans.</p>
+                <p style="color:#555;font-size:12px;margin-top:24px">— Alpha Omega Phi Military Fraternity &amp; Sorority, Inc.</p>
+              </div>
+            """
+            try:
+                await asyncio.to_thread(resend_sdk.Emails.send, {
+                    "from": resend_from,
+                    "to": [email],
+                    "subject": f"Cancelled: {title}",
+                    "html": html_body,
+                })
+            except Exception as ex:
+                if logger:
+                    logger.warning(f"[cancel-email] failed to {email} for event={event.get('id')}: {ex}")
+        if logger:
+            logger.info(f"[cancel-email] notified {len(recipients)} recipient(s) for event={event.get('id')}")
 
     @api.get("/events")
     async def list_events(upcoming: bool = False, include_sub_events: bool = False):
@@ -110,6 +175,21 @@ def register(api, *, db, admin_tab_dep, event_out, iso, now_utc):
                     "cancellation_note": "",
                 }},
             )
+
+        # Fire-and-forget cancellation email to RSVP'd members + guests.
+        # Only on the cancel-on flip, not on un-cancel. Scheduled as a task so
+        # the API response isn't held up by Resend latency.
+        if cascade_cancel:
+            child_events = []
+            if cascade_cancel:
+                async for c in db.events.find({"parent_event_id": event_id}, {"_id": 0, "id": 1, "title": 1}):
+                    child_events.append(c)
+            current = await db.events.find_one({"id": event_id}, {"_id": 0})
+            try:
+                asyncio.create_task(_send_cancellation_emails(current or {**existing, **updates}, child_events))
+            except Exception as ex:
+                if logger:
+                    logger.warning(f"[cancel-email] could not schedule task: {ex}")
 
         e = await db.events.find_one({"id": event_id}, {"_id": 0})
         if not e:

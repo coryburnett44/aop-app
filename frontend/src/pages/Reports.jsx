@@ -160,88 +160,306 @@ function MembersReport() {
 }
 
 function RsvpsReport() {
-    const [rows, setRows] = useState([]);
+    const now = new Date();
+    const [view, setView] = useState("entries"); // entries | by_member | by_chapter | by_period
     const [events, setEvents] = useState([]);
-    const [eventId, setEventId] = useState("");
+    // year is "all" or a 4-digit year string. Period is "all" | q1..q4 | m1..m12.
+    const [year, setYear] = useState(String(now.getFullYear()));
+    const [period, setPeriod] = useState("all");
     const [parentId, setParentId] = useState("");
+    const [eventId, setEventId] = useState("");
+    const [ticketType, setTicketType] = useState("");
+    const [memberQuery, setMemberQuery] = useState("");
+    const [rows, setRows] = useState([]);
+    const [summary, setSummary] = useState(null);
 
     useEffect(() => {
-        api.get("/events").then(({ data }) => setEvents(data)).catch(() => {});
+        // Pull every event (incl. sub-events) so we can populate the
+        // parent-event + sub-event selects in one shot.
+        api.get("/events?include_sub_events=true").then(({ data }) => setEvents(data)).catch(() => {});
     }, []);
 
-    async function run() {
-        const params = {};
-        if (eventId) params.event_id = eventId;
-        else if (parentId) params.parent_event_id = parentId;
-        const { data } = await api.get("/reports/rsvps", { params });
-        setRows(data);
+    function buildParams() {
+        const p = {};
+        if (year !== "all") {
+            p.year = year;
+            if (period.startsWith("q")) p.quarter = period.slice(1);
+            else if (period.startsWith("m")) p.month = period.slice(1);
+        }
+        // Specific sub-event wins over parent filter (matches HoursReport
+        // pattern of "more specific overrides broader").
+        if (eventId) p.event_id = eventId;
+        else if (parentId) p.parent_event_id = parentId;
+        if (ticketType) p.ticket_type = ticketType;
+        return p;
     }
-    useEffect(() => { run(); }, []); // eslint-disable-line
+
+    async function run() {
+        const params = buildParams();
+        if (view === "entries") {
+            const { data } = await api.get("/reports/rsvps", { params });
+            setRows(data); setSummary(null);
+        } else {
+            const groupBy = view === "by_member" ? "member" : view === "by_chapter" ? "chapter" : "period";
+            const { data } = await api.get("/reports/rsvps/summary", { params: { ...params, group_by: groupBy } });
+            setRows(data.rows || []); setSummary(data);
+        }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => { setRows([]); run(); }, [view, year, period, parentId, eventId, ticketType]);
 
     function exportCSV() {
-        downloadCSV(`rsvps-report-${new Date().toISOString().slice(0, 10)}.csv`, csvify(rows, [
-            { label: "Event", get: (r) => r.event_title },
-            { label: "Event date", get: (r) => r.event_start_at?.slice(0, 10) || "" },
-            { label: "Member", get: (r) => r.user_name },
-            { label: "RSVPed at", get: (r) => r.rsvped_at?.slice(0, 16).replace("T", " ") || "" },
-            { label: "Ticket type", get: (r) => r.ticket_type || "" },
-            { label: "Checked in at", get: (r) => r.checked_in_at?.slice(0, 16).replace("T", " ") || "" },
-            { label: "Guest count", get: (r) => r.guest_count },
-            { label: "Guests", get: (r) => (r.guests || []).map((g) => `${g.name}${g.email ? ` <${g.email}>` : ""}`).join("; ") },
-        ]));
+        const fnameBase = `rsvps-${view}-${year === "all" ? "all-years" : year}${year !== "all" && period !== "all" ? "-" + period : ""}`;
+        let headers;
+        if (view === "entries") {
+            headers = [
+                { label: "Event", get: (r) => r.event_title },
+                { label: "Event date", get: (r) => r.event_start_at?.slice(0, 10) || "" },
+                { label: "Member", get: (r) => r.user_name },
+                { label: "Chapter", get: (r) => r.chapter_name || "" },
+                { label: "RSVPed at", get: (r) => r.rsvped_at?.slice(0, 16).replace("T", " ") || "" },
+                { label: "Ticket type", get: (r) => r.ticket_type || "" },
+                { label: "Checked in at", get: (r) => r.checked_in_at?.slice(0, 16).replace("T", " ") || "" },
+                { label: "Guest count", get: (r) => r.guest_count },
+                { label: "Guests", get: (r) => (r.guests || []).map((g) => `${g.name}${g.email ? ` <${g.email}>` : ""}`).join("; ") },
+            ];
+        } else if (view === "by_member") {
+            headers = [
+                { label: "Member", get: (r) => r.user_name },
+                { label: "Chapter", get: (r) => r.chapter_name || "Unassigned" },
+                { label: "RSVPs", get: (r) => r.rsvp_count },
+                { label: "Guests", get: (r) => r.guest_count },
+                { label: "Checked in", get: (r) => r.checked_in_count },
+            ];
+        } else if (view === "by_chapter") {
+            headers = [
+                { label: "Chapter", get: (r) => r.chapter_name },
+                { label: "RSVPs", get: (r) => r.rsvp_count },
+                { label: "Guests", get: (r) => r.guest_count },
+                { label: "Checked in", get: (r) => r.checked_in_count },
+                { label: "Members", get: (r) => r.member_count },
+            ];
+        } else {
+            headers = [
+                { label: "Period", get: (r) => r.period_label },
+                { label: "RSVPs", get: (r) => r.rsvp_count },
+                { label: "Guests", get: (r) => r.guest_count },
+                { label: "Checked in", get: (r) => r.checked_in_count },
+            ];
+        }
+        downloadCSV(`${fnameBase}.csv`, csvify(rows, headers));
     }
 
-    const parentCandidates = events.filter((e) => !e.parent_event_id);
+    const years = (() => {
+        const cy = now.getFullYear();
+        const list = [];
+        for (let y = cy; y >= 2017; y--) list.push(y);
+        return list;
+    })();
+    const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    const parentEvents = events.filter((e) => !e.parent_event_id);
+    const subEvents = parentId
+        ? events.filter((e) => e.parent_event_id === parentId)
+        : events.filter((e) => e.parent_event_id);
+
+    // Apply client-side member-name search on the entries view only.
+    const visibleRows = (view === "entries" && memberQuery.trim())
+        ? rows.filter((r) => (r.user_name || "").toLowerCase().includes(memberQuery.trim().toLowerCase()))
+        : rows;
 
     return (
         <div data-testid="rsvps-report">
             <div className="bg-card rounded-2xl border border-border p-5 mb-4">
                 <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
-                <div className="grid sm:grid-cols-3 gap-3">
-                    <FilterSelect label="Specific event" value={eventId} onChange={(v) => { setEventId(v); if (v) setParentId(""); }} options={[{ value: "", label: "Any" }, ...events.map((e) => ({ value: e.id, label: e.title }))]} testid="rsvps-filter-event" />
-                    <FilterSelect label="Or parent event (all sub-events)" value={parentId} onChange={(v) => { setParentId(v); if (v) setEventId(""); }} options={[{ value: "", label: "Any" }, ...parentCandidates.map((e) => ({ value: e.id, label: e.title }))]} testid="rsvps-filter-parent" />
+                <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    <FilterSelect label="Year" value={year} onChange={setYear} options={[{ value: "all", label: "All years" }, ...years.map((y) => ({ value: String(y), label: String(y) }))]} testid="rsvps-filter-year" />
+                    <div>
+                        <Label className="text-xs">Period</Label>
+                        <Select value={period} onValueChange={setPeriod} disabled={year === "all"}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="rsvps-filter-period"><SelectValue placeholder={year === "all" ? "—" : ""} /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">Entire year</SelectItem>
+                                <SelectItem value="q1">Q1</SelectItem>
+                                <SelectItem value="q2">Q2</SelectItem>
+                                <SelectItem value="q3">Q3</SelectItem>
+                                <SelectItem value="q4">Q4</SelectItem>
+                                {MONTH_NAMES.map((mn, i) => <SelectItem key={i + 1} value={`m${i + 1}`}>{mn}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <FilterSelect
+                        label="Parent event"
+                        value={parentId}
+                        onChange={(v) => { setParentId(v); setEventId(""); }}
+                        options={[{ value: "", label: "All events" }, ...parentEvents.map((e) => ({ value: e.id, label: e.title }))]}
+                        testid="rsvps-filter-parent"
+                    />
+                    <FilterSelect
+                        label="Sub-event"
+                        value={eventId}
+                        onChange={setEventId}
+                        options={[{ value: "", label: parentId ? "All sub-events of selected" : "Any" }, ...subEvents.map((e) => ({ value: e.id, label: e.title }))]}
+                        testid="rsvps-filter-subevent"
+                    />
+                    <FilterSelect
+                        label="Ticket type"
+                        value={ticketType}
+                        onChange={setTicketType}
+                        options={[
+                            { value: "", label: "Any" },
+                            { value: "vip", label: "VIP" },
+                            { value: "all_access", label: "All Access" },
+                            { value: "general", label: "General Admission" },
+                            { value: "guest", label: "Guest" },
+                            { value: "speaker", label: "Speaker" },
+                            { value: "volunteer", label: "Volunteer" },
+                        ]}
+                        testid="rsvps-filter-ticket-type"
+                    />
                 </div>
-                <div className="flex justify-end gap-2 mt-4">
+                {view === "entries" && (
+                    <div className="mt-3">
+                        <Label className="text-xs">Search member</Label>
+                        <Input
+                            value={memberQuery}
+                            onChange={(e) => setMemberQuery(e.target.value)}
+                            placeholder="Filter by member name…"
+                            className="rounded-xl mt-1.5"
+                            data-testid="rsvps-filter-member-search"
+                        />
+                    </div>
+                )}
+                <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="rsvps-report-run-btn">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="rsvps-report-csv-btn"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
                 </div>
             </div>
-            <div className="text-sm text-muted-foreground mb-2">
-                {rows.length} RSVP{rows.length !== 1 ? "s" : ""}
-                {" · "}
-                {rows.reduce((acc, r) => acc + (r.guest_count || 0), 0)} guests
-            </div>
-            <div className="bg-card rounded-2xl border overflow-x-auto">
-                <table className="w-full text-sm">
-                    <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-                        <tr>
-                            <th className="text-left px-4 py-2.5">Event</th>
-                            <th className="text-left px-4 py-2.5">Member</th>
-                            <th className="text-left px-4 py-2.5">RSVP'd</th>
-                            <th className="text-left px-4 py-2.5">Ticket</th>
-                            <th className="text-left px-4 py-2.5">Checked in</th>
-                            <th className="text-left px-4 py-2.5">Guests</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows.map((r) => (
-                            <tr key={r.rsvp_id} className="border-t border-border align-top" data-testid={`rsvps-report-row-${r.rsvp_id}`}>
-                                <td className="px-4 py-2.5">
-                                    <div className="font-medium">{r.event_title}</div>
-                                    {r.event_start_at && <div className="text-xs text-muted-foreground">{format(parseISO(r.event_start_at), "MMM d, yyyy")}</div>}
-                                </td>
-                                <td className="px-4 py-2.5">{r.user_name}</td>
-                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">{r.rsvped_at ? format(parseISO(r.rsvped_at), "MMM d, yyyy h:mm a") : "—"}</td>
-                                <td className="px-4 py-2.5">{r.ticket_type ? <span className="text-xs uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary">{r.ticket_type.replace("_", " ")}</span> : <span className="text-xs text-muted-foreground italic">—</span>}</td>
-                                <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{r.checked_in_at ? format(parseISO(r.checked_in_at), "MMM d, h:mm a") : "—"}</td>
-                                <td className="px-4 py-2.5">
-                                    <div className="font-semibold">{r.guest_count}</div>
-                                    {(r.guests || []).length > 0 && <div className="text-xs text-muted-foreground leading-snug">{r.guests.map((g) => g.name).join(", ")}</div>}
-                                </td>
+
+            {/* View pills */}
+            <Tabs value={view} onValueChange={setView}>
+                <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
+                    <TabsTrigger value="entries" className="rounded-full" data-testid="rsvps-view-entries">Individual entries</TabsTrigger>
+                    <TabsTrigger value="by_member" className="rounded-full" data-testid="rsvps-view-by-member">By member</TabsTrigger>
+                    <TabsTrigger value="by_chapter" className="rounded-full" data-testid="rsvps-view-by-chapter">By chapter</TabsTrigger>
+                    <TabsTrigger value="by_period" className="rounded-full" data-testid="rsvps-view-by-period">By period</TabsTrigger>
+                </TabsList>
+            </Tabs>
+
+            {summary && (
+                <div className="grid sm:grid-cols-3 gap-3 mt-4" data-testid="rsvps-summary-totals">
+                    <Stat label="RSVPs" value={summary.totals?.rsvp_count} />
+                    <Stat label="Guests" value={summary.totals?.guest_count} />
+                    <Stat label="Checked in" value={summary.totals?.checked_in_count} />
+                </div>
+            )}
+
+            <div className="bg-card rounded-2xl border overflow-x-auto mt-4">
+                {view === "entries" && (
+                    <table className="w-full text-sm">
+                        <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                            <tr>
+                                <th className="text-left px-4 py-2.5">Event</th>
+                                <th className="text-left px-4 py-2.5">Member</th>
+                                <th className="text-left px-4 py-2.5">RSVPed</th>
+                                <th className="text-left px-4 py-2.5">Ticket</th>
+                                <th className="text-left px-4 py-2.5">Checked in</th>
+                                <th className="text-left px-4 py-2.5">Guests</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            {visibleRows.map((r) => (
+                                <tr key={r.rsvp_id} className="border-t border-border align-top" data-testid={`rsvps-report-row-${r.rsvp_id}`}>
+                                    <td className="px-4 py-2.5">
+                                        <div className="font-medium">{r.event_title}</div>
+                                        {r.event_start_at && <div className="text-xs text-muted-foreground">{format(parseISO(r.event_start_at), "MMM d, yyyy")}</div>}
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                        <div>{r.user_name}</div>
+                                        {r.chapter_name && <div className="text-[11px] text-muted-foreground">{r.chapter_name}</div>}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">{r.rsvped_at ? format(parseISO(r.rsvped_at), "MMM d, yyyy h:mm a") : "—"}</td>
+                                    <td className="px-4 py-2.5">{r.ticket_type ? <span className="text-xs uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary">{r.ticket_type.replace("_", " ")}</span> : <span className="text-xs text-muted-foreground italic">—</span>}</td>
+                                    <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{r.checked_in_at ? format(parseISO(r.checked_in_at), "MMM d, h:mm a") : "—"}</td>
+                                    <td className="px-4 py-2.5">
+                                        <div className="font-semibold">{r.guest_count}</div>
+                                        {(r.guests || []).length > 0 && <div className="text-xs text-muted-foreground leading-snug">{r.guests.map((g) => g.name).join(", ")}</div>}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+                {view === "by_member" && (
+                    <table className="w-full text-sm">
+                        <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                            <tr>
+                                <th className="text-left px-4 py-2.5">Member</th>
+                                <th className="text-left px-4 py-2.5">Chapter</th>
+                                <th className="text-right px-4 py-2.5">RSVPs</th>
+                                <th className="text-right px-4 py-2.5">Guests</th>
+                                <th className="text-right px-4 py-2.5">Checked in</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map((r) => (
+                                <tr key={r.user_id} className="border-t border-border" data-testid={`rsvps-summary-member-${r.user_id}`}>
+                                    <td className="px-4 py-2.5">{r.user_name}</td>
+                                    <td className="px-4 py-2.5 text-muted-foreground">{r.chapter_name || "Unassigned"}</td>
+                                    <td className="px-4 py-2.5 text-right font-semibold">{r.rsvp_count}</td>
+                                    <td className="px-4 py-2.5 text-right">{r.guest_count}</td>
+                                    <td className="px-4 py-2.5 text-right">{r.checked_in_count}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+                {view === "by_chapter" && (
+                    <table className="w-full text-sm">
+                        <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                            <tr>
+                                <th className="text-left px-4 py-2.5">Chapter</th>
+                                <th className="text-right px-4 py-2.5">RSVPs</th>
+                                <th className="text-right px-4 py-2.5">Guests</th>
+                                <th className="text-right px-4 py-2.5">Checked in</th>
+                                <th className="text-right px-4 py-2.5">Members</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map((r, i) => (
+                                <tr key={r.chapter_id || `unassigned-${i}`} className="border-t border-border" data-testid={`rsvps-summary-chapter-${r.chapter_id || "unassigned"}`}>
+                                    <td className="px-4 py-2.5">{r.chapter_name}</td>
+                                    <td className="px-4 py-2.5 text-right font-semibold">{r.rsvp_count}</td>
+                                    <td className="px-4 py-2.5 text-right">{r.guest_count}</td>
+                                    <td className="px-4 py-2.5 text-right">{r.checked_in_count}</td>
+                                    <td className="px-4 py-2.5 text-right">{r.member_count}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+                {view === "by_period" && (
+                    <table className="w-full text-sm">
+                        <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                            <tr>
+                                <th className="text-left px-4 py-2.5">Period</th>
+                                <th className="text-right px-4 py-2.5">RSVPs</th>
+                                <th className="text-right px-4 py-2.5">Guests</th>
+                                <th className="text-right px-4 py-2.5">Checked in</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map((r) => (
+                                <tr key={r.period_key} className="border-t border-border" data-testid={`rsvps-summary-period-${r.period_key}`}>
+                                    <td className="px-4 py-2.5">{r.period_label}</td>
+                                    <td className="px-4 py-2.5 text-right font-semibold">{r.rsvp_count}</td>
+                                    <td className="px-4 py-2.5 text-right">{r.guest_count}</td>
+                                    <td className="px-4 py-2.5 text-right">{r.checked_in_count}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
             </div>
         </div>
     );

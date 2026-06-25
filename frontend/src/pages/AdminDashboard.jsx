@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { Users, Calendar, DollarSign, TrendingUp, AlertCircle, Newspaper, FileText, Sparkles, Clock, Trophy, Image as ImageIcon, Inbox, Check, X, UserPlus, AlertTriangle } from "lucide-react";
+import { Users, Calendar, DollarSign, TrendingUp, AlertCircle, Newspaper, FileText, Sparkles, Clock, Trophy, Image as ImageIcon, Inbox, Check, X, UserPlus, AlertTriangle, Ticket } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
 import { fmtET } from "../lib/eventTime";
@@ -300,6 +300,7 @@ function InboxPanel({ inbox, onAction }) {
         { key: "hours", label: "Hours to review", count: inbox.hours_to_review.length, icon: Clock },
         { key: "grace", label: "In grace", count: inbox.in_grace.length, icon: AlertTriangle },
         { key: "new", label: "New members (7d)", count: inbox.new_members.length, icon: UserPlus },
+        { key: "tickets", label: "Zeffy event tickets", count: (inbox.pending_event_tickets || []).length, icon: Ticket },
     ];
 
     return (
@@ -408,6 +409,36 @@ function InboxPanel({ inbox, onAction }) {
                                     </div>
                                 );
                             })}
+                        </div>
+                    )
+                )}
+                {tab === "tickets" && (
+                    !inbox.pending_event_tickets || inbox.pending_event_tickets.length === 0 ? (
+                        <EmptyInbox icon={<Ticket className="h-8 w-8" />} message="No Zeffy event-ticket payments awaiting review." />
+                    ) : (
+                        <div className="space-y-2">
+                            {inbox.pending_event_tickets.map((t) => (
+                                <div key={t.id} className="flex items-start gap-3 p-3 rounded-xl hover:bg-muted/50 border border-emerald-200 bg-emerald-50/50" data-testid={`inbox-ticket-${t.id}`}>
+                                    <div className="w-10 h-10 rounded-full bg-emerald-200 text-emerald-800 grid place-items-center shrink-0"><Ticket className="h-5 w-5" /></div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-semibold">{t.user_name} <span className="text-muted-foreground font-normal">submitted a Zeffy receipt</span></div>
+                                        <div className="text-xs text-muted-foreground mt-0.5">
+                                            {t.event_title} · ${Number(t.amount || 0).toFixed(2)}
+                                            {t.zeffy_confirmation ? ` · Conf #${t.zeffy_confirmation}` : ""}
+                                        </div>
+                                        <div className="text-[11px] text-muted-foreground mt-0.5">
+                                            Submitted {t.created_at && format(parseISO(t.created_at), "MMM d, h:mm a")}
+                                        </div>
+                                    </div>
+                                    <Link
+                                        to={`/reports?tab=event_tickets`}
+                                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
+                                        data-testid={`inbox-ticket-review-${t.id}`}
+                                    >
+                                        Review →
+                                    </Link>
+                                </div>
+                            ))}
                         </div>
                     )
                 )}

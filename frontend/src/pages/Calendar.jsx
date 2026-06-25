@@ -101,13 +101,23 @@ export default function CalendarPage() {
                 ) : (
                     <div className="space-y-2">
                         {events.map((e) => (
-                            <Link key={e.id} to={`/events/${e.id}`} className="flex items-center gap-4 p-4 bg-white rounded-2xl border border-slate-200 hover:border-slate-400 transition-colors" data-testid={`cal-event-${e.id}`}>
-                                <div className="text-center px-3 py-1 rounded-xl text-white font-bold shrink-0" style={{ backgroundColor: NAVY }}>
+                            <Link key={e.id} to={`/events/${e.id}`} className={`flex items-center gap-4 p-4 bg-white rounded-2xl border transition-colors ${e.cancelled ? "border-red-300 bg-red-50/40 hover:border-red-400" : "border-slate-200 hover:border-slate-400"}`} data-testid={`cal-event-${e.id}`}>
+                                <div className={`text-center px-3 py-1 rounded-xl text-white font-bold shrink-0 ${e.cancelled ? "opacity-60" : ""}`} style={{ backgroundColor: e.cancelled ? "#991B1B" : NAVY }}>
                                     <div className="text-[10px] uppercase">{fmtET(e.start_at, "MMM")}</div>
                                     <div className="text-xl font-black -mt-1">{fmtET(e.start_at, "d")}</div>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <div className="font-heading font-bold" style={{ color: NAVY }}>{e.title}</div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <div className={`font-heading font-bold ${e.cancelled ? "line-through opacity-70" : ""}`} style={{ color: NAVY }}>{e.title}</div>
+                                        {e.cancelled && (
+                                            <span
+                                                className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-red-600 text-white"
+                                                data-testid={`cal-event-cancelled-${e.id}`}
+                                            >
+                                                ● Cancelled
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-3 flex-wrap">
                                         <span><CalIcon className="h-3 w-3 inline" /> {fmtET(e.start_at, "h:mm a zzz")}</span>
                                         {e.location && <span><MapPin className="h-3 w-3 inline" /> {e.location}</span>}

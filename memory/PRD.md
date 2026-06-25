@@ -15,6 +15,14 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 81 — Reports RSVPs parity + cancellation emails + admin inbox tickets (2026-02-24)
+- **Reports → RSVPs filter parity** (Task A): `RsvpsReport` in `pages/Reports.jsx` now matches Hours/Donations — Year (incl. "All Years"), Period (Q1-Q4, Jan-Dec), Parent event, Sub-event, Ticket type filters + 4 view pills (Individual entries / By member / By chapter / By period). Backend `/api/reports/rsvps` accepts `year, quarter, month, ticket_type, parent_event_id, event_id`; new `/api/reports/rsvps/summary?group_by=member|chapter|period` returns totals + buckets.
+- **Calendar "This month at a glance" cancelled label** (Task B): cancelled events now render with a red border, struck-through title, and a `● Cancelled` pill (`data-testid="cal-event-cancelled-{id}"`).
+- **Cancellation email fan-out** (Task B): `routes/events.py` PUT cascade now schedules a Resend email to every RSVP'd member + guests-with-email via `_send_cancellation_emails()`. Fire-and-forget asyncio task — never blocks the API response. Skips silently when `RESEND_API_KEY` isn't configured. De-dups recipients across umbrella + child events (one email per member).
+- **Per-sub-event check-in** (Task C): already supported architecturally — each sub-event renders its own `<CheckInPanel eventId={subId}>` so check-ins are scoped per event. Confirmed by iter79's test coverage; no code changes needed.
+- **Zeffy payment visibility** (Task D): `/api/admin/stats` inbox now exposes `inbox.pending_event_tickets[]` (newest 20). `AdminDashboard.jsx` InboxPanel surfaces them as a "Zeffy event tickets" tab with the submitter, event, amount, Zeffy confirmation #, and a "Review →" link to `/reports?tab=event_tickets`.
+- **Tests**: `test_iteration81_reports_cancel_inbox.py` — 8/8 pass. Full regression iter74-81 → **34/34 green**.
+
 ### Iteration 80 — Sub-events accept free / Zeffy-paid / external-link modes (2026-02-24)
 - **Frontend `Admin.jsx`**: The sub-event draft form (used when creating a new parent + sub-events together) now exposes a compact 3-option RSVP/payment mode selector (Free RSVP / Paid via Zeffy / External link), mirroring the parent's selector. Selecting Zeffy reveals payment URL + amount inputs; selecting External reveals URL + button-label inputs.
 - **Save path**: `is_paid`, `payment_url`, `payment_amount`, `external_url`, `external_button_label` are now included on every sub-event POST so the umbrella's child events can independently be free, paid (Zeffy), or external-link-driven. Editing an existing sub-event via the standard event-edit dialog already exposed these — only the bulk-draft form lacked them.
