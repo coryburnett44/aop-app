@@ -288,6 +288,22 @@ function InboxPanel({ inbox, onAction }) {
             onAction();
         } catch { toast.error("Failed"); }
     }
+    async function approveEventTicket(tx) {
+        if (!window.confirm(`Approve ${tx.user_name}'s ticket for "${tx.event_title}" ($${Number(tx.amount || 0).toFixed(2)})?\n\nAn RSVP will be created and the QR ticket emailed to them.`)) return;
+        try {
+            await api.put(`/transactions/${tx.id}/approve-event-ticket`);
+            toast.success("Approved — ticket emailed");
+            onAction();
+        } catch (e) { toast.error(e.response?.data?.detail || "Approval failed"); }
+    }
+    async function rejectEventTicket(tx) {
+        if (!window.confirm(`Reject ${tx.user_name}'s payment for "${tx.event_title}"?\n\nThe pending transaction will be permanently deleted. They'll need to re-submit if this was a mistake.`)) return;
+        try {
+            await api.delete(`/transactions/${tx.id}`);
+            toast.success("Pending transaction deleted");
+            onAction();
+        } catch (e) { toast.error(e.response?.data?.detail || "Delete failed"); }
+    }
     async function extendMember(uid) {
         try {
             await api.put(`/members/${uid}/tier`, { tier_id: null, extend_days: 365 });
@@ -430,13 +446,29 @@ function InboxPanel({ inbox, onAction }) {
                                             Submitted {t.created_at && format(parseISO(t.created_at), "MMM d, h:mm a")}
                                         </div>
                                     </div>
-                                    <Link
-                                        to={`/reports?tab=event_tickets`}
-                                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline whitespace-nowrap"
-                                        data-testid={`inbox-ticket-review-${t.id}`}
-                                    >
-                                        Review →
-                                    </Link>
+                                    <div className="flex flex-col gap-1.5 shrink-0">
+                                        <button
+                                            onClick={() => approveEventTicket(t)}
+                                            className="inline-flex items-center gap-1 text-xs font-semibold rounded-full px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                                            data-testid={`inbox-ticket-approve-${t.id}`}
+                                        >
+                                            <Check className="h-3.5 w-3.5" /> Approve
+                                        </button>
+                                        <button
+                                            onClick={() => rejectEventTicket(t)}
+                                            className="inline-flex items-center gap-1 text-xs font-semibold rounded-full px-3 py-1.5 bg-white border border-red-300 text-red-700 hover:bg-red-50 transition-colors"
+                                            data-testid={`inbox-ticket-reject-${t.id}`}
+                                        >
+                                            <X className="h-3.5 w-3.5" /> Reject
+                                        </button>
+                                        <Link
+                                            to={`/reports?tab=event_tickets`}
+                                            className="text-[10px] text-emerald-700 hover:text-emerald-900 underline text-center"
+                                            data-testid={`inbox-ticket-review-${t.id}`}
+                                        >
+                                            Open in Reports →
+                                        </Link>
+                                    </div>
                                 </div>
                             ))}
                         </div>

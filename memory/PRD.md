@@ -15,6 +15,11 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 83 — Inline Approve/Reject on Zeffy event-ticket inbox tab (2026-02-24)
+- **Frontend `AdminDashboard.jsx`**: Each pending Zeffy ticket row in the inbox now has inline **Approve** (emerald) and **Reject** (red outline) buttons + a smaller "Open in Reports →" secondary link. Approve calls `PUT /api/transactions/{id}/approve-event-ticket` (creates RSVP + emails QR ticket); Reject calls `DELETE /api/transactions/{id}` (removes the pending row). Both show a `window.confirm` with the submitter + event + amount + Zeffy conf # so the admin sees the full context before acting.
+- **Tests**: `test_iteration83_inbox_inline_buttons.py` — 2/2 pass (Reject removes from inbox + underlying DB; Approve endpoint stays wired for missing tx).
+- Full regression iter74-83 → **39/39 green**.
+
 ### Iteration 82 — Quick family check-in + umbrella payment hide + Photos modularization (2026-02-24)
 - **Quick "Family" check-in mode (Task 1)**: `EventDetail.jsx` CheckInDialog gains a 3rd tab "Quick · Family". Shows every member RSVP grouped with their guests; tap the family header to multi-select member + all their guests (the common "family arriving together" pattern) or check individual rows. Submit fires sequential `/check-in` POSTs and reports `Checked in N · M failed` via toast.
 - **Hide payment-mode selector on umbrella parents (Task 2)**: `Admin.jsx` event editor now detects umbrellas via `subDrafts.length > 0 || existingChildrenCount > 0` (loads `/events/{id}/sub-events` once on mount for existing events) and replaces the Free/Zeffy/External card with a dashed-border note "Payment / Tickets · configured per sub-event". Eliminates the dead-config footgun.
