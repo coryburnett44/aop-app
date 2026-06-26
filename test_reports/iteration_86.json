@@ -1,0 +1,31 @@
+{
+  "summary": "Verified iter85 RSVP year/quarter/month filter bug-fix on /api/reports/rsvps and /api/reports/rsvps/summary. The filter now correctly buckets by RSVP.created_at (rsvped_at) instead of events.start_at — matching Hours/Donations semantics. Backend curl results, regression pytest, and Playwright UI all confirm the fix on the deployed preview URL.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verification_results": {
+    "curl_no_params": "7 rows (full table)",
+    "curl_year_2026": "7 rows (was 1 before fix) — months: ['2026-06']",
+    "curl_year_2026_quarter_2": "7 rows (was 0 before fix) — all rsvped_at in Jun-2026 (Q2)",
+    "curl_year_2026_quarter_1": "0 rows (correct — no RSVPs placed in Q1 2026)",
+    "curl_year_2026_month_6": "7 rows — months: ['2026-06']",
+    "curl_summary_period_year_2026": "single bucket period_key='2026-06' with rsvp_count=7 (period buckets correctly keyed by rsvped_at month, not event start month)",
+    "pytest_iter81_rsvps": "8/8 passed (test_iteration81_reports_cancel_inbox.py — no regression)",
+    "playwright_ui": "Logged in as admin, navigated /admin?tab=reports → RSVPs sub-tab. Year=2026 alone → 7 rows. Year=2026 + Period=Q2 → 7 rows (matches backend). RSVPED column shows Jun 2026 dates while EVENT column shows Jul/Oct 2027 events — confirms filter is keyed off rsvped_at, not event.start_at."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration81_reports_cancel_inbox.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "reports.py is 1313 lines — over the 700-line guideline. Consider splitting into per-resource sub-routers (members, rsvps, hours, donations, dues, brief) in a future refactor. iter84 modularization smoke test still passes so structural debt is non-blocking.",
+    "report_rsvps_summary() doc-string at line 183 still says 'month buckets keyed by event date'. Update to 'keyed by rsvped_at month' to match the iter85 semantic change. Minor doc-only nit."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@clubhaven.app / Admin123!",
+  "seed_data_creation": "None — used existing 7 RSVPs in the preview DB (all in Jun-2026).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter85 fix is correct and verified. Existing iter81 RSVP tests still pass and validate the filter contract (no new pytest file added per main-agent instruction). If touching reports.py again, also fix the stale doc-string at line 183 (says 'event date' but it now means 'rsvped_at'). Reports page lives at /admin?tab=reports; RSVPs sub-tab testid is `reports-tab-rsvps` (NOT `rsvps-report` which is the panel container). Year/Period filters use Radix Select — open trigger then click `[role=option]:has-text(...)`.",
+  "rca of the issue": "Root cause: report_rsvps() applied period_to_range(year,quarter,month) against events.start_at, so RSVPs to events scheduled outside the picked year/quarter were dropped — user saw '1 row for 2026' and '0 rows for any quarter' because most of their events are scheduled in 2027 even though all 7 RSVPs were placed in Jun-2026. Fix: change the filter target to rsvps.created_at and update report_rsvps_summary by_period bucket key to rsvped_at[:7]. Verified by curl row counts (1→7 and 0→7) and Playwright UI inspection (RSVPED column dates fall in the selected window, EVENT dates do not)."
+}

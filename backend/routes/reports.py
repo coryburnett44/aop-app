@@ -101,34 +101,38 @@ def register(
         month: Optional[int] = None,
         admin: dict = Depends(admin_tab_dep("reports")),
     ):
-        # Period filter is applied to the event's start_at (RSVPs are bucketed
-        # by the event they belong to, not by when the member clicked RSVP).
+        # Period filter is applied to the RSVP's `created_at` (when the member
+        # actually placed the RSVP) — matches the Hours/Donations semantic where
+        # filtering by year/quarter shows ACTIVITY in that window, not events
+        # whose date falls in that window. iter85 user bug: filtering by event
+        # start_at silently dropped most rows because events span many years
+        # while RSVPs cluster in the current year.
         period_from, period_to = period_to_range(year, quarter, month)
-        event_q: dict = {}
-        if event_id:
-            event_q["id"] = event_id
-        elif parent_event_id:
-            event_q["$or"] = [{"id": parent_event_id}, {"parent_event_id": parent_event_id}]
+        rsvp_q: dict = {}
         if period_from:
-            event_q["start_at"] = {"$gte": period_from, "$lte": period_to}
-        events_for_filter = []
-        if event_q:
-            events_for_filter = await db.events.find(event_q, {"_id": 0, "id": 1, "title": 1, "start_at": 1, "parent_event_id": 1}).to_list(500)
-            event_ids = [e["id"] for e in events_for_filter]
-            if not event_ids:
+            rsvp_q["created_at"] = {"$gte": period_from, "$lte": period_to}
+        if event_id:
+            rsvp_q["event_id"] = event_id
+        elif parent_event_id:
+            matching = await db.events.find(
+                {"$or": [{"id": parent_event_id}, {"parent_event_id": parent_event_id}]},
+                {"_id": 0, "id": 1},
+            ).to_list(500)
+            if not matching:
                 return []
-            rsvp_q: dict = {"event_id": {"$in": event_ids}}
-        else:
-            rsvp_q = {}
+            rsvp_q["event_id"] = {"$in": [e["id"] for e in matching]}
         if is_chapter_scoped(admin):
             chapter_uids = await chapter_scope_user_ids(admin) or []
             rsvp_q["user_id"] = {"$in": chapter_uids}
         cursor = db.rsvps.find(rsvp_q, {"_id": 0}).sort("created_at", -1).limit(5000)
         rsvps = await cursor.to_list(5000)
-        if not events_for_filter:
-            all_event_ids = list({r["event_id"] for r in rsvps})
-            events_for_filter = await db.events.find({"id": {"$in": all_event_ids}}, {"_id": 0, "id": 1, "title": 1, "start_at": 1, "parent_event_id": 1}).to_list(2000)
-        event_by_id = {e["id"]: e for e in events_for_filter}
+        # Load event metadata for display only (no longer used to filter).
+        all_event_ids = list({r["event_id"] for r in rsvps})
+        events_for_display = await db.events.find(
+            {"id": {"$in": all_event_ids}},
+            {"_id": 0, "id": 1, "title": 1, "start_at": 1, "parent_event_id": 1},
+        ).to_list(2000) if all_event_ids else []
+        event_by_id = {e["id"]: e for e in events_for_display}
         # Pre-load chapter info for "by chapter" summaries downstream.
         uids = list({r["user_id"] for r in rsvps})
         user_docs = await db.users.find({"id": {"$in": uids}}, {"_id": 0, "id": 1, "chapter_id": 1, "name": 1}).to_list(len(uids)) if uids else []
@@ -224,10 +228,13 @@ def register(
                 })
             out_rows.sort(key=lambda r: r["rsvp_count"], reverse=True)
         else:
-            # by period — bucket by event-start month (YYYY-MM)
+            # by period — bucket by RSVP creation month (YYYY-MM). Matches the
+            # iter85 fix where the row filter is also keyed off rsvped_at,
+            # so the buckets visible here line up with the rows in the
+            # "Individual entries" view.
             buckets: dict = {}
             for r in rows:
-                ds = (r.get("event_start_at") or "")[:7]  # YYYY-MM
+                ds = (r.get("rsvped_at") or "")[:7]  # YYYY-MM
                 if not ds:
                     continue
                 buckets.setdefault(ds, {"label": ds, "rsvp_count": 0, "guest_count": 0, "checked_in_count": 0})
