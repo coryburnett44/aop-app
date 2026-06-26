@@ -793,23 +793,32 @@ def register(
         # Styles tuned for a dense ORB feel — small, all-caps, deliberate.
         h_name = ParagraphStyle("AopName", parent=styles["Heading1"], textColor=AOP_NAVY, fontSize=18, leading=20, spaceAfter=1, alignment=TA_LEFT)
         h_meta = ParagraphStyle("AopMeta", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#333333"))
-        # ORB-style section bar: tight, bold ALL CAPS on a navy strip.
-        orb_section = ParagraphStyle(
-            "OrbSection", parent=styles["Heading2"],
-            textColor=colors.white, backColor=AOP_NAVY,
-            fontName="Helvetica-Bold",
-            fontSize=9, leading=11, leftIndent=4, rightIndent=4,
-            spaceBefore=6, spaceAfter=3, borderPadding=3,
+        # Section-bar title style used INSIDE the navy bar Table cell.
+        section_title = ParagraphStyle(
+            "OrbSectionTitle", parent=styles["BodyText"],
+            textColor=colors.white, fontName="Helvetica-Bold",
+            fontSize=9, leading=11, alignment=TA_LEFT,
         )
-        # Same look but used for the detail pages (slightly larger header so
-        # readers know they switched from summary → detail).
-        section = ParagraphStyle(
-            "Section", parent=styles["Heading2"],
-            textColor=colors.white, backColor=AOP_NAVY,
-            fontName="Helvetica-Bold",
-            fontSize=11, leading=14, leftIndent=6, rightIndent=6,
-            spaceBefore=10, spaceAfter=5, borderPadding=4,
-        )
+
+        def orb_section_bar(label_html: str):
+            """Render a section bar as a navy-filled Table cell with white text.
+            More reliable than Paragraph(backColor=…) inside column sub-tables,
+            which was occasionally rendering the bar but losing the title text
+            (iter85 bug)."""
+            t = Table(
+                [[Paragraph(label_html, section_title)]],
+                colWidths=[3.2 * inch],
+            )
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), AOP_NAVY),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            return t
+
         body_style = ParagraphStyle("AopBody", parent=styles["BodyText"], fontSize=9, leading=12)
         tiny = ParagraphStyle("AopTiny", parent=styles["BodyText"], fontSize=7.5, leading=10)
         small = ParagraphStyle("AopSmall", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#666666"))
@@ -950,7 +959,7 @@ def register(
 
         # ---- COL 1: PERSONAL DATA + EDUCATION + LANGUAGES ----
         col1: list = []
-        col1.append(Paragraph("SECTION I &mdash; PERSONAL DATA", orb_section))
+        col1.append(orb_section_bar("SECTION I &mdash; PERSONAL DATA"))
         col1.append(orb_kvp([
             ["ADDRESS", m.get("address") or "—"],
             ["CITY", m.get("city") or "—"],
@@ -961,13 +970,13 @@ def register(
             ["MARITAL", m.get("marital_status") or "—"],
         ]))
         degrees = sorted(list(m.get("civilian_degrees") or []), key=lambda d: -(d.get("graduation_year") or 0))[:3]
-        col1.append(Paragraph(f"SECTION II &mdash; EDUCATION ({len(m.get('civilian_degrees') or [])} TOTAL)", orb_section))
+        col1.append(orb_section_bar(f"SECTION II &mdash; EDUCATION ({len(m.get('civilian_degrees') or []) } TOTAL)"))
         if degrees:
             col1.append(orb_list([[Paragraph(f"<b>{(d.get('degree_level') or '—').upper()}</b> &middot; {(d.get('field_of_study') or '—')}<br/><font color='#666666'>{(d.get('institution') or '—')} &middot; {d.get('graduation_year') or '—'}</font>", tiny)] for d in degrees]))
         else:
             col1.append(Paragraph("<i>None on record.</i>", tiny))
         langs = sorted(list(m.get("languages") or []), key=lambda lg: -(lg.get("year_accomplished") or 0))[:3]
-        col1.append(Paragraph(f"SECTION III &mdash; LANGUAGES ({len(m.get('languages') or [])} TOTAL)", orb_section))
+        col1.append(orb_section_bar(f"SECTION III &mdash; LANGUAGES ({len(m.get('languages') or []) } TOTAL)"))
         if langs:
             col1.append(orb_list([[Paragraph(f"<b>{(lg.get('language') or '—').upper()}</b> &middot; S:{lg.get('speaking') or '—'} R:{lg.get('reading') or '—'} W:{lg.get('writing') or '—'}", tiny)] for lg in langs]))
         else:
@@ -991,7 +1000,7 @@ def register(
         awards_title = "SECTION IV &mdash; AWARDS &amp; DECORATIONS"
         if awards_extra:
             awards_title += f" (TOP 10 OF {len(grouped_sorted)})"
-        col2.append(Paragraph(awards_title, orb_section))
+        col2.append(orb_section_bar(awards_title))
         if awards_top:
             aw_lines = []
             for row in awards_top:
@@ -1009,7 +1018,7 @@ def register(
         oty_title = "SECTION V &mdash; OF THE YEAR HONORS"
         if oty_count > 7:
             oty_title += f" (LAST 7 OF {oty_count})"
-        col2.append(Paragraph(oty_title, orb_section))
+        col2.append(orb_section_bar(oty_title))
         if oty_recent:
             oty_lines = []
             for o in oty_recent:
@@ -1031,7 +1040,7 @@ def register(
         asn_title = "SECTION VI &mdash; ASSIGNMENT HISTORY"
         if len(sorted_asn) > 4:
             asn_title += f" (RECENT 4 OF {len(sorted_asn)})"
-        col3.append(Paragraph(asn_title, orb_section))
+        col3.append(orb_section_bar(asn_title))
         if assignments_top:
             asn_lines = []
             for a in assignments_top:
@@ -1046,7 +1055,7 @@ def register(
         else:
             col3.append(Paragraph("<i>None on record.</i>", tiny))
 
-        col3.append(Paragraph("SECTION VII &mdash; SERVICE STATISTICS", orb_section))
+        col3.append(orb_section_bar("SECTION VII &mdash; SERVICE STATISTICS"))
         cy_hours = sum(h.get("hours", 0) for h in (data.get("hours") or []) if (h.get("date") or "")[:4] == str(current_year) and h.get("status") == "approved")
         lifetime_hours = float(data.get("approved_hours") or 0)
         events_cy_count = sum(1 for c in (data.get("checkins") or []) if (c.get("checked_in_at") or "")[:4] == str(current_year))
@@ -1060,7 +1069,7 @@ def register(
             ["OTY HONORS", str(oty_count)],
         ]))
 
-        col3.append(Paragraph(f"SECTION VIII &mdash; RECENT EVENTS ({current_year})", orb_section))
+        col3.append(orb_section_bar(f"SECTION VIII &mdash; RECENT EVENTS ({current_year})"))
         event_lookup = {e["id"]: e for e in (data.get("events") or [])}
         cy_checkins = [c for c in (data.get("checkins") or []) if (c.get("checked_in_at") or "")[:4] == str(current_year)]
         seen_events: set = set()
@@ -1101,131 +1110,17 @@ def register(
         elements.append(body_tbl)
         elements.append(Spacer(1, 4))
         elements.append(Paragraph(
-            f"PERSONNEL BRIEF &middot; {(title_name or '').upper()} &middot; PAGE 1 OF DETAIL FOLLOWS &middot; ALPHA OMEGA PHI MILITARY FRATERNITY &amp; SORORITY, INC.",
+            f"PERSONNEL BRIEF &middot; {(title_name or '').upper()} &middot; GENERATED {data['generated_at'][:10]} &middot; ALPHA OMEGA PHI MILITARY FRATERNITY &amp; SORORITY, INC.",
             ParagraphStyle("Foot", parent=small, alignment=TA_LEFT, fontSize=7, leading=8, textColor=colors.HexColor("#888888")),
         ))
 
-        # -------------------- Detail pages (landscape, full data) --------------------
-        elements.append(PageBreak())
+        # Personnel Brief is a strict one-pager (iter85 user spec) — no detail
+        # attachments. The 3-column ORB grid above carries everything that
+        # used to live on pages 2+; degrees / languages / awards are capped to
+        # the top-N most-recent rows with an "(N TOTAL)" / "(TOP X OF Y)"
+        # annotation so admins know to consult the in-app Personnel Brief view
+        # if they need the full history.
 
-        def data_table(headers, rows, col_widths):
-            if not rows:
-                return Paragraph("<i>No entries.</i>", small)
-            t = Table([headers] + rows, colWidths=col_widths, hAlign="LEFT")
-            t.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0EBE3")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONT", (0, 0), (-1, -1), "Helvetica", 8.5),
-                ("TEXTCOLOR", (0, 0), (-1, 0), AOP_NAVY),
-                ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#EFEFEF")),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ]))
-            return t
-
-        # SECTION III — CIVILIAN EDUCATION (full list)
-        elements.append(Paragraph("SECTION III &mdash; CIVILIAN EDUCATION (FULL)", section))
-        all_degrees = sorted(list(m.get("civilian_degrees") or []), key=lambda d: (d.get("graduation_year") or 0, d.get("graduation_month") or 0))
-        deg_rows = []
-        for d in all_degrees:
-            month = d.get("graduation_month")
-            month_label = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][month - 1] if month and 1 <= month <= 12 else ""
-            grad = f"{month_label} {d.get('graduation_year') or ''}".strip() or "—"
-            deg_rows.append([d.get("degree_level") or "—", d.get("degree_type") or "—", d.get("field_of_study") or "—", d.get("institution") or "—", grad])
-        elements.append(data_table(["Level", "Type", "Field of Study", "Institution", "Graduated"], deg_rows, [1.2 * inch, 1.0 * inch, 2.5 * inch, 3.5 * inch, 1.4 * inch]))
-
-        # SECTION IV — LANGUAGES (full list)
-        elements.append(Paragraph("SECTION IV &mdash; LANGUAGE PROFICIENCY (FULL)", section))
-        all_langs = sorted(list(m.get("languages") or []), key=lambda lg: -(lg.get("year_accomplished") or 0))
-        lang_rows = [[lg.get("language") or "—", lg.get("speaking") or "—", lg.get("reading") or "—", lg.get("writing") or "—", str(lg.get("year_accomplished") or "—")] for lg in all_langs]
-        elements.append(data_table(["Language", "Speaking", "Reading", "Writing", "Year"], lang_rows, [1.8 * inch, 1.4 * inch, 1.4 * inch, 1.4 * inch, 1.0 * inch]))
-
-        # SECTION V — FINANCIAL OBLIGATIONS
-        elements.append(Paragraph("SECTION V &mdash; FINANCIAL OBLIGATIONS (ANNUAL DUES)", section))
-        dues = [t for t in (data.get("transactions") or []) if t.get("purpose") == "dues" or t.get("type") == "renewal"]
-        dues_rows = [[(t.get("created_at") or "")[:10], f"${t.get('amount', 0):.2f}", (t.get("status") or "—").upper(), (t.get("description") or "—")[:70]] for t in dues]
-        elements.append(data_table(["Date", "Amount", "Status", "Description"], dues_rows, [1.1 * inch, 1.0 * inch, 1.1 * inch, 6.0 * inch]))
-
-        # SECTION VI — DONATIONS
-        elements.append(Paragraph("SECTION VI &mdash; DONATIONS", section))
-        donations = [t for t in (data.get("transactions") or []) if t.get("type") == "donation"]
-        don_rows = [[(t.get("created_at") or "")[:10], (t.get("description") or "General fund")[:70], f"${t.get('amount', 0):.2f}"] for t in donations]
-        elements.append(data_table(["Date", "Cause", "Amount"], don_rows, [1.2 * inch, 6.7 * inch, 1.3 * inch]))
-
-        # SECTION VII — COMMUNITY SERVICE
-        elements.append(Paragraph(f"SECTION VII &mdash; COMMUNITY SERVICE ({current_year})", section))
-        hours = [h for h in (data.get("hours") or []) if (h.get("date") or "")[:4] == str(current_year)]
-        hr_rows = [[h.get("agency_name") or "—", (h.get("event_type") or "other").replace("_", " ").title(), f"{h.get('hours', 0):.2f}", (h.get("status") or "—").upper(), (h.get("date") or "")[:10]] for h in hours]
-        elements.append(data_table(["Agency", "Event Type", "Hours", "Status", "Date"], hr_rows, [3.0 * inch, 2.0 * inch, 1.0 * inch, 1.4 * inch, 1.6 * inch]))
-
-        # SECTION VIII — AWARDS & DECORATIONS (full list)
-        elements.append(Paragraph("SECTION VIII &mdash; AWARDS &amp; DECORATIONS (FULL)", section))
-        aw_rows = []
-        for row in grouped_sorted:
-            cnt = int(row.get("count") or 1)
-            ordinal_label = {1: "1st Award", 2: "2nd Award", 3: "3rd Award"}.get(cnt, f"{cnt}th Award")
-            suffix = f" (× {cnt})" if cnt > 1 else ""
-            aw_rows.append([row.get("award_name") or "—", ordinal_label + suffix, (row.get("last_granted_at") or "")[:10]])
-        elements.append(data_table(["Award", "Order", "Latest Date"], aw_rows, [5.0 * inch, 2.5 * inch, 2.5 * inch]))
-
-        # SECTION IX — OF THE YEAR HONORS (full list)
-        oty_all = data.get("of_the_year") or []
-        oty_label = "SECTION IX &mdash; OF THE YEAR HONORS"
-        if len(oty_all) > 7:
-            oty_label += f" (FULL LIST &mdash; {len(oty_all)} TOTAL)"
-        elements.append(Paragraph(oty_label, section))
-        if not oty_all:
-            elements.append(Paragraph("<i>No 'Of The Year' honors on record.</i>", small))
-        else:
-            oty_rows = [[str(o.get("year") or "—"), o.get("category_label") or "—", o.get("chapter_name") or "—", o.get("note") or ""] for o in oty_all]
-            elements.append(data_table(["Year", "Category", "Chapter", "Note"], oty_rows, [0.8 * inch, 3.0 * inch, 2.7 * inch, 3.5 * inch]))
-
-        # SECTION X — EVENTS ATTENDED
-        elements.append(Paragraph(f"SECTION X &mdash; EVENTS ATTENDED ({current_year} CHECK-INS)", section))
-        rsvp_lookup = {r.get("event_id"): r for r in (data.get("rsvps") or [])}
-        seen2: set = set()
-        ev_rows = []
-        for c in cy_checkins:
-            eid = c.get("event_id")
-            if eid in seen2:
-                continue
-            seen2.add(eid)
-            ev = event_lookup.get(eid, {})
-            my_rsvp = rsvp_lookup.get(eid, {})
-            ev_rows.append([
-                ev.get("title") or "—",
-                str(len(my_rsvp.get("guests") or [])),
-                (c.get("ticket_type") or my_rsvp.get("ticket_type") or "general").replace("_", " ").title(),
-                (c.get("checked_in_at") or "")[:10],
-            ])
-        elements.append(data_table(["Event", "Guests", "Ticket Type", "Check-in Date"], ev_rows, [5.0 * inch, 1.2 * inch, 2.2 * inch, 1.6 * inch]))
-
-        # SECTION XI — ASSIGNMENT HISTORY (full list)
-        elements.append(Paragraph("SECTION XI &mdash; ASSIGNMENT HISTORY (FULL)", section))
-        full_asn_rows = []
-        for a in sorted_asn:
-            end = "Current" if a.get("is_current") else ((a.get("end_date") or "")[:10] or "—")
-            full_asn_rows.append([
-                (a.get("start_date") or "")[:10] or "—",
-                end,
-                a.get("chapter_name") or "—",
-                a.get("state") or "—",
-                a.get("location") or "—",
-                a.get("duty_title") or "—",
-                a.get("rank") or "—",
-            ])
-        elements.append(data_table(
-            ["Start", "End", "Chapter", "State", "Location", "Duty Title", "Rank"],
-            full_asn_rows,
-            [1.0 * inch, 1.0 * inch, 1.5 * inch, 1.0 * inch, 1.6 * inch, 2.2 * inch, 1.7 * inch],
-        ))
-
-        elements.append(Spacer(1, 10))
-        elements.append(Paragraph(
-            f"Personnel Brief generated {data['generated_at'][:10]} by the Alpha Omega Phi member portal.",
-            small,
-        ))
 
         doc.build(elements)
         buf.seek(0)
