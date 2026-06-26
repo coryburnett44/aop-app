@@ -244,3 +244,58 @@ class TestRsvpLockdown:
             assert r.status_code == 200, r.text
         finally:
             self._cleanup_event(admin_s, ev["id"])
+
+    def test_sub_event_lockdown_is_independent_of_parent(self, admin_s, member_s, member_id):
+        """Iter 89.1: sub-events get the same RSVP lockdown.
+        The parent (umbrella) event refuses direct RSVPs anyway, so the
+        lockdown only matters on the child. Verify the child's rsvps_closed
+        flag blocks the member while the admin-rsvp path still works."""
+        parent = self._create_event(admin_s)
+        try:
+            # Create a sub-event under the parent.
+            r = admin_s.post(
+                f"{BASE_URL}/api/events",
+                json={
+                    "title": f"Iter89 Sub {uuid.uuid4().hex[:6]}",
+                    "description": "",
+                    "location": "online",
+                    "start_at": "2026-11-21T18:00:00Z",
+                    "category": "social",
+                    "parent_event_id": parent["id"],
+                }, timeout=20,
+            )
+            assert r.status_code == 200, r.text
+            sub = r.json()
+            try:
+                # Baseline: member can RSVP to the sub.
+                r = member_s.post(f"{BASE_URL}/api/events/{sub['id']}/rsvp", json={}, timeout=20)
+                assert r.status_code == 200, r.text
+                member_s.post(f"{BASE_URL}/api/events/{sub['id']}/rsvp", json={}, timeout=20)  # cancel
+
+                # Admin closes RSVPs on the SUB ONLY (parent unaffected).
+                r = admin_s.put(
+                    f"{BASE_URL}/api/events/{sub['id']}",
+                    json={"rsvps_closed": True}, timeout=20,
+                )
+                assert r.status_code == 200 and r.json()["rsvps_closed"] is True
+
+                # Parent should still report rsvps_closed=false.
+                p = admin_s.get(f"{BASE_URL}/api/events/{parent['id']}", timeout=20).json()
+                assert p["rsvps_closed"] is False
+
+                # Member self-RSVP on sub → 403.
+                r = member_s.post(f"{BASE_URL}/api/events/{sub['id']}/rsvp", json={}, timeout=20)
+                assert r.status_code == 403, r.text
+
+                # Admin can still RSVP a member onto the locked sub.
+                r = admin_s.post(
+                    f"{BASE_URL}/api/events/{sub['id']}/admin-rsvp",
+                    json={"user_id": member_id, "send_email": False}, timeout=20,
+                )
+                assert r.status_code == 200, r.text
+                assert r.json().get("rsvped") is True
+            finally:
+                admin_s.delete(f"{BASE_URL}/api/events/{sub['id']}/rsvps/{member_id}", timeout=20)
+                admin_s.delete(f"{BASE_URL}/api/events/{sub['id']}", timeout=20)
+        finally:
+            self._cleanup_event(admin_s, parent["id"])

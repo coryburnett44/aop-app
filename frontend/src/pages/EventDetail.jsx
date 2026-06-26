@@ -354,6 +354,7 @@ function SubEventForm({ parentEvent, existing, onDone, onCancel, submitLabel }) 
     const [endAt, setEndAt] = useState(existing?.end_at ? existing.end_at.slice(0, 16) : "");
     const [location, setLocation] = useState(existing?.location ?? parentEvent?.location ?? "");
     const [allowsTicketTypes, setAllowsTicketTypes] = useState(!!existing?.allows_ticket_types);
+    const [rsvpsClosed, setRsvpsClosed] = useState(!!existing?.rsvps_closed);
     const [busy, setBusy] = useState(false);
 
     async function submit(e) {
@@ -371,6 +372,7 @@ function SubEventForm({ parentEvent, existing, onDone, onCancel, submitLabel }) 
                 allows_ticket_types: !!allowsTicketTypes,
             };
             if (isEdit) {
+                payload.rsvps_closed = !!rsvpsClosed;
                 await api.put(`/events/${existing.id}`, payload);
                 toast.success("Sub-event updated");
             } else {
@@ -425,6 +427,27 @@ function SubEventForm({ parentEvent, existing, onDone, onCancel, submitLabel }) 
                 />
                 Allow ticket types (VIP / All Access / General Admission)
             </label>
+            {isEdit && (
+                <div className={`rounded-2xl border-2 p-3 ${rsvpsClosed ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={rsvpsClosed}
+                            onChange={(e) => setRsvpsClosed(e.target.checked)}
+                            className="h-4 w-4 accent-amber-600"
+                            data-testid="sub-event-rsvps-closed-toggle"
+                        />
+                        <span className="font-semibold">
+                            {rsvpsClosed ? "🔒 RSVPs are closed — only admins can add members & guests" : "Close RSVPs (admins-only mode)"}
+                        </span>
+                    </label>
+                    {rsvpsClosed && (
+                        <p className="text-[11px] text-amber-800 mt-1.5 leading-snug pl-6">
+                            Members can no longer RSVP, change their ticket type, edit guests, or cancel their RSVP themselves. Admins keep full access. Uncheck this box to re-open.
+                        </p>
+                    )}
+                </div>
+            )}
             <div className="flex items-center gap-2 pt-1">
                 <button type="submit" disabled={busy} className="rounded-full bg-primary text-white px-5 py-2 text-sm font-bold hover:bg-primary/90 disabled:opacity-50" data-testid="sub-event-submit">
                     {busy ? (isEdit ? "Saving…" : "Creating…") : (submitLabel || (isEdit ? "Save changes" : "Create sub-event"))}
@@ -461,9 +484,18 @@ function SubEventCard({ sub, isAdmin, onChange }) {
                 <div className="text-xs text-muted-foreground mt-1.5">
                     {fmtET(sub.start_at, "EEE, MMM d · h:mm a zzz")}
                 </div>
-                <div className="text-xs mt-2 flex items-center gap-3">
+                <div className="text-xs mt-2 flex items-center gap-3 flex-wrap">
                     <span><Users className="h-3 w-3 inline mr-1" />{sub.rsvp_count} going{sub.guest_count > 0 ? ` +${sub.guest_count} guests` : ""}</span>
                     {sub.allows_ticket_types && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary">Tickets</span>}
+                    {sub.rsvps_closed && !sub.cancelled && (
+                        <span
+                            className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-amber-100 text-amber-900 border border-amber-300"
+                            data-testid={`sub-event-rsvps-closed-pill-${sub.id}`}
+                            title="RSVPs are closed — only admins can add members & guests"
+                        >
+                            🔒 RSVPs closed
+                        </span>
+                    )}
                 </div>
             </Link>
             {isAdmin && (

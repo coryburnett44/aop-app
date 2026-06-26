@@ -15,6 +15,12 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 89.1 — Sub-event RSVP-closed lockdown (2026-02-25) [FOLLOW-UP]
+- **Backend**: nothing new — sub-events are regular event documents so the same `rsvps_closed` enforcement on `POST /events/{id}/rsvp`, `PUT /events/{id}/rsvp/guests`, and `POST /events/{id}/payment/confirm` already protects them.
+- **`EventDetail.jsx` `SubEventForm`**: added a new `sub-event-rsvps-closed-toggle` checkbox in the inline sub-event edit modal (mirrors the main event editor's amber-bordered toggle). PUT payload now includes `rsvps_closed`.
+- **`EventDetail.jsx` `SubEventCard`**: added a small amber `🔒 RSVPs closed` pill (`data-testid=sub-event-rsvps-closed-pill-{id}`) so the lockdown is visible at a glance from the parent event's sub-events panel.
+- **Tests**: extended `test_iteration89_album_rename_and_rsvp_lockdown.py` with `test_sub_event_lockdown_is_independent_of_parent` — verifies the sub's `rsvps_closed=true` blocks member self-RSVP (403), doesn't bleed into the parent's flag, and admin `/admin-rsvp` still creates the RSVP. **All 11/11 in iter89 pass.**
+
 ### Iteration 89 — Photo album rename + RSVP-closed lockdown (2026-02-25) [FEATURE]
 - **Photo album rename** (`routes/photos.py` + `pages/Photos.jsx`):
   - `AlbumUpdateIn` now accepts `name`. PUT validates non-empty, blocks renaming default (`is_default=true`) albums, blocks case-insensitive name collisions across other albums, and cascades the rename to every photo whose `album` field referenced the old name.
