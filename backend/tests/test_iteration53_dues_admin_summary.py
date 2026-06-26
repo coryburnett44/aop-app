@@ -1,10 +1,10 @@
 """
 Iteration 53 — Admin summary email for dues-reminder auto-blast.
 
-Validates `_send_admin_dues_summary` (server.py) in isolation by mocking
-`server.db.users` and `resend_sdk.Emails.send`. We avoid touching the real
-motor client to dodge the cross-event-loop issue when pytest spins up its
-own loop.
+Validates `_send_admin_dues_summary` (routes.automated_emails) in isolation
+by mocking `routes.automated_emails.db.users` (used at call time) and
+`server.resend_sdk.Emails.send`. We avoid touching the real motor client to
+dodge the cross-event-loop issue when pytest spins up its own loop.
 
 Run: pytest /app/backend/tests/test_iteration53_dues_admin_summary.py -v
 """
@@ -18,6 +18,7 @@ import pytest
 
 sys.path.insert(0, "/app/backend")
 server = importlib.import_module("server")
+ae = importlib.import_module("routes.automated_emails")
 
 
 class _FakeUsersCursor:
@@ -65,14 +66,21 @@ def _records(extra=None):
 
 @pytest.fixture
 def fake_env(monkeypatch):
-    """Stub `resend_sdk.Emails.send`, set RESEND_API_KEY, and stub `server.db`
-    with a lightweight object whose `users.find(...)` returns the seeded admins."""
+    """Stub `resend_sdk.Emails.send`, set RESEND_API_KEY (on the module that
+    actually consumes it — routes.automated_emails), and stub the module's
+    `db` with a lightweight object whose `users.find(...)` returns the seeded
+    admins."""
     sent: list[dict] = []
     monkeypatch.setattr(server.resend_sdk.Emails, "send", lambda payload: sent.append(payload) or {"id": f"id-{len(sent)}"})
-    monkeypatch.setattr(server, "RESEND_API_KEY", "test-key", raising=False)
+    monkeypatch.setattr(ae, "RESEND_API_KEY", "test-key", raising=False)
+    monkeypatch.setattr(ae, "resend_sdk", server.resend_sdk, raising=False)
+    monkeypatch.setattr(ae, "RESEND_FROM", "test@local", raising=False)
+    monkeypatch.setattr(ae, "RESEND_REPLY_TO", "test@local", raising=False)
+    monkeypatch.setattr(ae, "now_utc", server.now_utc, raising=False)
+    monkeypatch.setattr(ae, "logger", server.logger, raising=False)
 
     fake_db = types.SimpleNamespace(users=_FakeUsersCollection([]))
-    monkeypatch.setattr(server, "db", fake_db, raising=False)
+    monkeypatch.setattr(ae, "db", fake_db, raising=False)
     return {"sent": sent, "set_admins": lambda docs: setattr(fake_db, "users", _FakeUsersCollection(docs))}
 
 
@@ -82,7 +90,7 @@ def test_admin_summary_sends_one_email_per_admin(fake_env):
         {"id": "a2", "name": "Admin Two", "email": "admin2@example.com"},
     ])
     delivered = asyncio.run(
-        server._send_admin_dues_summary({"id": "builtin_dues_reminders", "name": "Dues reminders"}, _records())
+        ae._send_admin_dues_summary({"id": "builtin_dues_reminders", "name": "Dues reminders"}, _records())
     )
     assert delivered == 2
     sent = fake_env["sent"]
@@ -107,7 +115,7 @@ def test_admin_summary_sends_one_email_per_admin(fake_env):
 def test_admin_summary_noop_on_empty_records(fake_env):
     fake_env["set_admins"]([{"id": "a1", "name": "Admin", "email": "a@x.com"}])
     delivered = asyncio.run(
-        server._send_admin_dues_summary({"id": "c", "name": "n"}, [])
+        ae._send_admin_dues_summary({"id": "c", "name": "n"}, [])
     )
     assert delivered == 0
     assert fake_env["sent"] == []
@@ -116,17 +124,17 @@ def test_admin_summary_noop_on_empty_records(fake_env):
 def test_admin_summary_noop_when_no_admins(fake_env):
     fake_env["set_admins"]([])
     delivered = asyncio.run(
-        server._send_admin_dues_summary({"id": "c", "name": "n"}, _records())
+        ae._send_admin_dues_summary({"id": "c", "name": "n"}, _records())
     )
     assert delivered == 0
     assert fake_env["sent"] == []
 
 
 def test_admin_summary_noop_without_resend_key(fake_env, monkeypatch):
-    monkeypatch.setattr(server, "RESEND_API_KEY", "", raising=False)
+    monkeypatch.setattr(ae, "RESEND_API_KEY", "", raising=False)
     fake_env["set_admins"]([{"id": "a1", "name": "Admin", "email": "a@x.com"}])
     delivered = asyncio.run(
-        server._send_admin_dues_summary({"id": "c", "name": "n"}, _records())
+        ae._send_admin_dues_summary({"id": "c", "name": "n"}, _records())
     )
     assert delivered == 0
     assert fake_env["sent"] == []
@@ -144,7 +152,7 @@ def test_admin_summary_groups_by_stage_label(fake_env):
         }
     ]
     delivered = asyncio.run(
-        server._send_admin_dues_summary({"id": "c", "name": "Dues"}, _records(extra))
+        ae._send_admin_dues_summary({"id": "c", "name": "Dues"}, _records(extra))
     )
     assert delivered == 1
     payload = fake_env["sent"][0]
@@ -168,7 +176,7 @@ def test_admin_summary_escapes_html_in_member_name(fake_env):
         "member_email": "evil@example.com",
         "expires_at": "2026-09-01T00:00:00+00:00",
     }]
-    delivered = asyncio.run(server._send_admin_dues_summary({"id": "c", "name": "n"}, rec))
+    delivered = asyncio.run(ae._send_admin_dues_summary({"id": "c", "name": "n"}, rec))
     assert delivered == 1
     payload = fake_env["sent"][0]
     assert "<script>x</script>" not in payload["html"]

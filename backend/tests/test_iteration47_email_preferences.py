@@ -269,8 +269,9 @@ class TestDuesReminderCronQueryStatic:
         """We can't trigger the dues-reminder cron directly without scheduler
         plumbing — so verify the mongo query includes the new
         `email_prefs.dues_reminders: {$ne: False}` clause AND the existing
-        `email_opt_out: {$ne: True}` clause."""
-        with open("/app/backend/server.py", "r") as f:
+        `email_opt_out: {$ne: True}` clause. The query lives in
+        routes/automated_emails.py since the dues cadence was modularised."""
+        with open("/app/backend/routes/automated_emails.py", "r") as f:
             src = f.read()
         # Strip whitespace for robustness
         compact = re.sub(r"\s+", "", src)
@@ -283,8 +284,9 @@ class TestDuesReminderCronQueryStatic:
 
     def test_resolve_segment_query_uses_email_prefs_blasts(self):
         """Verify resolve_segment filters out members where
-        email_prefs.blasts is False."""
-        with open("/app/backend/server.py", "r") as f:
+        email_prefs.blasts is False. The segment helper lives in
+        routes/email.py since the email-blast extraction."""
+        with open("/app/backend/routes/email.py", "r") as f:
             src = f.read()
         compact = re.sub(r"\s+", "", src)
         assert '"email_prefs.blasts"={"$ne":False}' in compact or \

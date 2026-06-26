@@ -15,6 +15,33 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 88 — Modularization: extract automated_emails out of server.py (2026-02-25)
+- **`routes/automated_emails.py` (new, ~830 lines)**: extracted the entire automated-email subsystem out of `server.py`:
+  - Admin CRUD + preview + run-now endpoints (`GET/POST/PUT/DELETE /api/automated-emails`, `/merge-tags`, `/dues-reminder-defaults`, `/{eid}/preview`, `/{eid}/run-now`).
+  - Broadcast renderer with all 7 merge tags (`{{member_name}}`, `{{upcoming_events}}`, `{{new_photos}}`, `{{new_documents}}`, `{{new_members}}`, `{{my_rsvps}}`, `{{pending_hours}}`, `{{birthday_greeting}}`).
+  - Dues-reminder cadence (30d/15d/5d/+1d) with per-stage editable templates + the admin dues-summary digest (`_send_admin_dues_summary`).
+  - Built-in seeds (`seed_builtin_automated_emails`, `seed_builtin_dues_reminders`) and the 5-minute background runner (`_automated_email_loop`).
+  - Module-level state (`db`, `RESEND_API_KEY`, `resend_sdk`, `now_utc`, …) bound by `register(...)` so tests can monkey-patch `routes.automated_emails.db = fake_db` cleanly.
+- **`server.py`**: shrank from **5,176 → 4,435 lines (-741 lines, ~14%)**. Replaced the deleted block with a thin pointer comment + startup-side hooks (`asyncio.create_task(routes_automated_emails.register.automated_email_loop())` etc).
+- **Tests**:
+  - `test_iteration88_automated_emails_module.py` — 5/5 pass (helper export shape, server.py no longer owns extracted symbols, endpoints still served, preview renders both kinds, unauth → 401).
+  - Updated `test_iteration53_dues_admin_summary.py` to mock `routes.automated_emails` instead of `server` (helpers now live there).
+  - Updated `test_iteration47_email_preferences.py` static inspection to scan `routes/automated_emails.py` + `routes/email.py` for the dues + blast Mongo query clauses.
+  - Email/regression suite: **46 passed, 1 skipped** (test_iteration46/47/53/64_extra/65/84/88 + iteration88).
+
+### Iteration 87 — Personnel Data Brief + Detailed variant + RSVP date toggle (2026-02-24) [FEATURE]
+- **Renaming**: "Personnel Brief" → "Personnel Data Brief" in tab label, PDF metadata title, and filename slug.
+- **Two side-by-side downloads** (`Reports.jsx` `BriefReport`):
+  - `brief-pdf-one-pager-btn` (filled primary) — calls `/reports/personnel-brief/{id}/pdf` → one-page ORB landscape.
+  - `brief-pdf-detailed-btn` (outline) — calls `/reports/personnel-brief/{id}/pdf?detailed=true` → one-pager **+** multi-page §III-§XI full-history attachments (civilian education, languages, dues, donations, community service, awards, OTY, event attendance, assignments). Both buttons enabled only after picking a member; downloads use the correct slug (`personnel-data-brief` vs `personnel-data-brief-detailed`).
+  - In-dialog preview also exposes both download options (`brief-dialog-pdf-one-btn`, `brief-dialog-pdf-detailed-btn`).
+- **Backend `routes/reports.py`**: `/reports/personnel-brief/{id}/pdf` now accepts `?detailed=true`. When true, builder appends a `PageBreak()` and 9 detail-section tables. Footer label flips between "GENERATED yyyy-mm-dd" and "DETAILED ATTACHMENTS FOLLOW".
+- **RSVP date-context toggle** (`RsvpsReport` + backend):
+  - Frontend pill toggle in the Filters card: "📅 Filter by: RSVP date · Event date".
+  - Backend `report_rsvps()` + `report_rsvps_summary()` accept `date_field=rsvped_at|event_start_at`. `rsvped_at` (default) filters on `rsvps.created_at`; `event_start_at` first scopes event_ids by start_at then constrains the rsvp query. `by_period` bucket key follows the same toggle.
+  - Confirmed deltas (preview env): year=2026 rsvped_at → 7, event_start_at → 1; year=2027 event_start_at → 6.
+- **Verification (testing_agent_v3_fork iteration_87.json — `retest_needed: false`)**: 100% backend + frontend pass. Both PDFs validated by pypdf (page count + section header text). Both buttons render side-by-side at same y-position. RSVPs toggle reissues request with proper `date_field` param. Zero issues, zero action items.
+
 ### Iteration 86 — RSVP filter year/quarter bug fix (2026-02-24) [BUG FIX]
 - **Reported bug**: "Admin RSVPs filter is not registering correctly. year=2026 shows only one person; quarter shows nothing; all-years shows everyone."
 - **Root cause**: iter81 implementation applied the period filter against `events.start_at` — so RSVPs to events scheduled outside the picked year/quarter were dropped. The user's 7 RSVPs were all placed in Jun-2026 but the events themselves are scheduled in 2027, so year=2026 dropped all but the lone event-in-2026 row.
