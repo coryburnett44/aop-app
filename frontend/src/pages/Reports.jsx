@@ -43,7 +43,7 @@ export default function Reports() {
                 <TabsTrigger value="dues-reminders" className="rounded-full" data-testid="reports-tab-dues-reminders">Dues reminders</TabsTrigger>
                 <TabsTrigger value="event-tickets" className="rounded-full" data-testid="reports-tab-event-tickets">Event tickets</TabsTrigger>
                 <TabsTrigger value="awards" className="rounded-full" data-testid="reports-tab-awards">Awards</TabsTrigger>
-                <TabsTrigger value="brief" className="rounded-full" data-testid="reports-tab-brief">Personnel Brief</TabsTrigger>
+                <TabsTrigger value="brief" className="rounded-full" data-testid="reports-tab-brief">Personnel Data Brief</TabsTrigger>
             </TabsList>
             <TabsContent value="members" className="mt-6"><MembersReport /></TabsContent>
             <TabsContent value="rsvps" className="mt-6"><RsvpsReport /></TabsContent>
@@ -170,6 +170,9 @@ function RsvpsReport() {
     const [eventId, setEventId] = useState("");
     const [ticketType, setTicketType] = useState("");
     const [memberQuery, setMemberQuery] = useState("");
+    // iter87 toggle — filter the period dropdown by either when the member
+    // RSVP'd (rsvped_at) or by when the event itself is scheduled (event_start_at).
+    const [dateField, setDateField] = useState("rsvped_at");
     const [rows, setRows] = useState([]);
     const [summary, setSummary] = useState(null);
 
@@ -180,7 +183,7 @@ function RsvpsReport() {
     }, []);
 
     function buildParams() {
-        const p = {};
+        const p = { date_field: dateField };
         if (year !== "all") {
             p.year = year;
             if (period.startsWith("q")) p.quarter = period.slice(1);
@@ -206,7 +209,7 @@ function RsvpsReport() {
         }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    useEffect(() => { setRows([]); run(); }, [view, year, period, parentId, eventId, ticketType]);
+    useEffect(() => { setRows([]); run(); }, [view, year, period, parentId, eventId, ticketType, dateField]);
 
     function exportCSV() {
         const fnameBase = `rsvps-${view}-${year === "all" ? "all-years" : year}${year !== "all" && period !== "all" ? "-" + period : ""}`;
@@ -271,7 +274,29 @@ function RsvpsReport() {
     return (
         <div data-testid="rsvps-report">
             <div className="bg-card rounded-2xl border border-border p-5 mb-4">
-                <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
+                <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold"><Filter className="h-4 w-4" /> Filters</div>
+                    {/* iter87 — date-context toggle */}
+                    <div className="inline-flex items-center gap-0 rounded-full bg-muted p-0.5 text-xs" role="group" data-testid="rsvps-date-field-toggle">
+                        <span className="px-2 text-muted-foreground hidden sm:inline">📅 Filter by:</span>
+                        <button
+                            type="button"
+                            onClick={() => setDateField("rsvped_at")}
+                            className={`rounded-full px-3 py-1 font-semibold transition-colors ${dateField === "rsvped_at" ? "bg-primary text-white shadow-warm" : "text-muted-foreground hover:text-foreground"}`}
+                            data-testid="rsvps-date-field-rsvped"
+                        >
+                            RSVP date
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setDateField("event_start_at")}
+                            className={`rounded-full px-3 py-1 font-semibold transition-colors ${dateField === "event_start_at" ? "bg-primary text-white shadow-warm" : "text-muted-foreground hover:text-foreground"}`}
+                            data-testid="rsvps-date-field-event"
+                        >
+                            Event date
+                        </button>
+                    </div>
+                </div>
                 <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-3">
                     <FilterSelect label="Year" value={year} onChange={setYear} options={[{ value: "all", label: "All years" }, ...years.map((y) => ({ value: String(y), label: String(y) }))]} testid="rsvps-filter-year" />
                     <div>
@@ -1026,19 +1051,20 @@ function PersonnelBriefSection() {
         setOpen(true);
     }
 
-    async function downloadPdf(userId) {
+    async function downloadPdf(userId, { detailed = false } = {}) {
         if (!userId) return;
         try {
-            const res = await api.get(`/reports/personnel-brief/${userId}/pdf`, { responseType: "blob" });
+            const url = `/reports/personnel-brief/${userId}/pdf${detailed ? "?detailed=true" : ""}`;
+            const res = await api.get(url, { responseType: "blob" });
             const blob = new Blob([res.data], { type: "application/pdf" });
-            const url = URL.createObjectURL(blob);
+            const objUrl = URL.createObjectURL(blob);
             const a = document.createElement("a");
-            a.href = url;
+            a.href = objUrl;
             const m = members.find((x) => x.id === userId);
             const safe = (m?.name || "member").replace(/\s+/g, "_");
-            a.download = `personnel-brief-${safe}.pdf`;
+            a.download = `personnel-data-brief${detailed ? "-detailed" : ""}-${safe}.pdf`;
             a.click();
-            URL.revokeObjectURL(url);
+            URL.revokeObjectURL(objUrl);
         } catch {
             // server error already toasts via interceptor
         }
@@ -1046,7 +1072,7 @@ function PersonnelBriefSection() {
 
     return (
         <div>
-            <div className="bg-card rounded-2xl border p-5 max-w-xl">
+            <div className="bg-card rounded-2xl border p-5 max-w-2xl">
                 <div className="flex items-center gap-2 text-sm font-semibold mb-3"><FileText className="h-4 w-4" /> Generate brief</div>
                 <Label className="text-xs">Member</Label>
                 <Select value={chosen} onValueChange={setChosen}>
@@ -1055,8 +1081,31 @@ function PersonnelBriefSection() {
                         {members.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} — {m.email}</SelectItem>)}
                     </SelectContent>
                 </Select>
-                <Button onClick={load} disabled={!chosen} className="mt-4 rounded-full bg-primary hover:bg-primary/90" data-testid="brief-generate-btn">
-                    Generate brief
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+                    <Button
+                        onClick={() => downloadPdf(chosen, { detailed: false })}
+                        disabled={!chosen}
+                        className="rounded-full bg-primary hover:bg-primary/90"
+                        data-testid="brief-pdf-one-pager-btn"
+                    >
+                        <Download className="h-4 w-4 mr-1.5" />Personnel Data Brief
+                    </Button>
+                    <Button
+                        onClick={() => downloadPdf(chosen, { detailed: true })}
+                        disabled={!chosen}
+                        variant="outline"
+                        className="rounded-full border-2 border-primary text-primary hover:bg-primary/10"
+                        data-testid="brief-pdf-detailed-btn"
+                    >
+                        <Download className="h-4 w-4 mr-1.5" />Detailed Data Brief
+                    </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-2 leading-snug">
+                    <span className="font-semibold">Personnel Data Brief</span> is a one-page ORB-style landscape summary.<br />
+                    <span className="font-semibold">Detailed Data Brief</span> includes the one-pager + multi-page attachments listing every degree, language, award, donation, hour, and assignment in full.
+                </p>
+                <Button onClick={load} disabled={!chosen} variant="ghost" size="sm" className="mt-2 text-xs text-muted-foreground hover:text-foreground" data-testid="brief-generate-btn">
+                    Preview on screen instead →
                 </Button>
             </div>
 
@@ -1064,10 +1113,13 @@ function PersonnelBriefSection() {
                 <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto" data-testid="brief-dialog">
                     <DialogHeader className="print:pb-2 print:border-b print:border-black">
                         <DialogTitle className="font-heading text-2xl flex items-center justify-between gap-3">
-                            Personnel Brief
+                            Personnel Data Brief
                             <div className="flex gap-2 print:hidden">
-                                <Button size="sm" onClick={() => downloadPdf(chosen)} variant="outline" className="rounded-full" data-testid="brief-pdf-btn">
-                                    <Download className="h-4 w-4 mr-1.5" />Download PDF
+                                <Button size="sm" onClick={() => downloadPdf(chosen, { detailed: false })} variant="outline" className="rounded-full" data-testid="brief-dialog-pdf-one-btn">
+                                    <Download className="h-4 w-4 mr-1.5" />One-pager
+                                </Button>
+                                <Button size="sm" onClick={() => downloadPdf(chosen, { detailed: true })} variant="outline" className="rounded-full" data-testid="brief-dialog-pdf-detailed-btn">
+                                    <Download className="h-4 w-4 mr-1.5" />Detailed
                                 </Button>
                                 <Button size="sm" onClick={() => window.print()} variant="outline" className="rounded-full" data-testid="brief-print-btn">
                                     <Printer className="h-4 w-4 mr-1.5" />Print

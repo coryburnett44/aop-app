@@ -1,0 +1,64 @@
+{
+  "summary": "iter87 verified end-to-end. Personnel Data Brief renamed everywhere (tab label, PDF metadata title, filename slug). One-pager PDF still 1 page with all SECTION I-VIII titles; new detailed PDF is multi-page (2 pages) and contains the full §III-§XI detail headers. Two side-by-side download buttons render on the Personnel Data Brief sub-tab; both trigger correct downloads. RSVPs tab Filters card shows the new pill toggle (RSVP date / Event date) — clicking Event date reissues the query with date_field=event_start_at and backend returns the expected row deltas (rsvped_at 2026=7, event_start_at 2026=1, event_start_at 2027=6).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verification_results": {
+    "personnel_brief_one_pager": {
+      "endpoint": "/api/reports/personnel-brief/{admin_id}/pdf",
+      "status_code": 200,
+      "page_count": 1,
+      "metadata_title": "Personnel Data Brief — Club T Admin",
+      "filename": "personnel-data-brief-Club_T_Admin-2026-06-26.pdf",
+      "sections_present": ["SECTION I","SECTION II","SECTION III","SECTION IV","SECTION V","SECTION VI","SECTION VII","SECTION VIII"],
+      "missing_sections": []
+    },
+    "personnel_brief_detailed": {
+      "endpoint": "/api/reports/personnel-brief/{admin_id}/pdf?detailed=true",
+      "status_code": 200,
+      "page_count": 2,
+      "metadata_title": "Personnel Data Brief — Club T Admin",
+      "filename": "personnel-data-brief-detailed-Club_T_Admin-2026-06-26.pdf",
+      "detail_headers_present": ["SECTION III","CIVILIAN EDUCATION","SECTION IV","LANGUAGE PROFICIENCY","SECTION V","FINANCIAL OBLIGATIONS","SECTION VI","DONATIONS","SECTION VII","COMMUNITY SERVICE","SECTION VIII","AWARDS","SECTION IX","OF THE YEAR","SECTION X","EVENT ATTENDANCE","SECTION XI","ASSIGNMENT HISTORY"],
+      "missing": []
+    },
+    "rsvps_date_field": {
+      "rsvped_at_year_2026_rows": 7,
+      "event_start_at_year_2026_rows": 1,
+      "event_start_at_year_2027_rows": 6,
+      "status_all": 200
+    },
+    "frontend_brief_tab": {
+      "tab_label_visible": "Personnel Data Brief",
+      "old_label_present": false,
+      "buttons_present": ["brief-pdf-one-pager-btn (label='Personnel Data Brief', filled primary)", "brief-pdf-detailed-btn (label='Detailed Data Brief', outline)"],
+      "side_by_side_same_row": true,
+      "button_box_one": {"x": 381, "y": 492, "width": 311, "height": 36},
+      "button_box_detailed": {"x": 700, "y": 492, "width": 311, "height": 36},
+      "disabled_pre_member_select": true,
+      "enabled_post_member_select": true,
+      "one_pager_download_filename": "personnel-data-brief-TEST_Applicant58d5d7ab.pdf",
+      "detailed_download_filename": "personnel-data-brief-detailed-TEST_Applicant58d5d7ab.pdf"
+    },
+    "frontend_rsvps_toggle": {
+      "rsvps-date-field-toggle_present": true,
+      "rsvps-date-field-rsvped_label": "RSVP date",
+      "rsvps-date-field-event_label": "Event date",
+      "click_event_pill_reissues_query_with_date_field_event_start_at": true,
+      "observed_request": "/api/reports/rsvps?date_field=event_start_at&year=2026"
+    }
+  },
+  "test_report_links": ["/tmp/verify_iter87.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "reports.py is now 1430 lines — exceeds the 700-line guideline. Iter86 already flagged this; iter87 added ~120 more lines (multi-page detail builder + date_field branch). Splitting into per-resource sub-routers (members, rsvps, hours, donations, dues, brief) remains a recommended future refactor.",
+    "Frontend BriefReport correctly renders two side-by-side primary/outline buttons with proper disabled states and identical y-position; downloaded filenames match backend slugs exactly."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@clubhaven.app / Admin123!",
+  "seed_data_creation": "None — used existing seeded data and a pre-existing TEST_Applicant member.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter87 verified via /tmp/verify_iter87.py (pypdf page-count + section-text assertions on both PDF variants and 3 RSVPs date_field row-count checks) and via Playwright on the deployed preview URL (Reports → Personnel Data Brief sub-tab with two side-by-side download buttons; Reports → RSVPs sub-tab with new Filter-by pill toggle in the Filters card). No new pytest files added per main-agent instruction. Per iter86 note, reports.py at 1430 lines is structural debt — consider splitting in a follow-up.",
+  "rca of the issue": "N/A — this is a feature verification, not a bug RCA. Backend PDF builder at /app/backend/routes/reports.py:792-1252 now accepts ?detailed=true and conditionally appends §III-§XI detail Paragraphs after the one-page ORB grid. PDF metadata title and filename slug both use 'personnel-data-brief'. RSVPs endpoints at lines 102 and 203 accept date_field='rsvped_at'|'event_start_at' and the summary by_period bucket key is selected accordingly (line 264). All verified."
+}

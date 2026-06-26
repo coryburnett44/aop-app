@@ -99,18 +99,21 @@ def register(
         year: Optional[int] = None,
         quarter: Optional[int] = None,
         month: Optional[int] = None,
+        date_field: str = "rsvped_at",  # "rsvped_at" (default) | "event_start_at"
         admin: dict = Depends(admin_tab_dep("reports")),
     ):
-        # Period filter is applied to the RSVP's `created_at` (when the member
-        # actually placed the RSVP) — matches the Hours/Donations semantic where
-        # filtering by year/quarter shows ACTIVITY in that window, not events
-        # whose date falls in that window. iter85 user bug: filtering by event
-        # start_at silently dropped most rows because events span many years
-        # while RSVPs cluster in the current year.
+        # Period filter — admin chooses the date context:
+        #   - "rsvped_at" (default, iter85 fix): when the RSVP was placed.
+        #     Matches Hours/Donations activity-date semantic.
+        #   - "event_start_at" (iter87 toggle): when the event is scheduled.
+        #     Useful for "show me everyone going to events in Q4".
         period_from, period_to = period_to_range(year, quarter, month)
+        use_event_date = (date_field == "event_start_at")
         rsvp_q: dict = {}
-        if period_from:
+        if period_from and not use_event_date:
             rsvp_q["created_at"] = {"$gte": period_from, "$lte": period_to}
+        # Build event-id constraint from parent or specific event picker.
+        period_event_ids: Optional[list] = None
         if event_id:
             rsvp_q["event_id"] = event_id
         elif parent_event_id:
@@ -121,6 +124,27 @@ def register(
             if not matching:
                 return []
             rsvp_q["event_id"] = {"$in": [e["id"] for e in matching]}
+        # When toggle == event_start_at, narrow event_id to those scheduled in
+        # the period and AND it with any existing event_id filter.
+        if period_from and use_event_date:
+            scoped = await db.events.find(
+                {"start_at": {"$gte": period_from, "$lte": period_to}},
+                {"_id": 0, "id": 1},
+            ).to_list(2000)
+            period_event_ids = [e["id"] for e in scoped]
+            if not period_event_ids:
+                return []
+            existing_eid = rsvp_q.get("event_id")
+            if isinstance(existing_eid, str):
+                if existing_eid not in period_event_ids:
+                    return []
+                # keep the specific id
+            elif isinstance(existing_eid, dict) and "$in" in existing_eid:
+                rsvp_q["event_id"] = {"$in": [eid for eid in existing_eid["$in"] if eid in period_event_ids]}
+                if not rsvp_q["event_id"]["$in"]:
+                    return []
+            else:
+                rsvp_q["event_id"] = {"$in": period_event_ids}
         if is_chapter_scoped(admin):
             chapter_uids = await chapter_scope_user_ids(admin) or []
             rsvp_q["user_id"] = {"$in": chapter_uids}
@@ -176,6 +200,7 @@ def register(
         year: Optional[int] = None,
         quarter: Optional[int] = None,
         month: Optional[int] = None,
+        date_field: str = "rsvped_at",
         group_by: str = "member",
         admin: dict = Depends(admin_tab_dep("reports")),
     ):
@@ -188,6 +213,7 @@ def register(
             parent_event_id=parent_event_id,
             ticket_type=ticket_type,
             year=year, quarter=quarter, month=month,
+            date_field=date_field,
             admin=admin,
         )
         totals = {
@@ -229,13 +255,14 @@ def register(
                 })
             out_rows.sort(key=lambda r: r["rsvp_count"], reverse=True)
         else:
-            # by period — bucket by RSVP creation month (YYYY-MM). Matches the
-            # iter85 fix where the row filter is also keyed off rsvped_at,
-            # so the buckets visible here line up with the rows in the
-            # "Individual entries" view.
+            # by period — bucket key tracks the toggle: by RSVP creation month
+            # when date_field=rsvped_at (default), or by event-start month when
+            # date_field=event_start_at. Mirrors the row filter so the bucket
+            # labels match the rows visible in "Individual entries".
             buckets: dict = {}
             for r in rows:
-                ds = (r.get("rsvped_at") or "")[:7]  # YYYY-MM
+                src = r.get("event_start_at") if date_field == "event_start_at" else r.get("rsvped_at")
+                ds = (src or "")[:7]  # YYYY-MM
                 if not ds:
                     continue
                 buckets.setdefault(ds, {"label": ds, "rsvp_count": 0, "guest_count": 0, "checked_in_count": 0})
@@ -762,17 +789,20 @@ def register(
         return await personnel_brief_data(user_id)
 
     @api.get("/reports/personnel-brief/{user_id}/pdf")
-    async def personnel_brief_pdf(user_id: str, _: dict = Depends(admin_tab_dep("reports"))):
-        return await personnel_brief_pdf_response(user_id)
+    async def personnel_brief_pdf(user_id: str, detailed: bool = False, _: dict = Depends(admin_tab_dep("reports"))):
+        return await personnel_brief_pdf_response(user_id, detailed=detailed)
 
-    # ---------- Personnel Brief PDF builder ----------
-    async def personnel_brief_pdf_response(user_id: str):
-        """Build and stream the personnel-brief PDF for the given user id.
+    # ---------- Personnel Data Brief PDF builder ----------
+    async def personnel_brief_pdf_response(user_id: str, detailed: bool = False):
+        """Build and stream the Personnel Data Brief PDF for the given user id.
 
-        Layout (per user spec): Page 1 is a landscape one-pager modeled after
-        the U.S. Army Officer Record Brief — a dense 3-column grid sitting under
-        a wide identity header. Pages 2+ are landscape detail pages carrying
-        the full §I–§XI data so admins never lose information.
+        Two variants share the same builder:
+          - One-pager (default): landscape, single page, ORB-style 3-column
+            grid. Section bars use the iter85 `orb_section_bar` helper.
+          - Detailed (?detailed=true): one-pager + multi-page §III-§XI full
+            data attachments (civilian education, languages, dues, donations,
+            community service, assignments, etc.). User-asked for both styles
+            side-by-side in iter87.
         """
         data = await personnel_brief_data(user_id)
         from reportlab.lib.pagesizes import letter, landscape
@@ -793,7 +823,7 @@ def register(
             rightMargin=0.4 * inch,
             topMargin=0.35 * inch,
             bottomMargin=0.35 * inch,
-            title=f"Personnel Brief — {data['member']['name']}",
+            title=f"Personnel Data Brief — {data['member']['name']}",
         )
         styles = getSampleStyleSheet()
         AOP_NAVY = colors.HexColor("#0C1B33")
@@ -806,6 +836,16 @@ def register(
             "OrbSectionTitle", parent=styles["BodyText"],
             textColor=colors.white, fontName="Helvetica-Bold",
             fontSize=9, leading=11, alignment=TA_LEFT,
+        )
+        # Detail-page section bar (used only when detailed=True). Slightly
+        # bigger, with horizontal spacing so multi-page detail attachments
+        # read clearly.
+        section = ParagraphStyle(
+            "Section", parent=styles["Heading2"],
+            textColor=colors.white, backColor=AOP_NAVY,
+            fontName="Helvetica-Bold",
+            fontSize=11, leading=14, leftIndent=6, rightIndent=6,
+            spaceBefore=10, spaceAfter=5, borderPadding=4,
         )
 
         def orb_section_bar(label_html: str):
@@ -1118,22 +1158,98 @@ def register(
         elements.append(body_tbl)
         elements.append(Spacer(1, 4))
         elements.append(Paragraph(
-            f"PERSONNEL BRIEF &middot; {(title_name or '').upper()} &middot; GENERATED {data['generated_at'][:10]} &middot; ALPHA OMEGA PHI MILITARY FRATERNITY &amp; SORORITY, INC.",
+            f"PERSONNEL DATA BRIEF &middot; {(title_name or '').upper()} &middot; {'DETAILED ATTACHMENTS FOLLOW' if detailed else 'GENERATED ' + data['generated_at'][:10]} &middot; ALPHA OMEGA PHI MILITARY FRATERNITY &amp; SORORITY, INC.",
             ParagraphStyle("Foot", parent=small, alignment=TA_LEFT, fontSize=7, leading=8, textColor=colors.HexColor("#888888")),
         ))
 
-        # Personnel Brief is a strict one-pager (iter85 user spec) — no detail
-        # attachments. The 3-column ORB grid above carries everything that
-        # used to live on pages 2+; degrees / languages / awards are capped to
-        # the top-N most-recent rows with an "(N TOTAL)" / "(TOP X OF Y)"
-        # annotation so admins know to consult the in-app Personnel Brief view
-        # if they need the full history.
+        # Optional multi-page detail attachments (iter87 — admin asked for a
+        # second "Detailed Data Brief" download alongside the one-pager). Page 1
+        # remains the dense ORB summary; pages 2+ are the full §III-§X
+        # exhaustive tables so nothing is truncated.
+        if detailed:
+            elements.append(PageBreak())
+
+            def data_table(headers, rows, col_widths):
+                if not rows:
+                    return Paragraph("<i>No entries.</i>", small)
+                t = Table([headers] + rows, colWidths=col_widths, hAlign="LEFT")
+                t.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0EBE3")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONT", (0, 0), (-1, -1), "Helvetica", 8.5),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), AOP_NAVY),
+                    ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#EFEFEF")),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]))
+                return t
+
+            elements.append(Paragraph("SECTION III &mdash; CIVILIAN EDUCATION (FULL)", section))
+            all_degrees = sorted(list(m.get("civilian_degrees") or []), key=lambda d: (d.get("graduation_year") or 0, d.get("graduation_month") or 0))
+            deg_rows = []
+            for d in all_degrees:
+                month = d.get("graduation_month")
+                month_label = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][month - 1] if month and 1 <= month <= 12 else ""
+                grad = f"{month_label} {d.get('graduation_year') or ''}".strip() or "—"
+                deg_rows.append([d.get("degree_level") or "—", d.get("degree_type") or "—", d.get("field_of_study") or "—", d.get("institution") or "—", grad])
+            elements.append(data_table(["Level", "Type", "Field of Study", "Institution", "Graduated"], deg_rows, [1.2 * inch, 1.0 * inch, 2.5 * inch, 3.5 * inch, 1.4 * inch]))
+
+            elements.append(Paragraph("SECTION IV &mdash; LANGUAGE PROFICIENCY (FULL)", section))
+            all_langs = sorted(list(m.get("languages") or []), key=lambda lg: -(lg.get("year_accomplished") or 0))
+            lang_rows = [[lg.get("language") or "—", lg.get("speaking") or "—", lg.get("reading") or "—", lg.get("writing") or "—", str(lg.get("year_accomplished") or "—")] for lg in all_langs]
+            elements.append(data_table(["Language", "Speaking", "Reading", "Writing", "Year"], lang_rows, [1.8 * inch, 1.4 * inch, 1.4 * inch, 1.4 * inch, 1.0 * inch]))
+
+            elements.append(Paragraph("SECTION V &mdash; FINANCIAL OBLIGATIONS (ANNUAL DUES)", section))
+            dues = [t for t in (data.get("transactions") or []) if t.get("purpose") == "dues" or t.get("type") == "renewal"]
+            dues_rows = [[(t.get("created_at") or "")[:10], f"${t.get('amount', 0):.2f}", (t.get("status") or "—").upper(), (t.get("description") or "—")[:70]] for t in dues]
+            elements.append(data_table(["Date", "Amount", "Status", "Description"], dues_rows, [1.1 * inch, 1.0 * inch, 1.1 * inch, 6.0 * inch]))
+
+            elements.append(Paragraph("SECTION VI &mdash; DONATIONS", section))
+            donations = [t for t in (data.get("transactions") or []) if t.get("type") == "donation"]
+            don_rows = [[(t.get("created_at") or "")[:10], (t.get("description") or "General fund")[:70], f"${t.get('amount', 0):.2f}"] for t in donations]
+            elements.append(data_table(["Date", "Cause", "Amount"], don_rows, [1.2 * inch, 6.7 * inch, 1.3 * inch]))
+
+            elements.append(Paragraph(f"SECTION VII &mdash; COMMUNITY SERVICE ({current_year})", section))
+            hours = [h for h in (data.get("hours") or []) if (h.get("date") or "")[:4] == str(current_year)]
+            hours_rows = [[(h.get("date") or "")[:10], f"{h.get('hours', 0):.1f}", (h.get("category") or "—"), (h.get("description") or "—")[:80]] for h in hours]
+            elements.append(data_table(["Date", "Hours", "Category", "Description"], hours_rows, [1.1 * inch, 0.8 * inch, 1.3 * inch, 6.0 * inch]))
+
+            elements.append(Paragraph("SECTION VIII &mdash; AWARDS &amp; RECOGNITION (FULL)", section))
+            awards = m.get("achievements") or []
+            aw_rows = [[(a.get("date_awarded") or "")[:10], a.get("title") or "—", (a.get("description") or "")[:80]] for a in awards]
+            elements.append(data_table(["Date", "Award", "Description"], aw_rows, [1.2 * inch, 3.0 * inch, 5.0 * inch]))
+
+            elements.append(Paragraph("SECTION IX &mdash; \"OF THE YEAR\" HONORS (FULL)", section))
+            otys = data.get("of_the_year_awards") or []
+            oty_rows = [[str(a.get("year") or "—"), a.get("category") or "—", a.get("chapter_name") or "—"] for a in otys]
+            elements.append(data_table(["Year", "Category", "Chapter"], oty_rows, [0.8 * inch, 4.0 * inch, 4.4 * inch]))
+
+            elements.append(Paragraph("SECTION X &mdash; EVENT ATTENDANCE (FULL)", section))
+            events_attended = data.get("events_attended") or []
+            ev_rows = [[(e.get("date") or "")[:10], e.get("title") or "—", (e.get("location") or "—")[:30], (e.get("ticket_type") or "—").upper()] for e in events_attended]
+            elements.append(data_table(["Date", "Event", "Location", "Ticket"], ev_rows, [1.2 * inch, 4.0 * inch, 2.5 * inch, 1.5 * inch]))
+
+            elements.append(Paragraph("SECTION XI &mdash; ASSIGNMENT HISTORY (FULL)", section))
+            asns = sorted(list(m.get("assignments") or []), key=lambda a: (a.get("date_started") or ""), reverse=True)
+            asn_rows = []
+            for a in asns:
+                title = a.get("title") or a.get("position_title") or "—"
+                org = a.get("organization") or a.get("unit") or "—"
+                started = (a.get("date_started") or "")[:10]
+                ended = "Present" if a.get("is_current") else ((a.get("date_ended") or "")[:10] or "—")
+                asn_rows.append([title, org, (a.get("location") or "—")[:30], started, ended, (a.get("duties") or "")[:80]])
+            elements.append(data_table(
+                ["Title", "Organization", "Location", "Started", "Ended", "Duties"],
+                asn_rows,
+                [1.6 * inch, 1.8 * inch, 1.6 * inch, 1.0 * inch, 1.0 * inch, 2.2 * inch],
+            ))
 
 
         doc.build(elements)
         buf.seek(0)
         safe_name = (m.get("name") or "member").replace(" ", "_")
-        filename = f"personnel-brief-{safe_name}-{data['generated_at'][:10]}.pdf"
+        filename = f"personnel-data-brief{'-detailed' if detailed else ''}-{safe_name}-{data['generated_at'][:10]}.pdf"
         return Response(
             content=buf.getvalue(),
             media_type="application/pdf",
