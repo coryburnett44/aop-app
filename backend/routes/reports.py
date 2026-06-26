@@ -180,7 +180,8 @@ def register(
         admin: dict = Depends(admin_tab_dep("reports")),
     ):
         """Aggregated RSVP report — mirrors `/reports/hours/summary` shape.
-        Groups by: member | chapter | period (month buckets keyed by event date)."""
+        Groups by: member | chapter | period (month buckets keyed by RSVP
+        creation date — iter85 fix; was previously keyed by event date)."""
         # Re-use the rows endpoint to keep filtering DRY.
         rows = await report_rsvps(  # type: ignore[misc]
             event_id=event_id,

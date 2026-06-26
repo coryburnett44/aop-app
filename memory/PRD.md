@@ -15,6 +15,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 86 — RSVP filter year/quarter bug fix (2026-02-24) [BUG FIX]
+- **Reported bug**: "Admin RSVPs filter is not registering correctly. year=2026 shows only one person; quarter shows nothing; all-years shows everyone."
+- **Root cause**: iter81 implementation applied the period filter against `events.start_at` — so RSVPs to events scheduled outside the picked year/quarter were dropped. The user's 7 RSVPs were all placed in Jun-2026 but the events themselves are scheduled in 2027, so year=2026 dropped all but the lone event-in-2026 row.
+- **Fix**: `report_rsvps()` in `routes/reports.py` now filters by `rsvps.created_at` (matches Hours/Donations activity-date semantic). `report_rsvps_summary()` `by_period` bucket key also switched from `event_start_at[:7]` to `rsvped_at[:7]` so the bucket dates align with the rows shown in "Individual entries". Doc-string updated.
+- **Verification (testing_agent_v3_fork iteration_86.json — `retest_needed: false`)**:
+  - year=2026 → 7 rows (was 1 before fix)
+  - year=2026 + Q2 → 7 rows (was 0 before fix)
+  - year=2026 + Q1 → 0 rows (correctly empty)
+  - by-period summary buckets correctly by rsvped_at month
+  - Playwright UI confirms RSVPED column dates match the selected window
+  - iter81 regression suite still passes (8/8)
+  - 0 action items, 0 critical/minor issues
+
 ### Iteration 85 — Personnel Brief: titles fixed + true one-pager (2026-02-24) [BUG FIX]
 - **Reported bug**: "On the personnel brief, the titles of the sections are missing on the first page. I would like to only see a one-pager."
 - **Root cause**: Section bars were built with `Paragraph(backColor=AOP_NAVY, …)`. When wrapped inside the 3-column sub-table cells, ReportLab was rendering the navy strip but the title text was getting clipped/lost in some layout configurations.
