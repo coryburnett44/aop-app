@@ -15,6 +15,11 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 84 — rsvps.py split + documents module extracted (2026-02-24)
+- **`routes/rsvps.py` modularization**: extracted check-in scan/lookup → `routes/checkin.py` (~97 lines) and bulk-CSV import → `routes/rsvps_csv.py` (~242 lines). The parent `rsvps.py` retains the shared QR token / email-ticket / cancellation-guard helpers and exposes them via attribute injection on the `register` fn so sub-modules can call into the shared logic. **`rsvps.py`: 955 → 648 lines (~32% reduction)**.
+- **`server.py` modularization (Documents)**: extracted `/api/documents*` + `/api/document-folders*` routes (single + bulk upload, folder CRUD, list with category/folder filter, soft-delete) into `routes/documents.py` (~243 lines). **`server.py`: 5,345 → 5,176 lines**.
+- **Tests**: `test_iteration84_modularization_smoke.py` — 5/5 pass (checkin lookup/scan reachable, CSV template, documents+folders list, folder CRUD roundtrip). Full regression iter74-84 → **44/44 green**.
+
 ### Iteration 83 — Inline Approve/Reject on Zeffy event-ticket inbox tab (2026-02-24)
 - **Frontend `AdminDashboard.jsx`**: Each pending Zeffy ticket row in the inbox now has inline **Approve** (emerald) and **Reject** (red outline) buttons + a smaller "Open in Reports →" secondary link. Approve calls `PUT /api/transactions/{id}/approve-event-ticket` (creates RSVP + emails QR ticket); Reject calls `DELETE /api/transactions/{id}` (removes the pending row). Both show a `window.confirm` with the submitter + event + amount + Zeffy conf # so the admin sees the full context before acting.
 - **Tests**: `test_iteration83_inbox_inline_buttons.py` — 2/2 pass (Reject removes from inbox + underlying DB; Approve endpoint stays wired for missing tx).
