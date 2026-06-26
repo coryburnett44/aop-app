@@ -15,6 +15,14 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 85 — Personnel Brief: titles fixed + true one-pager (2026-02-24) [BUG FIX]
+- **Reported bug**: "On the personnel brief, the titles of the sections are missing on the first page. I would like to only see a one-pager."
+- **Root cause**: Section bars were built with `Paragraph(backColor=AOP_NAVY, …)`. When wrapped inside the 3-column sub-table cells, ReportLab was rendering the navy strip but the title text was getting clipped/lost in some layout configurations.
+- **Fix #1 (titles)**: Replaced the Paragraph-with-backColor approach with a dedicated `orb_section_bar(label_html)` helper that builds a single-cell Table with `BACKGROUND=AOP_NAVY` + white text inside. This is the standard ReportLab idiom for filled section bars and renders the title reliably regardless of nesting context. All 8 page-1 section bars now use this helper.
+- **Fix #2 (one-pager)**: Removed everything from the former `PageBreak()` through the detail-attachment block (~118 lines of `data_table()` + Section III-XI full-history tables). The Personnel Brief is now strictly a one-pager. The 3-column ORB grid carries top-N most-recent rows with "(N TOTAL)" / "(TOP X OF Y)" annotations so admins still see the cap.
+- Footer wording adjusted from "PAGE 1 OF DETAIL FOLLOWS" → "GENERATED {date}" to match the new single-page reality.
+- **Verification (testing_agent_v3_fork iteration_85.json)**: Both PDFs (admin + member) return HTTP 200, **page_count == 1**, and all 8 SECTION I-VIII titles present in extracted text. Frontend on-screen preview still renders correctly. No regressions. `retest_needed: false`.
+
 ### Iteration 84 — rsvps.py split + documents module extracted (2026-02-24)
 - **`routes/rsvps.py` modularization**: extracted check-in scan/lookup → `routes/checkin.py` (~97 lines) and bulk-CSV import → `routes/rsvps_csv.py` (~242 lines). The parent `rsvps.py` retains the shared QR token / email-ticket / cancellation-guard helpers and exposes them via attribute injection on the `register` fn so sub-modules can call into the shared logic. **`rsvps.py`: 955 → 648 lines (~32% reduction)**.
 - **`server.py` modularization (Documents)**: extracted `/api/documents*` + `/api/document-folders*` routes (single + bulk upload, folder CRUD, list with category/folder filter, soft-delete) into `routes/documents.py` (~243 lines). **`server.py`: 5,345 → 5,176 lines**.
