@@ -123,6 +123,7 @@ def register(
         return {"id": doc["id"], "name": name, "count": 0, "is_default": False, "created_by_name": user.get("name", ""), "category": category, "cover_url": doc["cover_url"]}
 
     class AlbumUpdateIn(BaseModel):
+        name: Optional[str] = None
         category: Optional[str] = None
         cover_url: Optional[str] = None
         cover_photo_id: Optional[str] = None
@@ -137,12 +138,39 @@ def register(
         if not (is_admin or is_creator):
             raise HTTPException(status_code=403, detail="Only the album creator or an admin can edit this album.")
         updates: dict = {}
+        # ---- Rename ----
+        if body.name is not None:
+            new_name = body.name.strip()
+            if not new_name:
+                raise HTTPException(status_code=400, detail="Album name cannot be empty.")
+            if new_name != a.get("name"):
+                if a.get("is_default"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Default albums cannot be renamed. Delete it and create a new album if you need a different title.",
+                    )
+                # Case-insensitive uniqueness across all OTHER albums.
+                clash = await db.photo_albums.find_one({
+                    "id": {"$ne": album_id},
+                    "name": {"$regex": f"^{re.escape(new_name)}$", "$options": "i"},
+                })
+                if clash:
+                    raise HTTPException(status_code=400, detail=f"Album '{clash['name']}' already exists.")
+                updates["name"] = new_name
+                # Cascade rename to every photo whose `album` field references
+                # the old name (photos are bucketed by album NAME, not id).
+                await db.photos.update_many(
+                    {"album": a["name"]},
+                    {"$set": {"album": new_name}},
+                )
         if body.category and body.category in photo_album_categories:
             updates["category"] = body.category
         if body.cover_url is not None:
             updates["cover_url"] = body.cover_url
         if body.cover_photo_id:
-            p = await db.photos.find_one({"id": body.cover_photo_id, "album": a["name"]}, {"_id": 0})
+            # Look up by the (possibly new) album name.
+            current_name = updates.get("name") or a["name"]
+            p = await db.photos.find_one({"id": body.cover_photo_id, "album": current_name}, {"_id": 0})
             if p:
                 updates["cover_url"] = f"/api/files/{p['storage_path']}"
         if updates:

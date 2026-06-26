@@ -716,16 +716,32 @@ function CreateAlbumDialog({ open, onClose, onCreated }) {
 }
 
 function EditAlbumDialog({ album, onClose, onSaved }) {
+    const [name, setName] = useState("");
     const [category, setCategory] = useState("other");
     const [busy, setBusy] = useState(false);
-    useEffect(() => { if (album) setCategory(album.category || "other"); }, [album]);
+    useEffect(() => {
+        if (album) {
+            setName(album.name || "");
+            setCategory(album.category || "other");
+        }
+    }, [album]);
     if (!album) return null;
 
+    const trimmed = name.trim();
+    const isDefault = !!album.is_default;
+    const nameChanged = trimmed && trimmed !== album.name;
+
     async function save() {
+        if (!trimmed) {
+            toast.error("Album name cannot be empty");
+            return;
+        }
         setBusy(true);
         try {
-            await api.put(`/photos/albums/${album.id}`, { category });
-            toast.success("Album updated");
+            const payload = { category };
+            if (nameChanged) payload.name = trimmed;
+            await api.put(`/photos/albums/${album.id}`, payload);
+            toast.success(nameChanged ? `Renamed to "${trimmed}"` : "Album updated");
             onSaved?.();
         } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
         setBusy(false);
@@ -736,6 +752,23 @@ function EditAlbumDialog({ album, onClose, onSaved }) {
             <DialogContent className="max-w-md">
                 <DialogHeader><DialogTitle className="font-heading text-2xl" style={{ color: NAVY }}>Edit "{album.name}"</DialogTitle></DialogHeader>
                 <div className="space-y-3 mt-2">
+                    <div>
+                        <Label htmlFor="edit-album-name-input">Title</Label>
+                        <Input
+                            id="edit-album-name-input"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder="Album title"
+                            className="rounded-xl mt-1.5"
+                            data-testid="edit-album-name-input"
+                            disabled={isDefault}
+                        />
+                        {isDefault ? (
+                            <p className="text-xs text-amber-700 mt-1.5">Default albums cannot be renamed.</p>
+                        ) : (
+                            <p className="text-xs text-slate-500 mt-1.5">Existing photos move with the new title automatically.</p>
+                        )}
+                    </div>
                     <div>
                         <Label>Category</Label>
                         <Select value={category} onValueChange={setCategory}>
@@ -751,7 +784,7 @@ function EditAlbumDialog({ album, onClose, onSaved }) {
                 </div>
                 <DialogFooter>
                     <Button variant="outline" onClick={onClose} className="rounded-full" type="button">Cancel</Button>
-                    <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90 text-white" data-testid="edit-album-save-btn">
+                    <Button onClick={save} disabled={busy || !trimmed} className="rounded-full bg-primary hover:bg-primary/90 text-white" data-testid="edit-album-save-btn">
                         {busy ? "Saving…" : "Save"}
                     </Button>
                 </DialogFooter>

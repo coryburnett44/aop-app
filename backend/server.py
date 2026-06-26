@@ -517,6 +517,7 @@ def event_out(e: dict) -> dict:
         "cancellation_note": e.get("cancellation_note", ""),
         "cancelled_at": e.get("cancelled_at"),
         "cancelled_via_parent": bool(e.get("cancelled_via_parent")),
+        "rsvps_closed": bool(e.get("rsvps_closed")),
         "is_paid": bool(e.get("is_paid")),
         "payment_url": e.get("payment_url", ""),
         "payment_amount": float(e.get("payment_amount") or 0.0),

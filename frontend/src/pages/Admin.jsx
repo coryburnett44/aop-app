@@ -146,6 +146,7 @@ function EventDialog({ event, onSaved, trigger }) {
         price: event?.price || 0,
         cancelled: event?.cancelled || false,
         cancellation_note: event?.cancellation_note || "",
+        rsvps_closed: event?.rsvps_closed || false,
         is_paid: event?.is_paid || false,
         payment_url: event?.payment_url || "",
         payment_amount: event?.payment_amount || 0,
@@ -477,6 +478,27 @@ function EventDialog({ event, onSaved, trigger }) {
                                         Members will see a CANCELLED banner. The event will still appear on the calendar but the RSVP button will be disabled.
                                     </p>
                                 </div>
+                            )}
+                        </div>
+                    )}
+                    {event && !form.cancelled && (
+                        <div className={`rounded-2xl border-2 p-4 ${form.rsvps_closed ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+                            <label className="flex items-center gap-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={form.rsvps_closed}
+                                    onChange={(e) => setForm({ ...form, rsvps_closed: e.target.checked })}
+                                    className="h-4 w-4 rounded border-2 border-slate-300 accent-amber-600"
+                                    data-testid="event-rsvps-closed-toggle"
+                                />
+                                <span className="font-semibold text-sm">
+                                    {form.rsvps_closed ? "🔒 RSVPs are closed — only admins can add members & guests" : "Close RSVPs (admins-only mode)"}
+                                </span>
+                            </label>
+                            {form.rsvps_closed && (
+                                <p className="text-[11px] text-amber-800 mt-2 leading-snug">
+                                    Members can no longer RSVP, change their ticket type, edit guests, or cancel their RSVP themselves. Admins keep full access via the "RSVP for a member" dialog. Re-open RSVPs by un-checking this box.
+                                </p>
                             )}
                         </div>
                     )}

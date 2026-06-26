@@ -244,6 +244,14 @@ def register(
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")
         await _ensure_not_cancelled(e, "RSVPs are closed")
+        # Admin-only RSVP lockdown (iter 89): admins can RSVP themselves and
+        # members through the admin-rsvp endpoint, but members can't self-RSVP
+        # once the organizers flip this flag.
+        if e.get("rsvps_closed") and user.get("role") != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="RSVPs for this event are closed. Please contact an admin to be added to the list.",
+            )
         if e.get("is_paid"):
             raise HTTPException(
                 status_code=402,
@@ -407,6 +415,11 @@ def register(
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")
         await _ensure_not_cancelled(e, "payments are closed")
+        if e.get("rsvps_closed") and user.get("role") != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="RSVPs for this event are closed. Please contact an admin to be added to the list.",
+            )
         if not e.get("is_paid"):
             raise HTTPException(status_code=400, detail="This event is free — RSVP directly without payment.")
         # Block double-payments: if there's already a pending or completed event_ticket
@@ -524,6 +537,13 @@ def register(
         if not e:
             raise HTTPException(status_code=404, detail="Event not found")
         await _ensure_not_cancelled(e, "guest list is locked")
+        # When RSVPs are closed, members can no longer modify their own guest
+        # list (admins still can via /admin-rsvp + /admin/rsvps/{}/guests).
+        if e.get("rsvps_closed") and user.get("role") != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="RSVPs for this event are closed. Please contact an admin to update your guest list.",
+            )
         prev_guests = rsvp.get("guests", []) or []
         prev_by_name = {(g.get("name") or "").strip().lower(): g for g in prev_guests}
         new_guests = []

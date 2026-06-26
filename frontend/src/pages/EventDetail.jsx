@@ -51,6 +51,10 @@ export default function EventDetail() {
     const myRsvp = user && rsvps.find((r) => r.user_id === user.id);
     const myGuests = myRsvp?.guests || [];
     const allowsTickets = !!event?.allows_ticket_types;
+    // Iter 89: when admins flip "rsvps_closed", members can no longer self-RSVP
+    // or edit their own guest list. Admins keep full access via the dialogs.
+    const isAdmin = user?.role === "admin";
+    const rsvpsLocked = !!event && (event.cancelled || (event.rsvps_closed && !isAdmin));
     // Guests drafted before the member clicks RSVP. Lets them submit one
     // combined request (member + guests in the same POST) so they receive a
     // single confirmation email instead of two (RSVP → ticket; then later
@@ -136,6 +140,18 @@ export default function EventDetail() {
                 </div>
             )}
 
+            {!event.cancelled && event.rsvps_closed && (
+                <div
+                    className="mt-6 rounded-2xl border-2 border-amber-300 bg-amber-50 p-5 text-amber-900"
+                    data-testid="event-rsvps-closed-notice"
+                >
+                    <div className="font-heading font-bold text-lg">🔒 RSVPs are closed for this event.</div>
+                    <div className="text-sm mt-1 text-amber-800">
+                        The organizers have locked the headcount. Please contact an admin if you need to be added, removed, or change your guest list.
+                    </div>
+                </div>
+            )}
+
             <div className="grid lg:grid-cols-[1fr_300px] gap-10 mt-8">
                 <div>
                     <h2 className="font-heading text-xl font-semibold mb-3">About this event</h2>
@@ -166,7 +182,7 @@ export default function EventDetail() {
                         </div>
                     </div>
                     {/* External ticket / payment link — opens in a new tab, no internal RSVP */}
-                    {event.external_url && !event.cancelled && (
+                    {event.external_url && !rsvpsLocked && (
                         <a
                             href={event.external_url}
                             target="_blank"
@@ -178,13 +194,13 @@ export default function EventDetail() {
                         </a>
                     )}
                     {/* Paid event — Zeffy checkout takes precedence over the free flow */}
-                    {!event.external_url && event.is_paid && !hasRsvped && !event.cancelled && (
+                    {!event.external_url && event.is_paid && !hasRsvped && !rsvpsLocked && (
                         <PaidEventCheckout event={event} onPaid={() => load()} />
                     )}
-                    {!event.external_url && !event.is_paid && !hasRsvped && allowsTickets && !event.cancelled && (
+                    {!event.external_url && !event.is_paid && !hasRsvped && allowsTickets && !rsvpsLocked && (
                         <MemberTicketPicker event={event} onRsvp={(tt) => rsvpWithGuests(pendingGuests, tt)} disabled={loading} />
                     )}
-                    {!event.external_url && !event.is_paid && !hasRsvped && !allowsTickets && !event.cancelled && (
+                    {!event.external_url && !event.is_paid && !hasRsvped && !allowsTickets && !rsvpsLocked && (
                         <Button
                             onClick={toggleRsvp}
                             disabled={loading}
@@ -194,7 +210,7 @@ export default function EventDetail() {
                             {loading ? "Updating…" : (pendingGuests.length > 0 ? `RSVP — me + ${pendingGuests.length} guest${pendingGuests.length === 1 ? "" : "s"}` : "RSVP")}
                         </Button>
                     )}
-                    {!hasRsvped && !event.cancelled && !event.external_url && !event.is_paid && (
+                    {!hasRsvped && !rsvpsLocked && !event.external_url && !event.is_paid && (
                         <GuestManager
                             guests={pendingGuests}
                             onSave={async (guests) => setPendingGuests(guests)}
@@ -213,17 +229,31 @@ export default function EventDetail() {
                             RSVPs closed — cancelled
                         </Button>
                     )}
+                    {!event.cancelled && event.rsvps_closed && !isAdmin && !hasRsvped && (
+                        <Button
+                            disabled
+                            className="w-full rounded-full py-6 bg-muted text-muted-foreground cursor-not-allowed"
+                            data-testid="rsvp-btn-closed"
+                        >
+                            🔒 RSVPs are closed — contact an admin
+                        </Button>
+                    )}
                     {hasRsvped && (
                         <Button
                             onClick={toggleRsvp}
-                            disabled={loading}
-                            className="w-full rounded-full py-6 bg-accent hover:bg-accent/90 text-accent-foreground"
+                            disabled={loading || rsvpsLocked}
+                            className={`w-full rounded-full py-6 ${rsvpsLocked ? "bg-muted text-muted-foreground cursor-not-allowed" : "bg-accent hover:bg-accent/90 text-accent-foreground"}`}
                             data-testid="rsvp-btn"
+                            title={rsvpsLocked && !event.cancelled ? "RSVPs are closed — contact an admin to cancel" : undefined}
                         >
-                            {loading ? "Updating…" : `You're going (${(myRsvp?.ticket_type || "general").replace("_", " ")}) — cancel`}
+                            {loading ? "Updating…" : (
+                                rsvpsLocked && !event.cancelled
+                                    ? `You're going (${(myRsvp?.ticket_type || "general").replace("_", " ")}) — locked`
+                                    : `You're going (${(myRsvp?.ticket_type || "general").replace("_", " ")}) — cancel`
+                            )}
                         </Button>
                     )}
-                    {hasRsvped && !event.cancelled && (
+                    {hasRsvped && !rsvpsLocked && (
                         <GuestManager guests={myGuests} onSave={updateGuests} disabled={loading} allowsTickets={allowsTickets} enabledTicketTypes={event.enabled_ticket_types || []} />
                     )}
                     {rsvps.length > 0 && (

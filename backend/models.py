@@ -345,6 +345,7 @@ class EventIn(BaseModel):
     enabled_ticket_types: List[str] = []
     cancelled: bool = False
     cancellation_note: str = ""
+    rsvps_closed: bool = False
     is_paid: bool = False
     payment_url: str = ""
     payment_amount: float = 0.0
@@ -369,6 +370,7 @@ class EventUpdateIn(BaseModel):
     enabled_ticket_types: Optional[List[str]] = None
     cancelled: Optional[bool] = None
     cancellation_note: Optional[str] = None
+    rsvps_closed: Optional[bool] = None
     is_paid: Optional[bool] = None
     payment_url: Optional[str] = None
     payment_amount: Optional[float] = None
