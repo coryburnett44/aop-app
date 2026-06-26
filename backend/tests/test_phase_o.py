@@ -237,10 +237,37 @@ class TestAutomatedEmails:
         assert b["subject"] == new_subject
         assert b["sections"]["documents"] is False
 
-    def test_delete_builtin_forbidden(self, admin_session):
-        r = admin_session.delete(f"{API}/automated-emails/builtin_weekly_digest", timeout=10)
-        assert r.status_code == 400
-        assert "deleted" in r.text.lower() and "built-in" in r.text.lower()
+    def test_delete_builtin_now_allowed_for_admins(self, admin_session):
+        """Iter 89.3 — admins have override authority on built-ins too.
+        We delete, assert the tombstone-protected outcome, then immediately
+        restore via the API/PUT round-trip so downstream tests in this class
+        still find the campaign. (This avoids relying on a backend restart.)"""
+        # Snapshot current state.
+        listed = admin_session.get(f"{API}/automated-emails", timeout=10).json()
+        target = next((c for c in listed if c["id"] == "builtin_weekly_digest"), None)
+        if not target:
+            pytest.skip("builtin_weekly_digest not in current list")
+
+        try:
+            r = admin_session.delete(f"{API}/automated-emails/builtin_weekly_digest", timeout=10)
+            assert r.status_code == 200, r.text
+            # The old "Built-in automated emails cannot be deleted" error must not appear.
+            assert "built-in" not in r.text.lower()
+            after = admin_session.get(f"{API}/automated-emails", timeout=10).json()
+            assert not any(c["id"] == "builtin_weekly_digest" for c in after)
+        finally:
+            # Restore directly via Mongo so the rest of the suite can use it.
+            import os as _os
+            from pymongo import MongoClient as _MC
+            _murl = _os.environ.get("MONGO_URL", "mongodb://localhost:27017").strip().strip('"').strip("'")
+            _dbn = _os.environ.get("DB_NAME", "clubhaven").strip().strip('"').strip("'")
+            _db = _MC(_murl)[_dbn]
+            _db.deleted_builtin_automated_emails.delete_one({"id": "builtin_weekly_digest"})
+            _db.automated_emails.update_one(
+                {"id": "builtin_weekly_digest"},
+                {"$setOnInsert": target},
+                upsert=True,
+            )
 
     def test_preview_substitutes_merge_tags(self, admin_session):
         # Set subject containing a merge tag to test subject substitution per spec

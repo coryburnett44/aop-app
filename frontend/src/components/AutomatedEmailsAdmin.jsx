@@ -65,7 +65,7 @@ export default function AutomatedEmailsAdmin() {
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h2 className="font-heading text-2xl font-bold">Automated emails</h2>
-                    <p className="text-sm text-muted-foreground mt-1">Scheduled campaigns that auto-render with member data. The built-in Weekly Digest can be edited or disabled but not deleted.</p>
+                    <p className="text-sm text-muted-foreground mt-1">Scheduled campaigns that auto-render with member data. Admins can edit, pause, or delete any campaign — including the built-ins.</p>
                 </div>
                 <Button onClick={() => setEditing({ _new: true })} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-automated-email-btn">
                     <Plus className="h-4 w-4 mr-1.5" /> New campaign
@@ -106,6 +106,22 @@ export default function AutomatedEmailsAdmin() {
                                 </Button>
                                 {!it.is_builtin && (
                                     <Button size="sm" variant="ghost" onClick={() => remove(it)} className="text-destructive hover:bg-destructive/10 rounded-full" data-testid={`auto-delete-${it.id}`}>
+                                        <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                )}
+                                {it.is_builtin && (
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => {
+                                            if (window.confirm(`Permanently delete the built-in "${it.name}" campaign? The boot seeder will skip recreating it. (Undo: drop the tombstone in deleted_builtin_automated_emails.)`)) {
+                                                remove(it);
+                                            }
+                                        }}
+                                        className="text-destructive hover:bg-destructive/10 rounded-full"
+                                        data-testid={`auto-delete-${it.id}`}
+                                        title="Admin override — permanently delete this built-in campaign"
+                                    >
                                         <Trash2 className="h-4 w-4" />
                                     </Button>
                                 )}
@@ -303,8 +319,8 @@ function CampaignEditor({ editing, onClose, onSaved }) {
                     <div className="grid sm:grid-cols-2 gap-4">
                         <div>
                             <Label>Campaign name</Label>
-                            <Input value={form.name || ""} onChange={(e) => set("name", e.target.value)} className="rounded-xl mt-1.5" data-testid="auto-name-input" disabled={form.is_builtin} />
-                            {form.is_builtin && <p className="text-xs text-muted-foreground mt-1">Built-in campaign name is locked.</p>}
+                            <Input value={form.name || ""} onChange={(e) => set("name", e.target.value)} className="rounded-xl mt-1.5" data-testid="auto-name-input" />
+                            {form.is_builtin && <p className="text-xs text-muted-foreground mt-1">This is a built-in campaign — admins can rename it freely.</p>}
                         </div>
                         <div>
                             <Label>Schedule (cron)</Label>

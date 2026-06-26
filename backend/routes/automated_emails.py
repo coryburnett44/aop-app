@@ -603,6 +603,11 @@ async def seed_builtin_automated_emails():
     existing = await db.automated_emails.find_one({"id": "builtin_weekly_digest"})
     if existing:
         return
+    # Honor admin override: if an admin previously deleted this built-in,
+    # don't silently resurrect it on the next boot.
+    if await db.deleted_builtin_automated_emails.find_one({"id": "builtin_weekly_digest"}):
+        logger.info("Skipping Weekly Digest seed — tombstoned by an admin.")
+        return
     body_html = """<div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f7f5f0">
   <h1 style="color:#0A2463;margin:0 0 4px;font-size:28px">Good morning, {{member_name}}</h1>
   <p style="color:#666;font-size:14px">Here's what's happening this week in Alpha Omega Phi.</p>
@@ -640,6 +645,9 @@ async def seed_builtin_automated_emails():
 async def seed_builtin_dues_reminders():
     existing = await db.automated_emails.find_one({"id": "builtin_dues_reminders"})
     if existing:
+        return
+    if await db.deleted_builtin_automated_emails.find_one({"id": "builtin_dues_reminders"}):
+        logger.info("Skipping Annual Dues Reminders seed — tombstoned by an admin.")
         return
     next_run = _next_cron_run("0 9 * * *")
     doc = {
@@ -753,6 +761,7 @@ def register(
         next_run = _next_cron_run(body.cron_expression)
         if (e.get("kind") or "broadcast") == "dues_reminders":
             sets = {
+                "name": body.name.strip(),
                 "is_active": body.is_active,
                 "cron_expression": body.cron_expression,
                 "next_run_at": iso(next_run) if next_run else None,
@@ -774,12 +783,27 @@ def register(
         return _automated_email_out(fresh)
 
     @api.delete("/automated-emails/{eid}")
-    async def delete_automated_email(eid: str, _: dict = Depends(admin_tab_dep("email"))):
+    async def delete_automated_email(eid: str, admin: dict = Depends(admin_tab_dep("email"))):
+        """Admins have full override authority — they can delete any campaign,
+        including built-in ones. Deleted built-ins are tombstoned in
+        `deleted_builtin_automated_emails` so the boot-time seeders won't
+        silently resurrect them on the next restart."""
         e = await db.automated_emails.find_one({"id": eid})
         if not e:
             raise HTTPException(status_code=404, detail="Automated email not found")
         if e.get("is_builtin"):
-            raise HTTPException(status_code=400, detail="Built-in automated emails can be disabled but not deleted.")
+            await db.deleted_builtin_automated_emails.update_one(
+                {"id": eid},
+                {"$setOnInsert": {
+                    "id": eid,
+                    "name": e.get("name", ""),
+                    "kind": e.get("kind", "broadcast"),
+                    "deleted_by": admin["id"],
+                    "deleted_by_name": admin.get("name", ""),
+                    "deleted_at": iso(now_utc()),
+                }},
+                upsert=True,
+            )
         await db.automated_emails.delete_one({"id": eid})
         return {"ok": True}
 

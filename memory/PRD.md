@@ -15,6 +15,24 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 89.4 — Modularization: extract `routes/members_admin.py` (2026-02-25) [P1]
+- **`routes/members_admin.py` (new, ~657 lines)**: full extraction of the admin member CRUD + bulk-import surface out of `server.py`:
+  - `POST /api/admin/members` — create
+  - `POST /api/admin/members/bulk-import` — CSV bulk import (handles renewal_date → +365d, set-password email per row, duplicate detection)
+  - `GET /api/admin/members/bulk-import/template` — CSV template download
+  - `POST /api/admin/members/{uid}/resend-set-password` — single token resend
+  - `POST /api/admin/members/bulk-resend-set-password` — bulk token resend for everyone flagged `pending_set_password=true`
+  - `PUT /api/members/{uid}` — admin update (role/tier/expiry guarded to full admins)
+  - `DELETE /api/members/{uid}` — hard-delete personal data, soft-delete chat threads, anonymize PayPal txns
+  - `PUT /api/members/{uid}/role` `/chapter` `/tier` — focused single-field changes
+- **`server.py`: 4,436 → 3,756 lines (-680 lines, ~15% smaller).** Wired via the same `register(api, **deps)` pattern used by other extracted modules; `RESEND_API_KEY` is read via a callable (`resend_api_key_getter`) so future re-key swaps don't require re-registration.
+- **Tests**: new `test_iteration89_4_members_admin_module.py` — 5/5 pass (module exports + server.py no longer owns symbols + template endpoint + create/update/role/delete roundtrip + duplicate-email rejection). Full regression suite re-run: **74/74 pass.**
+
+### Iteration 89.3 — Admin override on built-in automated-email campaigns (2026-02-25) [FOLLOW-UP]
+- **Backend `routes/automated_emails.py`**: dropped the "Built-in automated emails cannot be deleted" 400. Deleting a built-in now tombstones the id in `deleted_builtin_automated_emails` and the boot-time `seed_builtin_*` functions honor the tombstone so they don't silently resurrect deleted built-ins. The dues-reminders PUT now also persists the `name` field (previously dropped).
+- **Frontend `AutomatedEmailsAdmin.jsx`**: delete-bin is now visible for built-ins (with a `window.confirm` explainer noting the tombstone is reversible). The Title input is no longer disabled for built-ins, and the explainer text was rewritten to reflect the new override policy.
+- **Test changes**: `test_phase_o.py::test_delete_builtin_forbidden` → `test_delete_builtin_now_allowed_for_admins` (idempotent — restores via direct Mongo write). New `tests/test_iteration89_3_admin_override_builtins.py` covers the full delete-tombstone-restore-reseed loop + the dues-reminder rename + the 404 path. All 3 new tests pass; the broader iter88+iter89 + phase_o suite still **40/40 green**.
+
 ### Iteration 89.2 — Admin override on default photo album rename (2026-02-25) [FOLLOW-UP]
 - **User feedback**: "Admins should have override authority to change or delete anything on the website" — the previous block on renaming default albums was too conservative.
 - **Backend `routes/photos.py` PUT**: removed the `is_default` early-return; renaming a default album now tombstones the old canonical name in `deleted_default_albums` (so the boot-time `seed_default_photo_albums` won't recreate it) and demotes the album to `is_default=False`. Photos cascade-rename as usual.
