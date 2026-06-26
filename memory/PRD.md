@@ -15,6 +15,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 89 — Photo album rename + RSVP-closed lockdown (2026-02-25) [FEATURE]
+- **Photo album rename** (`routes/photos.py` + `pages/Photos.jsx`):
+  - `AlbumUpdateIn` now accepts `name`. PUT validates non-empty, blocks renaming default (`is_default=true`) albums, blocks case-insensitive name collisions across other albums, and cascades the rename to every photo whose `album` field referenced the old name.
+  - `EditAlbumDialog` exposes a new Title input (`data-testid=edit-album-name-input`), pre-filled with the current name. The input is disabled with a yellow hint for default albums.
+- **RSVP-closed lockdown** (admins-only headcount mode):
+  - `models.EventIn` / `EventUpdateIn` gain `rsvps_closed: bool` (default `False`). `event_out` exposes it.
+  - `routes/rsvps.py`: `rsvp_event` (POST), `event_payment_confirm` (POST), and `update_rsvp_guests` (PUT) now return **403** with a clear message when `event.rsvps_closed` is true and the caller is not an admin. `admin_rsvp_event` deliberately bypasses the lockdown so admins keep full control.
+  - `pages/Admin.jsx`: new orange `event-rsvps-closed-toggle` renders below the existing cancelled toggle (only when the event isn't cancelled) with an explainer about the lockdown.
+  - `pages/EventDetail.jsx`: computes `rsvpsLocked = event.cancelled || (event.rsvps_closed && !isAdmin)` and gates every member-facing button on it. Renders an amber `event-rsvps-closed-notice` plus a disabled `rsvp-btn-closed` for non-admin members; admins retain `AdminRsvpForMemberDialog` and `AdminManageRsvpsDialog`.
+- **Tests**: new `tests/test_iteration89_album_rename_and_rsvp_lockdown.py` — **10/10 pass** (rename happy-path + empty-name + case-insensitive clash + default-album block + category-combo; rsvps_closed surfaces on event_out + member POST/RSVP-guests blocked + admin-rsvp still works + re-open restores access). Existing RSVP/album regressions still **36/36 green**.
+- **Verification** (`testing_agent_v3_fork iteration_89.json` — `retest_needed: false`, 0 action items): both flows confirmed end-to-end through the deployed preview UI as admin AND member (Riley Chen).
+
 ### Iteration 88 — Modularization: extract automated_emails out of server.py (2026-02-25)
 - **`routes/automated_emails.py` (new, ~830 lines)**: extracted the entire automated-email subsystem out of `server.py`:
   - Admin CRUD + preview + run-now endpoints (`GET/POST/PUT/DELETE /api/automated-emails`, `/merge-tags`, `/dues-reminder-defaults`, `/{eid}/preview`, `/{eid}/run-now`).
