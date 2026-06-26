@@ -144,11 +144,6 @@ def register(
             if not new_name:
                 raise HTTPException(status_code=400, detail="Album name cannot be empty.")
             if new_name != a.get("name"):
-                if a.get("is_default"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Default albums cannot be renamed. Delete it and create a new album if you need a different title.",
-                    )
                 # Case-insensitive uniqueness across all OTHER albums.
                 clash = await db.photo_albums.find_one({
                     "id": {"$ne": album_id},
@@ -163,6 +158,23 @@ def register(
                     {"album": a["name"]},
                     {"$set": {"album": new_name}},
                 )
+                # If this was a default (canonical-seeded) album, tombstone the
+                # OLD canonical name so the boot-time `seed_default_photo_albums`
+                # doesn't re-create it. The renamed album also loses its
+                # `is_default` badge — it's now a regular admin-managed album.
+                if a.get("is_default"):
+                    await db.deleted_default_albums.update_one(
+                        {"name": a["name"]},
+                        {"$setOnInsert": {
+                            "name": a["name"],
+                            "renamed_to": new_name,
+                            "renamed_by": user["id"],
+                            "renamed_by_name": user.get("name", ""),
+                            "renamed_at": iso(now_utc()),
+                        }},
+                        upsert=True,
+                    )
+                    updates["is_default"] = False
         if body.category and body.category in photo_album_categories:
             updates["category"] = body.category
         if body.cover_url is not None:

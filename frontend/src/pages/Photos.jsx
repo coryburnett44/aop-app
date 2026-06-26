@@ -728,7 +728,6 @@ function EditAlbumDialog({ album, onClose, onSaved }) {
     if (!album) return null;
 
     const trimmed = name.trim();
-    const isDefault = !!album.is_default;
     const nameChanged = trimmed && trimmed !== album.name;
 
     async function save() {
@@ -761,13 +760,13 @@ function EditAlbumDialog({ album, onClose, onSaved }) {
                             placeholder="Album title"
                             className="rounded-xl mt-1.5"
                             data-testid="edit-album-name-input"
-                            disabled={isDefault}
                         />
-                        {isDefault ? (
-                            <p className="text-xs text-amber-700 mt-1.5">Default albums cannot be renamed.</p>
-                        ) : (
-                            <p className="text-xs text-slate-500 mt-1.5">Existing photos move with the new title automatically.</p>
-                        )}
+                        <p className="text-xs text-slate-500 mt-1.5">
+                            Existing photos move with the new title automatically.
+                            {album.is_default && (
+                                <> Renaming this default album will convert it into a custom album (the original name won't be re-created on the next boot).</>
+                            )}
+                        </p>
                     </div>
                     <div>
                         <Label>Category</Label>

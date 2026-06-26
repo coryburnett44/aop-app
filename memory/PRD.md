@@ -15,6 +15,12 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 89.2 — Admin override on default photo album rename (2026-02-25) [FOLLOW-UP]
+- **User feedback**: "Admins should have override authority to change or delete anything on the website" — the previous block on renaming default albums was too conservative.
+- **Backend `routes/photos.py` PUT**: removed the `is_default` early-return; renaming a default album now tombstones the old canonical name in `deleted_default_albums` (so the boot-time `seed_default_photo_albums` won't recreate it) and demotes the album to `is_default=False`. Photos cascade-rename as usual.
+- **Frontend `Photos.jsx`**: dropped the disabled state on the Title input for default albums. The helper text now reads "Renaming this default album will convert it into a custom album (the original name won't be re-created on the next boot)." so admins know exactly what flip-the-default-bit-off implies.
+- **Tests**: replaced `test_default_album_rename_blocked` with `test_default_album_rename_now_allowed_for_admins` — asserts the rename succeeds, the tombstone row exists with the correct `renamed_to` value, and `is_default` is flipped to False. Cleanup fully reverses the mutation via pymongo (`deleted_default_albums.delete_one` + restore `is_default=True`). **All 11/11 iter89 tests pass.**
+
 ### Iteration 89.1 — Sub-event RSVP-closed lockdown (2026-02-25) [FOLLOW-UP]
 - **Backend**: nothing new — sub-events are regular event documents so the same `rsvps_closed` enforcement on `POST /events/{id}/rsvp`, `PUT /events/{id}/rsvp/guests`, and `POST /events/{id}/payment/confirm` already protects them.
 - **`EventDetail.jsx` `SubEventForm`**: added a new `sub-event-rsvps-closed-toggle` checkbox in the inline sub-event edit modal (mirrors the main event editor's amber-bordered toggle). PUT payload now includes `rsvps_closed`.

@@ -3,7 +3,9 @@
 Covers two new features:
   1. Admins/album creators can update the album title via PUT /api/photos/albums/{id}.
      - Photos cascade-rename (photo.album field rewritten).
-     - Default albums refuse rename.
+     - Admin override extends to default (canonical) albums — the old name is
+       tombstoned so the boot seeder won't recreate it; the album is demoted
+       from `is_default=True` in the process.
      - Empty + clashing names rejected.
   2. Admins can flip events.rsvps_closed=true to lock the headcount.
      - Member self-RSVP (POST /events/{id}/rsvp) → 403.
@@ -16,6 +18,7 @@ import uuid
 
 import pytest
 import requests
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get(
     "REACT_APP_BACKEND_URL",
@@ -48,6 +51,15 @@ def member_id(member_s):
     r = member_s.get(f"{BASE_URL}/api/auth/me", timeout=20)
     assert r.status_code == 200, r.text
     return r.json()["id"]
+
+
+@pytest.fixture(scope="module")
+def mongo_db():
+    """Direct DB handle for fully-reversible cleanups (e.g. removing the
+    `deleted_default_albums` tombstone created by the default-rename test)."""
+    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017").strip().strip('"').strip("'")
+    db_name = os.environ.get("DB_NAME", "clubhaven").strip().strip('"').strip("'")
+    return MongoClient(mongo_url)[db_name]
 
 
 # ===================================================================
@@ -110,18 +122,49 @@ class TestAlbumRename:
             self._cleanup(admin_s, a1["id"])
             self._cleanup(admin_s, a2["id"])
 
-    def test_default_album_rename_blocked(self, admin_s):
+    def test_default_album_rename_now_allowed_for_admins(self, admin_s, mongo_db):
+        """Iter 89.2 — admins have override authority on default albums too.
+        The rename tombstones the old canonical name so the boot seeder won't
+        resurrect it, and demotes the album to a regular (non-default) one.
+        Cleanup restores the canonical name, removes the tombstone, and
+        re-flags the album as default so the suite is fully reversible."""
         lst = admin_s.get(f"{BASE_URL}/api/photos/albums", timeout=20).json()
         defaults = [a for a in lst if a.get("is_default")]
         if not defaults:
             pytest.skip("no default albums in this environment")
         d = defaults[0]
-        r = admin_s.put(
-            f"{BASE_URL}/api/photos/albums/{d['id']}",
-            json={"name": f"Tampered {uuid.uuid4().hex[:6]}"}, timeout=20,
-        )
-        assert r.status_code == 400, r.text
-        assert "default" in r.text.lower()
+        original_name = d["name"]
+        new_name = f"Iter89.2 Renamed Default {uuid.uuid4().hex[:6]}"
+        try:
+            r = admin_s.put(
+                f"{BASE_URL}/api/photos/albums/{d['id']}",
+                json={"name": new_name}, timeout=20,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["name"] == new_name
+
+            # GET list: the new name is present, the old canonical name is gone,
+            # AND the album lost its is_default badge.
+            lst2 = admin_s.get(f"{BASE_URL}/api/photos/albums", timeout=20).json()
+            mine = next((a for a in lst2 if a["id"] == d["id"]), None)
+            assert mine is not None
+            assert mine["name"] == new_name
+            assert mine.get("is_default") is False
+            assert not any(a["name"] == original_name for a in lst2)
+
+            # Tombstone exists so the seeder skips this canonical name on boot.
+            tomb = mongo_db.deleted_default_albums.find_one({"name": original_name})
+            assert tomb is not None
+            assert tomb.get("renamed_to") == new_name
+        finally:
+            # Fully reverse the test mutation so the suite stays idempotent.
+            admin_s.put(
+                f"{BASE_URL}/api/photos/albums/{d['id']}",
+                json={"name": original_name}, timeout=20,
+            )
+            mongo_db.deleted_default_albums.delete_one({"name": original_name})
+            mongo_db.photo_albums.update_one({"id": d["id"]}, {"$set": {"is_default": True}})
 
     def test_category_change_still_works_alongside_name(self, admin_s):
         album, _ = self._create(admin_s, "E")
