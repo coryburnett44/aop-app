@@ -48,6 +48,10 @@ class EmailBlastIn(BaseModel):
     tier_id: Optional[str] = None
     chapter_id: Optional[str] = None
     custom_user_ids: List[str] = []
+    # Iter 90: ad-hoc email addresses outside the membership roster (vendors,
+    # press, sister-chapter officers, etc). Validation is best-effort — any
+    # malformed address is silently skipped during resolve_segment.
+    external_emails: List[str] = []
     test_only: bool = False
 
 
@@ -59,6 +63,7 @@ class EmailDraftIn(BaseModel):
     tier_id: Optional[str] = None
     chapter_id: Optional[str] = None
     custom_user_ids: List[str] = []
+    external_emails: List[str] = []
     is_autosave: bool = False
 
 
@@ -111,6 +116,7 @@ def _draft_out(d: dict) -> dict:
         "tier_id": d.get("tier_id"),
         "chapter_id": d.get("chapter_id"),
         "custom_user_ids": d.get("custom_user_ids") or [],
+        "external_emails": d.get("external_emails") or [],
         "is_autosave": bool(d.get("is_autosave", False)),
         "created_at": d.get("created_at"),
         "updated_at": d.get("updated_at"),
@@ -283,24 +289,69 @@ def register(
 ):
 
     # ---------- Helpers used by multiple routes (closure-captured deps) ----------
+    _EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+
+    def _coerce_external_emails(raw: List[str]) -> List[dict]:
+        """Turn a list of arbitrary strings into synthetic recipient dicts the
+        blast loop can iterate. Strips whitespace, lowercases, dedupes within
+        the list, and silently drops malformed entries."""
+        seen: set = set()
+        out: List[dict] = []
+        for entry in raw or []:
+            if not entry or not isinstance(entry, str):
+                continue
+            for token in re.split(r"[\s,;\n]+", entry.strip()):
+                addr = token.strip().lower()
+                if not addr or addr in seen or not _EMAIL_RE.match(addr):
+                    continue
+                seen.add(addr)
+                out.append({
+                    "id": f"ext:{addr}",
+                    "email": addr,
+                    "name": addr.split("@")[0],
+                    "first_name": "",
+                    "last_name": "",
+                    "line_name": "",
+                    "_external": True,
+                })
+        return out
+
     async def resolve_segment(body: EmailBlastIn) -> List[dict]:
         q: dict = {}
+        # Iter 90: when segment=custom we MUST honor the explicit list — even if
+        # it's empty (otherwise an admin sending to "just these 3 externals" would
+        # accidentally blast every active member because the `q` would be empty).
+        skip_member_query = False
         if body.segment == "admins":
             q["role"] = "admin"
         elif body.segment == "tier" and body.tier_id:
             q["tier_id"] = body.tier_id
         elif body.segment == "chapter" and body.chapter_id:
             q["chapter_id"] = body.chapter_id
-        elif body.segment == "custom" and body.custom_user_ids:
-            q["id"] = {"$in": body.custom_user_ids}
+        elif body.segment == "custom":
+            if body.custom_user_ids:
+                q["id"] = {"$in": body.custom_user_ids}
+            else:
+                # No member ids picked → only external addresses count.
+                skip_member_query = True
         elif body.segment == "active":
             q["status_override"] = {"$ne": "deceased"}
         # test_only blasts bypass opt-out filtering since they only go to the admin
         if not body.test_only:
             q["email_opt_out"] = {"$ne": True}
             q["email_prefs.blasts"] = {"$ne": False}
-        cursor = db.users.find(q, {"_id": 0, "password_hash": 0}).limit(2000)
-        return await cursor.to_list(2000)
+        if skip_member_query:
+            members: List[dict] = []
+        else:
+            cursor = db.users.find(q, {"_id": 0, "password_hash": 0}).limit(2000)
+            members = await cursor.to_list(2000)
+        # Iter 90: append external recipients on top of the member roster.
+        # External addresses always go through (they're explicit admin-entered
+        # opt-ins — no opt-out cookie applies). Dedupe against member emails so
+        # admins don't double-send to a member who is also in the external box.
+        member_emails = {(u.get("email") or "").lower() for u in members}
+        externals = [e for e in _coerce_external_emails(body.external_emails) if e["email"] not in member_emails]
+        return members + externals
 
     def render_variables(body_html: str, recipient: dict) -> str:
         """Replace {{name}}, {{first_name}}, {{last_name}}, {{line_name}}, {{email}}.
@@ -515,6 +566,7 @@ def register(
                         "tier_id": body.tier_id,
                         "chapter_id": body.chapter_id,
                         "custom_user_ids": body.custom_user_ids,
+                        "external_emails": body.external_emails,
                         "updated_at": now,
                     }},
                 )
@@ -545,6 +597,7 @@ def register(
                 "tier_id": body.tier_id,
                 "chapter_id": body.chapter_id,
                 "custom_user_ids": body.custom_user_ids,
+                "external_emails": body.external_emails,
                 "updated_at": iso(now_utc()),
             }},
         )

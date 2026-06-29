@@ -15,6 +15,17 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 90 — Photo loading perf + Email multi-select & external recipients (2026-02-26) [FEATURE]
+- **Photo loading speed**: three layered fixes addressing the user-reported slowness.
+  - MongoDB indexes added: `photos.album`, `photos.storage_path`, `(album, created_at)` — the album-list aggregation + file-proxy lookups go from collection-scan to indexed.
+  - `/api/files/{storage_path}` proxy (`server.py`) now emits `Cache-Control: private, max-age=31536000, immutable` + a stable `ETag` (storage paths are uuid-stamped, hence immutable). Repeat hits with `If-None-Match` short-circuit to **304 Not Modified** with no object-storage round-trip and no body bytes — verified via curl.
+  - `Photos.jsx` thumbnails now use `<img loading="lazy" decoding="async">` so below-the-fold albums + photos don't all download at once.
+- **Email composer — multi-select members + external recipients**:
+  - `EmailBlastIn` + `EmailDraftIn` (`routes/email.py`) now accept `external_emails: List[str]`. `custom_user_ids` was already plural — the frontend just hadn't exposed it.
+  - `resolve_segment` parses externals via a strict regex (`[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+`), normalizes/dedupes case-insensitively, drops malformed entries silently, and dedupes the final list against member emails so admins can't double-send. Also fixed an edge case where `segment=custom` with empty `custom_user_ids` would silently blast every active member — now returns 0 members and lets externals through.
+  - `Admin.jsx` `EmailBlastAdmin`: single-select `individualId` → multi-select `individualIds` array with badge-style chip UI (each member has a `×` remove button). New external-emails `<textarea>` (newline / comma / semicolon separated) with an inline note explaining opt-out preferences don't apply to external recipients. Both new fields persist in drafts and round-trip on load.
+- **Tests**: new `tests/test_iteration90_photo_cache_and_email_multi.py` — **8/8 pass** (ETag emission, 304 short-circuit, 404 on missing files, externals-only preview, members+externals combo, case-insensitive dedupe against member emails, draft round-trip, empty-custom-segment safety). Combined email + photos + members regression suite: **78/78 pass**.
+
 ### Iteration 89.4 — Modularization: extract `routes/members_admin.py` (2026-02-25) [P1]
 - **`routes/members_admin.py` (new, ~657 lines)**: full extraction of the admin member CRUD + bulk-import surface out of `server.py`:
   - `POST /api/admin/members` — create

@@ -297,7 +297,7 @@ function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
         >
             <div className="aspect-[4/3] bg-gradient-to-br from-primary/15 to-primary/5 grid place-items-center relative overflow-hidden">
                 {album.cover_url ? (
-                    <img src={mediaUrl(album.cover_url)} alt={album.name} className="absolute inset-0 w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" data-testid={`album-cover-${album.name}`} />
+                    <img src={mediaUrl(album.cover_url)} alt={album.name} loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" data-testid={`album-cover-${album.name}`} />
                 ) : (
                     <ImageIcon className="h-12 w-12 text-primary/40" />
                 )}
@@ -393,7 +393,7 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
                 className={`group relative aspect-square rounded-2xl overflow-hidden bg-muted border-4 shadow-warm transition-all ${selected ? "border-primary" : "border-transparent hover:border-primary/40"}`}
                 data-testid={`photo-select-${photo.id}`}
             >
-                {src ? <img src={src} alt={photo.title} className="w-full h-full object-contain" /> : <div className="w-full h-full animate-pulse bg-muted" />}
+                {src ? <img src={src} alt={photo.title} loading="lazy" decoding="async" className="w-full h-full object-contain" /> : <div className="w-full h-full animate-pulse bg-muted" />}
                 <div className={`absolute top-2 left-2 rounded-full p-1.5 shadow ${selected ? "bg-primary text-white" : "bg-white/90 text-slate-400"}`}>
                     {selected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
                 </div>
@@ -411,7 +411,7 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
                 data-testid={`photo-open-${photo.id}`}
             >
                 {src ? (
-                    <img src={src} alt={photo.title} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
+                    <img src={src} alt={photo.title} loading="lazy" decoding="async" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
                 ) : (
                     <div className="w-full h-full animate-pulse bg-muted" />
                 )}

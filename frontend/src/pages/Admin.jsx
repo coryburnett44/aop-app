@@ -3172,7 +3172,8 @@ function ComposeBlast() {
     const [segment, setSegment] = useState("active");
     const [tier_id, setTierId] = useState("");
     const [chapter_id, setChapterId] = useState("");
-    const [individualId, setIndividualId] = useState("");
+    const [individualIds, setIndividualIds] = useState([]);
+    const [externalEmails, setExternalEmails] = useState("");
     const [memberSearch, setMemberSearch] = useState("");
     const [tiers, setTiers] = useState([]);
     const [chapters, setChapters] = useState([]);
@@ -3200,6 +3201,12 @@ function ComposeBlast() {
     }
 
     function buildDraftPayload(extra = {}) {
+        // Iter 90: split the textarea on newlines/commas/semicolons. The
+        // backend re-validates and dedupes, so we just hand it the raw list.
+        const externals = externalEmails
+            .split(/[\s,;\n]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
         return {
             name: "",
             subject,
@@ -3207,7 +3214,8 @@ function ComposeBlast() {
             segment: segment === "individual" ? "custom" : segment,
             tier_id: tier_id || undefined,
             chapter_id: chapter_id || undefined,
-            custom_user_ids: segment === "individual" && individualId ? [individualId] : [],
+            custom_user_ids: segment === "individual" ? individualIds : [],
+            external_emails: externals,
             is_autosave: true,
             ...extra,
         };
@@ -3237,7 +3245,7 @@ function ComposeBlast() {
         autosaveTimer.current = setTimeout(flushAutosave, 2000);
         return () => clearTimeout(autosaveTimer.current);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [subject, body_html, segment, tier_id, chapter_id, individualId]);
+    }, [subject, body_html, segment, tier_id, chapter_id, individualIds, externalEmails]);
 
     useEffect(() => {
         const onVis = () => { if (document.visibilityState === "hidden") flushAutosave(); };
@@ -3251,18 +3259,21 @@ function ComposeBlast() {
             window.removeEventListener("pagehide", onBeforeUnload);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [subject, body_html, segment, tier_id, chapter_id, individualId]);
+    }, [subject, body_html, segment, tier_id, chapter_id, individualIds, externalEmails]);
 
     function loadDraft(did) {
         const d = drafts.find((x) => x.id === did);
         if (!d) return;
         setSubject(d.subject || "");
         setBody(d.body_html || "");
-        if (d.custom_user_ids?.length) {
+        if (d.custom_user_ids?.length || (d.external_emails || []).length) {
             setSegment("individual");
-            setIndividualId(d.custom_user_ids[0]);
+            setIndividualIds(d.custom_user_ids || []);
+            setExternalEmails((d.external_emails || []).join("\n"));
         } else {
             setSegment(d.segment || "active");
+            setIndividualIds([]);
+            setExternalEmails("");
         }
         setTierId(d.tier_id || "");
         setChapterId(d.chapter_id || "");
@@ -3310,10 +3321,21 @@ function ComposeBlast() {
     }
 
     function buildPayload() {
-        const payload = { subject, body_html, segment, tier_id: tier_id || undefined, chapter_id: chapter_id || undefined };
+        const externals = externalEmails
+            .split(/[\s,;\n]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const payload = {
+            subject,
+            body_html,
+            segment,
+            tier_id: tier_id || undefined,
+            chapter_id: chapter_id || undefined,
+            external_emails: externals,
+        };
         if (segment === "individual") {
             payload.segment = "custom";
-            payload.custom_user_ids = individualId ? [individualId] : [];
+            payload.custom_user_ids = individualIds;
         }
         return payload;
     }
@@ -3419,7 +3441,7 @@ function ComposeBlast() {
                                 <SelectItem value="admins">Admins only</SelectItem>
                                 <SelectItem value="tier">By tier</SelectItem>
                                 <SelectItem value="chapter">By chapter</SelectItem>
-                                <SelectItem value="individual">Individual member</SelectItem>
+                                <SelectItem value="individual">Specific members / external emails</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -3442,35 +3464,81 @@ function ComposeBlast() {
                         </div>
                     )}
                     {segment === "individual" && (
-                        <div className="sm:col-span-2">
-                            <Label>Member</Label>
-                            <Input
-                                placeholder="Search by name or email…"
-                                value={memberSearch}
-                                onChange={(e) => setMemberSearch(e.target.value)}
-                                className="rounded-xl mt-1.5"
-                                data-testid="email-individual-search"
-                            />
-                            <div className="max-h-40 overflow-y-auto mt-2 border border-border rounded-xl bg-muted/20">
-                                {members
-                                    .filter((m) => {
-                                        if (!memberSearch) return true;
-                                        const q = memberSearch.toLowerCase();
-                                        return m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q);
-                                    })
-                                    .slice(0, 30)
-                                    .map((m) => (
-                                        <button
-                                            key={m.id}
-                                            type="button"
-                                            onClick={() => setIndividualId(m.id)}
-                                            className={`w-full text-left px-3 py-2 hover:bg-muted/60 border-b last:border-0 ${individualId === m.id ? "bg-primary/10" : ""}`}
-                                            data-testid={`email-individual-pick-${m.id}`}
-                                        >
-                                            <div className="text-sm font-medium">{m.name}</div>
-                                            <div className="text-xs text-muted-foreground">{m.email}</div>
-                                        </button>
-                                    ))}
+                        <div className="sm:col-span-2 space-y-3">
+                            <div>
+                                <Label>Members ({individualIds.length} selected)</Label>
+                                {individualIds.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 mt-1.5" data-testid="email-individual-chips">
+                                        {individualIds.map((id) => {
+                                            const m = members.find((x) => x.id === id);
+                                            if (!m) return null;
+                                            return (
+                                                <span
+                                                    key={id}
+                                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold border border-primary/20"
+                                                    data-testid={`email-individual-chip-${id}`}
+                                                >
+                                                    {m.name}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIndividualIds((prev) => prev.filter((x) => x !== id))}
+                                                        className="hover:text-red-600 leading-none text-base"
+                                                        title={`Remove ${m.name}`}
+                                                        data-testid={`email-individual-remove-${id}`}
+                                                    >×</button>
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                <Input
+                                    placeholder="Search by name or email — click to add/remove…"
+                                    value={memberSearch}
+                                    onChange={(e) => setMemberSearch(e.target.value)}
+                                    className="rounded-xl mt-2"
+                                    data-testid="email-individual-search"
+                                />
+                                <div className="max-h-40 overflow-y-auto mt-2 border border-border rounded-xl bg-muted/20">
+                                    {members
+                                        .filter((m) => {
+                                            if (!memberSearch) return true;
+                                            const q = memberSearch.toLowerCase();
+                                            return m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q);
+                                        })
+                                        .slice(0, 30)
+                                        .map((m) => {
+                                            const picked = individualIds.includes(m.id);
+                                            return (
+                                                <button
+                                                    key={m.id}
+                                                    type="button"
+                                                    onClick={() => setIndividualIds((prev) => picked ? prev.filter((x) => x !== m.id) : [...prev, m.id])}
+                                                    className={`w-full text-left px-3 py-2 hover:bg-muted/60 border-b last:border-0 flex items-center justify-between gap-2 ${picked ? "bg-primary/10" : ""}`}
+                                                    data-testid={`email-individual-pick-${m.id}`}
+                                                >
+                                                    <div>
+                                                        <div className="text-sm font-medium">{m.name}</div>
+                                                        <div className="text-xs text-muted-foreground">{m.email}</div>
+                                                    </div>
+                                                    {picked && <span className="text-primary font-bold text-lg">✓</span>}
+                                                </button>
+                                            );
+                                        })}
+                                </div>
+                            </div>
+                            <div>
+                                <Label>External emails (outside the roster)</Label>
+                                <textarea
+                                    value={externalEmails}
+                                    onChange={(e) => setExternalEmails(e.target.value)}
+                                    placeholder={"vendor@example.com\npress@news.com, partner@org.net"}
+                                    rows={3}
+                                    className="w-full rounded-xl mt-1.5 px-3 py-2 border border-border bg-background text-sm font-mono resize-y"
+                                    data-testid="email-external-textarea"
+                                />
+                                <p className="text-xs text-muted-foreground mt-1.5">
+                                    One per line, or separated by commas / semicolons. Invalid addresses are silently skipped. These recipients always receive the email — opt-out preferences don't apply.
+                                </p>
                             </div>
                         </div>
                     )}

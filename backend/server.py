@@ -748,7 +748,17 @@ async def reconcile_pending_set_password():
 
 # ---------- File proxy (serves both photos and documents) ----------
 @api.get("/files/{storage_path:path}")
-async def download_file(storage_path: str, user: dict = Depends(get_current_user)):
+async def download_file(
+    storage_path: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Stream a file from object storage with aggressive HTTP caching.
+
+    Iter 90: storage paths are immutable (uuid-stamped on upload), so once a
+    browser has the bytes they never change. We surface that to the browser
+    via `Cache-Control: private, max-age=31536000, immutable` + an ETag so
+    re-visits short-circuit with a 304 (no object-storage hit at all)."""
     # Check DB for existence + soft-delete flag (photos / documents / chat files)
     rec = await db.photos.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
     if not rec:
@@ -757,11 +767,25 @@ async def download_file(storage_path: str, user: dict = Depends(get_current_user
         rec = await db.chat_files.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
     if not rec:
         raise HTTPException(status_code=404, detail="File not found")
+    # ETag short-circuit — storage_path is content-stable, so use it as the tag.
+    etag = f'W/"{storage_path}"'
+    if request.headers.get("if-none-match") == etag:
+        return FastResponse(status_code=304, headers={
+            "ETag": etag,
+            "Cache-Control": "private, max-age=31536000, immutable",
+        })
     try:
         data, content_type = get_object(storage_path)
     except Exception:
         raise HTTPException(status_code=404, detail="File not found in storage")
-    return FastResponse(content=data, media_type=rec.get("content_type", content_type))
+    return FastResponse(
+        content=data,
+        media_type=rec.get("content_type", content_type),
+        headers={
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "ETag": etag,
+        },
+    )
 
 
 @api.get("/me/activity")
@@ -1062,7 +1086,14 @@ async def startup():
     await db.volunteer_hours.create_index("user_id")
     await db.volunteer_hours.create_index("status")
     await db.photos.create_index("id", unique=True)
+    # Iter 90: speed up the album/photo loading path. The album list runs an
+    # aggregation grouping by `album`, and the file proxy looks up by
+    # `storage_path` on every <img> request — both need indexes.
+    await db.photos.create_index("album")
+    await db.photos.create_index("storage_path")
+    await db.photos.create_index([("album", 1), ("created_at", -1)])
     await db.documents.create_index("id", unique=True)
+    await db.documents.create_index("storage_path")
     await db.gear.create_index("id", unique=True)
     await db.causes.create_index("id", unique=True)
     await db.checkins.create_index("id", unique=True)
