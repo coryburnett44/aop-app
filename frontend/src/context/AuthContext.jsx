@@ -54,11 +54,13 @@ export function AuthProvider({ children }) {
     };
 
     const logout = async () => {
-        try {
-            await api.post("/auth/logout");
-        } catch { /* ignore */ }
+        // Optimistic logout — clear local state/tokens *first* so the UI
+        // updates instantly. The server-side cookie clear is fire-and-forget;
+        // even if it hangs (slow network, mobile Safari), the user has
+        // already been navigated to the logged-out shell.
         clearTokens();
         setUser(false);
+        api.post("/auth/logout").catch(() => { /* ignore */ });
     };
 
     return (

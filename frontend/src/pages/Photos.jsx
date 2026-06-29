@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { api, mediaUrl } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
@@ -33,6 +34,8 @@ const CATEGORY_LABELS = {
 
 export default function Photos() {
     const { user } = useAuth();
+    const navigate = useNavigate();
+    const { albumId } = useParams();
     const [albums, setAlbums] = useState([]);
     const [activeAlbum, setActiveAlbum] = useState(null);
     const [photos, setPhotos] = useState([]);
@@ -48,11 +51,21 @@ export default function Photos() {
     // means closed. Kept at parent level so prev/next can walk the whole album.
     const [lightboxIndex, setLightboxIndex] = useState(null);
 
+    function openAlbum(album) {
+        // Drive the active album from the URL so a hard refresh keeps the
+        // user inside the album they were viewing.
+        navigate(`/photos/${album.id}`);
+    }
+    function closeAlbum() {
+        navigate("/photos");
+    }
+
     async function loadAlbums() {
         try {
             const { data } = await api.get("/photos/albums");
             setAlbums(data || []);
-        } catch { setAlbums([]); }
+            return data || [];
+        } catch { setAlbums([]); return []; }
     }
     async function loadPhotos(albumName) {
         setLoadingPhotos(true);
@@ -63,7 +76,26 @@ export default function Photos() {
         setLoadingPhotos(false);
     }
 
+    // Initial album load
     useEffect(() => { loadAlbums(); }, []);
+
+    // Reconcile the URL `:albumId` with the loaded album list. If the URL
+    // points at a real album, open it. If the album no longer exists, redirect
+    // back to the grid (avoids a blank "loading forever" state on a stale id).
+    useEffect(() => {
+        if (!albumId) {
+            setActiveAlbum(null);
+            return;
+        }
+        if (albums.length === 0) return; // wait for albums to load
+        const match = albums.find((a) => a.id === albumId);
+        if (match) {
+            setActiveAlbum(match);
+        } else {
+            navigate("/photos", { replace: true });
+        }
+    }, [albumId, albums, navigate]);
+
     useEffect(() => {
         if (activeAlbum) loadPhotos(activeAlbum.name);
         else setPhotos([]);
@@ -125,7 +157,7 @@ export default function Photos() {
             await api.delete(`/photos/albums/${album.id}`);
             toast.success("Album removed");
             await loadAlbums();
-            if (activeAlbum?.id === album.id) setActiveAlbum(null);
+            if (activeAlbum?.id === album.id) closeAlbum();
         } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
     }
 
@@ -139,7 +171,7 @@ export default function Photos() {
                     <div className="flex flex-wrap items-end justify-between gap-4">
                         <div>
                             {activeAlbum && (
-                                <button onClick={() => setActiveAlbum(null)} className="text-sm text-slate-500 hover:text-primary inline-flex items-center gap-1 mb-2" data-testid="back-to-albums">
+                                <button onClick={closeAlbum} className="text-sm text-slate-500 hover:text-primary inline-flex items-center gap-1 mb-2" data-testid="back-to-albums">
                                     <ArrowLeft className="h-4 w-4" /> All albums
                                 </button>
                             )}
@@ -197,7 +229,7 @@ export default function Photos() {
 
             <section className="max-w-7xl mx-auto px-6 lg:px-10 py-10">
                 {!activeAlbum ? (
-                    <AlbumGrid albums={visibleAlbums} onOpen={setActiveAlbum} onDelete={removeAlbum} onEdit={setEditingAlbum} currentUser={user} />
+                    <AlbumGrid albums={visibleAlbums} onOpen={openAlbum} onDelete={removeAlbum} onEdit={setEditingAlbum} currentUser={user} />
                 ) : loadingPhotos ? (
                     <div className="grid place-items-center py-24"><Loader2 className="h-8 w-8 animate-spin text-slate-400" /></div>
                 ) : photos.length === 0 ? (
@@ -226,7 +258,7 @@ export default function Photos() {
                 )}
             </section>
 
-            <CreateAlbumDialog open={creatingAlbum} onClose={() => setCreatingAlbum(false)} onCreated={async (a) => { setCreatingAlbum(false); await loadAlbums(); setActiveAlbum(a); }} />
+            <CreateAlbumDialog open={creatingAlbum} onClose={() => setCreatingAlbum(false)} onCreated={async (a) => { setCreatingAlbum(false); await loadAlbums(); navigate(`/photos/${a.id}`); }} />
             <EditAlbumDialog album={editingAlbum} onClose={() => setEditingAlbum(null)} onSaved={async () => { setEditingAlbum(null); await loadAlbums(); }} />
             <PhotoLightbox
                 photos={photos}
@@ -610,26 +642,57 @@ function PhotoLightbox({ photos, index, onClose, onPrev, onNext }) {
 function UploadButton({ album, onDone, disabled, setUploading }) {
     const inputRef = useRef(null);
     const [busy, setBusy] = useState(false);
+    const [progress, setProgress] = useState({ done: 0, total: 0 });
 
     async function pick(files) {
         if (!files || files.length === 0) return;
+        // Upload photos one at a time using the single-photo endpoint. This
+        // avoids the Cloudflare 100MB payload limit that was causing the bulk
+        // endpoint to 413/502, which in turn appeared to the user as a forced
+        // logout + "Cloudflare parse error" on the very next request.
+        //
+        // Each upload is independent: a single failure does NOT cancel the
+        // rest of the batch or touch auth state. We tally successes / failures
+        // and surface a single summary toast at the end.
         setBusy(true); setUploading(true);
-        try {
-            const fd = new FormData();
-            for (const f of files) fd.append("files", f);
-            fd.append("album", album);
-            const { data } = await api.post("/photos/bulk", fd, { headers: { "Content-Type": "multipart/form-data" } });
-            const ok = (data.uploaded || []).length;
-            const failed = (data.failed || []).length;
-            if (ok && !failed) toast.success(`Uploaded ${ok} photo${ok === 1 ? "" : "s"}`);
-            else if (ok && failed) toast.warning(`Uploaded ${ok}, but ${failed} failed`);
-            else toast.error(`All ${failed} uploads failed`);
-            onDone?.();
-        } catch (e) { toast.error(e.response?.data?.detail || "Upload failed"); }
+        setProgress({ done: 0, total: files.length });
+        let ok = 0;
+        const failures = [];
+        for (let i = 0; i < files.length; i++) {
+            const f = files[i];
+            try {
+                if (f.size > 10 * 1024 * 1024) {
+                    failures.push({ name: f.name, error: "Over 10MB" });
+                    continue;
+                }
+                const fd = new FormData();
+                fd.append("file", f);
+                fd.append("title", "");
+                fd.append("album", album);
+                await api.post("/photos", fd, {
+                    headers: { "Content-Type": "multipart/form-data" },
+                    // 60s per file is plenty for a 10MB image even on a slow
+                    // connection; without it axios uses no timeout at all.
+                    timeout: 60000,
+                });
+                ok += 1;
+            } catch (e) {
+                const detail = e.response?.data?.detail || e.message || "Upload failed";
+                failures.push({ name: f.name, error: detail });
+            } finally {
+                setProgress({ done: i + 1, total: files.length });
+            }
+        }
+        if (ok && failures.length === 0) toast.success(`Uploaded ${ok} photo${ok === 1 ? "" : "s"}`);
+        else if (ok && failures.length) toast.warning(`Uploaded ${ok}, but ${failures.length} failed`);
+        else toast.error(`All ${failures.length} uploads failed`);
+        onDone?.();
         setBusy(false); setUploading(false);
+        setProgress({ done: 0, total: 0 });
         if (inputRef.current) inputRef.current.value = "";
     }
 
+    const showProgress = busy && progress.total > 0;
     return (
         <>
             <input
@@ -647,7 +710,14 @@ function UploadButton({ album, onDone, disabled, setUploading }) {
                 className="rounded-full bg-primary hover:bg-primary/90 shadow-warm text-white"
                 data-testid="upload-photos-btn"
             >
-                {busy ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Uploading…</> : <><Upload className="h-4 w-4 mr-1.5" /> Upload photos</>}
+                {busy ? (
+                    <>
+                        <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                        {showProgress ? `Uploading ${progress.done}/${progress.total}…` : "Uploading…"}
+                    </>
+                ) : (
+                    <><Upload className="h-4 w-4 mr-1.5" /> Upload photos</>
+                )}
             </Button>
         </>
     );

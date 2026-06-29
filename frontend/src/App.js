@@ -60,6 +60,7 @@ function App() {
                             <Route path="/directory" element={<ProtectedRoute><Directory /></ProtectedRoute>} />
                             <Route path="/chapters" element={<ProtectedRoute><Chapters /></ProtectedRoute>} />
                             <Route path="/photos" element={<ProtectedRoute><Photos /></ProtectedRoute>} />
+                            <Route path="/photos/:albumId" element={<ProtectedRoute><Photos /></ProtectedRoute>} />
                             <Route path="/documents" element={<ProtectedRoute><Documents /></ProtectedRoute>} />
                             <Route path="/awards" element={<ProtectedRoute><Awards /></ProtectedRoute>} />
                             <Route path="/anniversary" element={<ProtectedRoute><Anniversary /></ProtectedRoute>} />

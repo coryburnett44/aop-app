@@ -19,9 +19,9 @@ Public surface (paths preserved verbatim):
 """
 import asyncio
 import re
+import tempfile
 import uuid
 import zipfile
-from io import BytesIO
 from typing import List, Optional
 
 from fastapi import Depends, File, Form, HTTPException, UploadFile
@@ -350,7 +350,19 @@ def register(
     @api.post("/photos/download-zip")
     async def download_photos_zip(body: PhotoDownloadIn, user: dict = Depends(get_current_user)):
         """Build a ZIP of one or more photos (or an entire album) and stream
-        it back."""
+        it back.
+
+        Why a SpooledTemporaryFile + chunked StreamingResponse:
+          - Building the entire zip in a BytesIO blocked the event loop and
+            held the whole archive in RAM. Large albums (hundreds of MB) would
+            either OOM the worker or hit Cloudflare's 100-second proxy timeout
+            because no bytes were sent until the zip was fully built.
+          - A SpooledTemporaryFile keeps small archives in memory but spills
+            to disk past 50 MB, so RAM stays bounded.
+          - We yield 64 KB chunks via an async generator so bytes start
+            flowing back through Cloudflare immediately and the user sees a
+            real download progress bar instead of a hung browser.
+        """
         q: dict = {"is_deleted": {"$ne": True}}
         if body.album:
             q["album"] = body.album
@@ -361,27 +373,45 @@ def register(
         photos = await db.photos.find(q, {"_id": 0}).to_list(500)
         if not photos:
             raise HTTPException(status_code=404, detail="No photos to download.")
-        buf = BytesIO()
+
+        spool = tempfile.SpooledTemporaryFile(max_size=50 * 1024 * 1024, mode="w+b")
         used_names: set = set()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for p in photos:
-                try:
-                    data, _ct = await asyncio.to_thread(get_object, p["storage_path"])
-                except Exception as e:
-                    logger.warning(f"Skipping photo {p.get('id')} in zip: {e}")
-                    continue
-                ext = (p.get("original_filename") or p["storage_path"]).rsplit(".", 1)[-1].lower()
-                base = _safe_filename(p.get("title") or p.get("original_filename") or p["id"])
-                name = f"{base}.{ext}" if not base.lower().endswith(f".{ext}") else base
-                n = name
-                i = 2
-                while n in used_names:
-                    stem = name.rsplit(".", 1)[0]
-                    n = f"{stem} ({i}).{ext}"
-                    i += 1
-                used_names.add(n)
-                zf.writestr(n, data)
-        buf.seek(0)
+
+        def _build_zip():
+            with zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                for p in photos:
+                    try:
+                        data, _ct = get_object(p["storage_path"])
+                    except Exception as e:
+                        logger.warning(f"Skipping photo {p.get('id')} in zip: {e}")
+                        continue
+                    ext = (p.get("original_filename") or p["storage_path"]).rsplit(".", 1)[-1].lower()
+                    base = _safe_filename(p.get("title") or p.get("original_filename") or p["id"])
+                    name = f"{base}.{ext}" if not base.lower().endswith(f".{ext}") else base
+                    n = name
+                    i = 2
+                    while n in used_names:
+                        stem = name.rsplit(".", 1)[0]
+                        n = f"{stem} ({i}).{ext}"
+                        i += 1
+                    used_names.add(n)
+                    zf.writestr(n, data)
+            spool.seek(0)
+
+        # Build the archive off the event loop so the server can keep
+        # responding to other requests while a big album is zipping.
+        await asyncio.to_thread(_build_zip)
+
+        async def _iter_chunks(chunk_size: int = 64 * 1024):
+            try:
+                while True:
+                    chunk = await asyncio.to_thread(spool.read, chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                spool.close()
+
         album_label = _safe_filename(body.album or "photos")
         headers = {"Content-Disposition": f'attachment; filename="aop-{album_label}.zip"'}
-        return StreamingResponse(buf, media_type="application/zip", headers=headers)
+        return StreamingResponse(_iter_chunks(), media_type="application/zip", headers=headers)
