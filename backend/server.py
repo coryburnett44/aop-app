@@ -3725,6 +3725,11 @@ INACTIVE_ALLOWED_PREFIXES = (
     "/api/email/resubscribe",
     "/api/email/unsubscribe-status",
     "/api/health",           # liveness / version
+    # Iter 91: inactive members MUST be able to reach the dues endpoints so they
+    # can renew via Zeffy and reactivate themselves. The dues confirmation flow
+    # also clears the inactive flag on approval.
+    "/api/payments/zeffy/",  # config + confirm
+    "/api/me/transactions",  # so they can see their own pending dues receipt
 )
 INACTIVE_ALLOWED_EXACT = {
     "/api/auth/me",

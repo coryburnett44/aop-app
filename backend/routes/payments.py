@@ -85,6 +85,27 @@ ZEFFY_DUES_URL = os.environ.get(
     "ZEFFY_DUES_URL",
     "https://www.zeffy.com/en-US/ticketing/national-yearly-dues",
 )
+# Iter 91: inactive members get a different Zeffy URL that includes the
+# reactivation fee. Once they pay and the dues are approved, we clear the
+# `status_override="inactive"` flag and the regular URL returns automatically.
+ZEFFY_OVERDUE_URL = os.environ.get(
+    "ZEFFY_OVERDUE_URL",
+    "https://www.zeffy.com/en-US/ticketing/aop-membership-renewal-overdue-dues",
+)
+
+
+def _is_inactive_for_dues(user: dict) -> bool:
+    """Returns True when the member should see the overdue-dues Zeffy link
+    instead of the normal one. Triggered by an explicit admin
+    `status_override='inactive'` OR an auto-inactivation flag set by the
+    grace-period reaper job."""
+    if user.get("status_override") == "inactive":
+        return True
+    if user.get("auto_inactivated_at") and not user.get("status_override"):
+        # Auto-inactivated by the grace-period reaper and not subsequently
+        # reactivated by an admin override.
+        return True
+    return False
 
 
 def register(api, *, db, get_current_user, require_admin, is_chapter_scoped, chapter_scope_user_ids, iso, now_utc):
@@ -110,12 +131,15 @@ def register(api, *, db, get_current_user, require_admin, is_chapter_scoped, cha
     # ---------- Zeffy dues integration ----------
     @api.get("/payments/zeffy/config")
     async def zeffy_config(user: dict = Depends(get_current_user)):
-        """Return the Zeffy dues URL + display config."""
+        """Return the Zeffy dues URL + display config. Inactive members
+        receive the overdue-dues URL until they renew."""
+        is_overdue = _is_inactive_for_dues(user)
         return {
-            "url": ZEFFY_DUES_URL,
+            "url": ZEFFY_OVERDUE_URL if is_overdue else ZEFFY_DUES_URL,
             "currency": "USD",
             "default_amount": 105.0,
             "enabled": True,
+            "is_overdue": is_overdue,
         }
 
     @api.get("/payments/zeffy/validate")
@@ -181,10 +205,19 @@ def register(api, *, db, get_current_user, require_admin, is_chapter_scoped, cha
                 base = now_utc()
             if base < now_utc():
                 base = now_utc()
-            await db.users.update_one(
-                {"id": user["id"]},
-                {"$set": {"membership_expires_at": iso(base + timedelta(days=365))}},
-            )
+            # Iter 91: clear the inactive flag(s) so the normal Zeffy URL
+            # returns on next /payments/zeffy/config call.
+            reactivation_unset = {}
+            reactivation_set = {"membership_expires_at": iso(base + timedelta(days=365))}
+            if user.get("status_override") == "inactive":
+                reactivation_unset["status_override"] = ""
+                reactivation_set["reactivated_at"] = iso(now_utc())
+            if user.get("auto_inactivated_at"):
+                reactivation_unset["auto_inactivated_at"] = ""
+            mongo_update: dict = {"$set": reactivation_set}
+            if reactivation_unset:
+                mongo_update["$unset"] = reactivation_unset
+            await db.users.update_one({"id": user["id"]}, mongo_update)
             return {
                 "transaction_id": tx_id,
                 "status": "completed",
@@ -225,10 +258,21 @@ def register(api, *, db, get_current_user, require_admin, is_chapter_scoped, cha
                     base = now_utc()
                 if base < now_utc():
                     base = now_utc()
-                await db.users.update_one(
-                    {"id": tx["user_id"]},
-                    {"$set": {"membership_expires_at": iso(base + timedelta(days=365))}},
-                )
+                # Iter 91: clear the inactive flag(s) so the normal Zeffy URL
+                # returns on the member's next dues config fetch.
+                reactivation_unset = {}
+                reactivation_set = {"membership_expires_at": iso(base + timedelta(days=365))}
+                if u.get("status_override") == "inactive":
+                    reactivation_unset["status_override"] = ""
+                    reactivation_set["reactivated_at"] = iso(now_utc())
+                    reactivation_set["reactivated_by"] = admin["id"]
+                    reactivation_set["reactivated_by_name"] = admin.get("name", "Admin")
+                if u.get("auto_inactivated_at"):
+                    reactivation_unset["auto_inactivated_at"] = ""
+                mongo_update: dict = {"$set": reactivation_set}
+                if reactivation_unset:
+                    mongo_update["$unset"] = reactivation_unset
+                await db.users.update_one({"id": tx["user_id"]}, mongo_update)
         return {"ok": True}
 
     # ---------- Transaction list / delete / member feed ----------

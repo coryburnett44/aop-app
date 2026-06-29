@@ -15,6 +15,17 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 91 — Overdue-dues Zeffy URL for inactive members (2026-02-26) [FEATURE]
+- **Inactive members now see the renewal-overdue Zeffy link** instead of the standard dues link, automatically.
+- **`routes/payments.py`**:
+  - New `ZEFFY_OVERDUE_URL = "https://www.zeffy.com/en-US/ticketing/aop-membership-renewal-overdue-dues"` (env-overridable via `ZEFFY_OVERDUE_URL`).
+  - `_is_inactive_for_dues(user)` returns true when `status_override == "inactive"` OR `auto_inactivated_at` is set (the grace-period reaper auto-inactivation path).
+  - `GET /api/payments/zeffy/config` now returns the overdue URL for inactive members and includes a new `is_overdue: bool` field so the UI can label the CTA differently if needed.
+  - Both dues-payment paths (auto-approve via `trust_zeffy` and admin-approve via `PUT /transactions/{id}/approve-zeffy`) now clear `status_override="inactive"` + `auto_inactivated_at` and stamp `reactivated_at` (+ `reactivated_by` on admin-approve) so the normal Zeffy URL returns automatically on the next config fetch.
+- **`server.py`**: extended the inactive-member API whitelist to include `/api/payments/zeffy/` (config + confirm + validate) and `/api/me/transactions` — otherwise inactive members couldn't reach the very endpoints needed to reactivate themselves.
+- **Frontend**: zero changes needed — `ZeffyCheckout` already pulls the URL from `/payments/zeffy/config`, so the swap is automatic.
+- **Tests**: new `tests/test_iteration91_overdue_dues_url.py` — **5/5 pass** (default member sees normal URL, status_override path triggers overdue URL, grace-reaper path triggers overdue URL, admin-approve clears flag + restores normal URL, auto-approve clears flag + restores normal URL). Payments regression suite re-run: **27/27 pass**.
+
 ### Iteration 90 — Photo loading perf + Email multi-select & external recipients (2026-02-26) [FEATURE]
 - **Photo loading speed**: three layered fixes addressing the user-reported slowness.
   - MongoDB indexes added: `photos.album`, `photos.storage_path`, `(album, created_at)` — the album-list aggregation + file-proxy lookups go from collection-scan to indexed.
