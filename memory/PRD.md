@@ -15,6 +15,23 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 92 — P0 Photos Production Bug Cluster (2026-02-26) [P0 BUG FIX]
+User-reported production bugs in the Photos page; all four fixed and end-to-end verified on the preview URL.
+
+- **Bug 1: Hard-refresh inside an album kicked user back to /photos.**
+  - Root cause: active-album state lived only in component state; a reload reset it to `null`.
+  - Fix: `App.js` now registers `/photos/:albumId` alongside `/photos`. `Photos.jsx` uses `useParams() + useNavigate()` so the URL is the source of truth for the open album. A reconcile-effect waits for the album list to load, matches the URL `:albumId` to an album, and redirects with `replace: true` if the id is stale.
+- **Bug 2: Multi-photo upload crashed → forced logout → "Cloudflare parse error" on next login.**
+  - Root cause: `POST /api/photos/bulk` accepted up to 100 MB in a single multipart payload — Cloudflare/edge ingress drops anything over ~100 MB with a 413/520, severing the connection during the response. The single hung request appeared to the React app as a generic 500 and the auth-context refresh logic ran headlong into a half-broken socket, which on Safari/iOS surfaces as the "Cloudflare HTML parse error" the user reported.
+  - Fix: `Photos.jsx UploadButton` was rewritten to send files **one at a time** via the single-photo `POST /api/photos` endpoint (each file ≤10 MB, well under any proxy limit). Each upload is independent — a single failure no longer aborts the batch or touches auth state. The button now shows `Uploading 3/7…` per-file progress and awaits the parent `loadPhotos` refresh before clearing the busy label so freshly uploaded photos appear inline.
+- **Bug 3: Album zip download timed out / corrupted if user clicked away.**
+  - Root cause: `download_photos_zip` built the entire archive in a `BytesIO` before returning, blocking the event loop and holding the whole zip in RAM. Large albums hit Cloudflare's ~100-second response-start timeout because no bytes were sent until the zip was fully built.
+  - Fix: switched to `tempfile.SpooledTemporaryFile(max_size=50 MB)` (spills to disk past the threshold) and an `async`-iterator `StreamingResponse` that yields 64 KB chunks. The zip is built in a worker thread (`asyncio.to_thread`) so the event loop can keep serving other requests during a big archive.
+- **Bug 4: Logout had noticeable latency.**
+  - Root cause: `AuthContext.logout` `await`-ed `POST /auth/logout` before clearing local state, so any slow round-trip blocked the UI for hundreds of milliseconds.
+  - Fix: clear tokens + flip `setUser(false)` **first**, then fire `api.post("/auth/logout")` with `.catch(() => {})` — true fire-and-forget. Measured UI transition ≈120 ms in iteration_90 testing.
+- **Testing**: `testing_agent_v3_fork` iteration_90.json — all four fixes verified on the live preview URL (refresh + 3-file upload + zip download + nav menu → logout), 100% pass, no critical issues. Backend regression: `test_iteration82_photos_module_and_quick_checkin` + `test_iteration90_photo_cache_and_email_multi` — **11/11 pass**.
+
 ### Iteration 91 — Overdue-dues Zeffy URL for inactive members (2026-02-26) [FEATURE]
 - **Inactive members now see the renewal-overdue Zeffy link** instead of the standard dues link, automatically.
 - **`routes/payments.py`**:

@@ -686,7 +686,9 @@ function UploadButton({ album, onDone, disabled, setUploading }) {
         if (ok && failures.length === 0) toast.success(`Uploaded ${ok} photo${ok === 1 ? "" : "s"}`);
         else if (ok && failures.length) toast.warning(`Uploaded ${ok}, but ${failures.length} failed`);
         else toast.error(`All ${failures.length} uploads failed`);
-        onDone?.();
+        // Await the parent's refresh so the new photos appear before we
+        // drop the "Uploading…" label.
+        try { await onDone?.(); } catch { /* ignore */ }
         setBusy(false); setUploading(false);
         setProgress({ done: 0, total: 0 });
         if (inputRef.current) inputRef.current.value = "";
