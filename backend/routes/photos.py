@@ -235,14 +235,28 @@ def register(
         user: dict = Depends(get_current_user),
     ):
         ext = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "bin").lower()
-        if ext not in image_ext:
-            raise HTTPException(status_code=400, detail=f"Unsupported image type: {ext}")
+        # Accept by extension OR by content_type starting with "image/" — some
+        # browsers (esp. iOS Safari sending HEIC) send the file with
+        # content_type="image/heic" but a stripped extension. Falling back to
+        # content-type lets us still accept the photo.
+        ct = (file.content_type or "").lower()
+        if ext not in image_ext and not ct.startswith("image/"):
+            raise HTTPException(status_code=400, detail=f"Unsupported image type: {ext or ct or 'unknown'}")
         content_type = file.content_type or mime_by_ext.get(ext, "application/octet-stream")
+        # If the extension is missing/invalid but the content-type tells us
+        # this is an image, persist with a sensible extension so downloads
+        # have the right file association.
+        if ext not in image_ext:
+            ct_to_ext = {
+                "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif",
+                "image/webp": "webp", "image/heic": "heic", "image/heif": "heif",
+            }
+            ext = ct_to_ext.get(ct, "jpg")
         path = f"{app_name}/photos/{user['id']}/{uuid.uuid4()}.{ext}"
         data = await file.read()
         if len(data) > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File too large (max 10MB)")
-        result = put_object(path, data, content_type)
+        result = await asyncio.to_thread(put_object, path, data, content_type)
         album_name = (album or "general").strip() or "general"
         await db.photo_albums.update_one(
             {"name": album_name},
@@ -308,7 +322,7 @@ def register(
                     failed.append({"name": f.filename, "error": "Not an image"}); continue
                 content_type = f.content_type or mime_by_ext.get(ext, "image/jpeg")
                 path = f"{app_name}/photos/{user['id']}/{uuid.uuid4()}.{ext}"
-                result = put_object(path, data, content_type)
+                result = await asyncio.to_thread(put_object, path, data, content_type)
                 doc = {
                     "id": str(uuid.uuid4()),
                     "title": "",

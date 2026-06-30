@@ -15,6 +15,20 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 92.1 — Real root cause: sync object-storage I/O blocking event loop (2026-02-26) [P0 BUG FIX]
+After redeploying iter-92, the user re-reported "Same login error after trying to upload a photo." Iter-92's frontend-only fix moved uploads off the bulk endpoint but **a deeper backend bug was still in play**:
+
+- **Root cause**: `put_object` and `get_object` use synchronous `requests` calls (network round-trip to Emergent object storage) and were invoked DIRECTLY inside `async def` FastAPI handlers. Each upload blocked the event loop for the full network duration. While that worker was blocked, **no other request could be served** — including the user's own `/auth/me` refresh fired by the auth interceptor → it timed out → looked like a logout → Cloudflare's idle-connection page showed up.
+- **Symptoms it explains**: "logged out after upload", "Cloudflare login error", `/auth/me` hanging, the page going blank during multi-file uploads, photo grid being slow to load while other requests were in flight.
+- **Fix**: wrapped all hot-path object-storage calls in `asyncio.to_thread(...)`:
+  - `routes/photos.py POST /api/photos` — single upload (the one the new sequential UploadButton uses).
+  - `routes/photos.py POST /api/photos/bulk` — legacy bulk endpoint (still wrapped for safety in case old clients hit it).
+  - `server.py GET /api/files/{storage_path}` — photo proxy (used by every `<img>` in the grid + lightbox).
+  - `routes/photos.py POST /api/photos/download-zip` — already wrapped in iter-92.
+- **Verification**: concurrent test (2× 5MB upload + 1× `/auth/me`) — `auth/me` returned in **135 ms** while uploads finished in **852 ms each**. Total wallclock **868 ms**. Before the fix, `auth/me` would have queued behind the uploads for ~1.7 sec.
+- **iPhone HEIC support**: also extended `IMAGE_EXT` to include `heic/heif`, added matching MIME types, and the single-upload endpoint now also accepts files whose extension is missing but whose `Content-Type` starts with `image/` — iPhones strip extensions for HEIC and would have been rejected with HTTP 400.
+- **Tests**: photo regression suite (`test_iteration82` + `test_iteration90`) — **11/11 pass**. HEIC uploads verified end-to-end (both by `.heic` extension and by `Content-Type: image/heic` alone).
+
 ### Iteration 92 — P0 Photos Production Bug Cluster (2026-02-26) [P0 BUG FIX]
 User-reported production bugs in the Photos page; all four fixed and end-to-end verified on the preview URL.
 

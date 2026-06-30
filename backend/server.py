@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / ".env")
 import os
 import re
 import uuid
+import asyncio
 import logging
 import secrets
 import requests
@@ -233,12 +234,14 @@ def get_object(path: str) -> tuple:
     resp.raise_for_status()
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
 
-IMAGE_EXT = {"jpg", "jpeg", "png", "gif", "webp"}
+IMAGE_EXT = {"jpg", "jpeg", "png", "gif", "webp", "heic", "heif"}
 DOC_EXT = {"pdf", "doc", "docx", "txt", "csv", "xlsx", "pptx"}
 
 MIME_BY_EXT = {
     "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-    "gif": "image/gif", "webp": "image/webp", "pdf": "application/pdf",
+    "gif": "image/gif", "webp": "image/webp",
+    "heic": "image/heic", "heif": "image/heif",
+    "pdf": "application/pdf",
     "doc": "application/msword",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "txt": "text/plain", "csv": "text/csv",
@@ -775,7 +778,7 @@ async def download_file(
             "Cache-Control": "private, max-age=31536000, immutable",
         })
     try:
-        data, content_type = get_object(storage_path)
+        data, content_type = await asyncio.to_thread(get_object, storage_path)
     except Exception:
         raise HTTPException(status_code=404, detail="File not found in storage")
     return FastResponse(
