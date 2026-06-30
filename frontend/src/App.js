@@ -37,12 +37,14 @@ import ResetPassword from "./pages/ResetPassword";
 import SetPassword from "./pages/SetPassword";
 import Unsubscribed from "./pages/Unsubscribed";
 import { SiteSettingsProvider } from "./context/SiteSettingsContext";
+import PageActivityTracker from "./components/PageActivityTracker";
 
 function App() {
     return (
         <AuthProvider>
             <SiteSettingsProvider>
                 <BrowserRouter>
+                <PageActivityTracker />
                 <div className="min-h-screen flex flex-col">
                     <Navbar />
                     <main className="flex-1">

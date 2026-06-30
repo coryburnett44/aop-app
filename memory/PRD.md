@@ -15,6 +15,35 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 96 — Sign-in activity log for full-access admins + auto-clear "Pending Password Setup" pill (2026-02-26) [FEATURE + BUG FIX]
+User asked two things:
+- "Allow full access Admins the ability to see sign-in activity from members and the pages they visited. Show the date and time logged in, and the pages visited, and the duration of login."
+- "Re-look the members password setup. If they have logged in, please remove the 'Pending Password Setup' pill from their name on the admin members tab."
+
+**Sign-in activity tracking:**
+- New `routes/login_activity.py` registers a `login_activity` Mongo collection.
+- `POST /api/activity/page-view {path}` — authenticated. Frontend pings whenever a route changes. Attaches to the user's most-recent open session (within 8 h idle window) or starts a new one tagged `started_via=page_view` (covers cookie-refresh sessions without an explicit /auth/login).
+- `GET /api/admin/login-activity?limit=200&user_id=...` — admin-only listing with computed `duration_seconds` and `pages_count`. Bulk listing omits the full `pages_visited` to keep payload small.
+- `GET /api/admin/login-activity/{session_id}` — full detail with `pages_visited` array.
+- Hooked into `routes/auth.py`:
+  - Successful `/auth/login` calls `record_login_session(user, request)` — captures IP, user-agent, login_at.
+  - `/auth/logout` calls `record_logout(user_id)` which stamps `logout_at` on the user's MOST RECENT open session (sorted by login_at desc, then update by id — Mongo's `update_one` doesn't accept sort).
+- New `components/PageActivityTracker.jsx` mounts inside the BrowserRouter and pings `/activity/page-view` on every navigation (800 ms debounce, guarded by `useAuth().user` so guests are never tracked). Silent on errors so a failed ping never blocks navigation.
+- New `components/SignInActivityAdmin.jsx`: sortable table (Member, Login ET, Duration, Pages, IP, Browser, Status) with chevron-expandable rows showing the full path list + per-page timestamps. Tab is gated on `perms.admin_role === "full"` so only full-access admins see it.
+
+**"Pending Password Setup" pill bug:**
+- Root cause: iter78 had explicitly kept the pill flag set even after login on the cautious assumption that bulk-imported members might still need to go through `/set-password`. User pushback: "if they have logged in, remove the pill."
+- Fix in `routes/auth.py`: a successful `/auth/login` now `$unset`s `pending_set_password` if it was set. The flag persists for invited members who never log in.
+- Boot-time reconciler `reconcile_pending_set_password` was inverted: it now CLEARS the flag for anyone who has either consumed a `/set-password` token OR has any document in `login_activity` (i.e. proves they've actually used the app). Logs "cleared pending flag for N member(s) who have logged in" so the audit trail is visible.
+
+**Tests** (`tests/test_iteration96_signin_activity.py`):
+- `test_login_records_session_and_logout_stamps_duration` — full happy path: login → page-views → logout → admin sees the session with duration + pages_count.
+- `test_admin_can_pull_session_detail_with_full_page_list` — `GET /admin/login-activity/{id}` returns the `pages_visited` array with `{path, at}` entries.
+- `test_non_admin_cannot_pull_activity` — 403 for a member token.
+- `test_page_view_requires_auth` — 401 with no token.
+- `test_successful_login_clears_pending_set_password_flag` — set the flag via Mongo, login, verify flag is unset.
+- 5/5 pass. Combined with iter93+94+95 regression: **20/20 pass**.
+
 ### Iteration 95 — Members self-select their branch of service (2026-02-26) [FEATURE]
 User asked: "Allow members to select their branch of service using Army / Air Force / Marine Corps / Navy / Coast Guard / Space Force. Once they select, update the admin members Branch section."
 

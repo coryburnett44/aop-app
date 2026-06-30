@@ -132,14 +132,26 @@ def register(
 
         # Success — clear any prior failed-attempt counter for this identifier.
         await db.login_attempts.delete_one({"identifier": identifier})
-        # NB: we used to auto-clear `pending_set_password` here on the assumption
-        # that a successful login meant the member must have completed setup.
-        # That was wrong — bulk-imported members can log in with the temporary
-        # admin-set password without ever going through /set-password. The
-        # badge must persist until the member themselves resets/sets their
-        # password (handled in /auth/set-password, /auth/reset-password, and
-        # /auth/change-password). See iter78 for the migration that re-flags
-        # members whose flag was incorrectly cleared by the old behaviour.
+        # Per iter96: a successful login is treated as proof the member has
+        # a working password, so clear `pending_set_password` if it's still
+        # on the record. Admins want the "Pending Password Setup" pill to
+        # disappear as soon as the member proves they can sign in.
+        if user.get("pending_set_password"):
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$unset": {"pending_set_password": ""}},
+            )
+        # Record an open session so admins can see sign-in activity.
+        # The login_activity router (registered in server.py) attaches a
+        # `_record_login_session` coroutine on the api object — guard the
+        # call so unit-test harnesses that don't register that router still
+        # work.
+        try:
+            recorder = getattr(api, "_record_login_session", None)
+            if recorder:
+                await recorder(user, request)
+        except Exception:
+            pass
         tv = int(user.get("token_version", 0) or 0)
         at = create_access_token(user["id"], user["email"], user.get("role", "member"), tv)
         rt = create_refresh_token(user["id"], tv)
@@ -150,8 +162,14 @@ def register(
         return out
 
     @api.post("/auth/logout")
-    async def auth_logout(response: Response, _: dict = Depends(get_current_user)):
+    async def auth_logout(response: Response, user: dict = Depends(get_current_user)):
         clear_auth_cookies(response)
+        try:
+            recorder = getattr(api, "_record_logout", None)
+            if recorder:
+                await recorder(user["id"])
+        except Exception:
+            pass
         return {"ok": True}
 
     @api.get("/auth/me")

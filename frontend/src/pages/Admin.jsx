@@ -9,7 +9,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
@@ -26,6 +26,7 @@ import PageBuilder from "../components/cms/PageBuilder";
 import BulkImportMembersDialog from "../components/BulkImportMembersDialog";
 import MemberBalanceEditor from "../components/MemberBalanceEditor";
 import AssignmentHistoryEditor from "../components/AssignmentHistoryEditor";
+import SignInActivityAdmin from "../components/SignInActivityAdmin";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
@@ -76,6 +77,7 @@ export default function Admin() {
                         {allowed("email") && <TabsTrigger value="email" className="rounded-full" data-testid="admin-tab-email"><Mail className="h-4 w-4 mr-1.5" />Email</TabsTrigger>}
                         {allowed("news") && <TabsTrigger value="news" className="rounded-full" data-testid="admin-tab-news"><Newspaper className="h-4 w-4 mr-1.5" />News</TabsTrigger>}
                         {allowed("pages") && <TabsTrigger value="pages" className="rounded-full" data-testid="admin-tab-pages"><FileText className="h-4 w-4 mr-1.5" />Pages</TabsTrigger>}
+                        {perms.admin_role === "full" && <TabsTrigger value="activity" className="rounded-full" data-testid="admin-tab-activity"><Activity className="h-4 w-4 mr-1.5" />Activity</TabsTrigger>}
                     </TabsList>
                 </div>
 
@@ -92,6 +94,7 @@ export default function Admin() {
                 {allowed("email") && <TabsContent value="email" className="mt-6"><EmailBlastAdmin /></TabsContent>}
                 {allowed("news") && <TabsContent value="news" className="mt-6"><NewsAdmin /></TabsContent>}
                 {allowed("pages") && <TabsContent value="pages" className="mt-6"><PagesAdmin /></TabsContent>}
+                {perms.admin_role === "full" && <TabsContent value="activity" className="mt-6"><SignInActivityAdmin /></TabsContent>}
             </Tabs>
         </div>
     );

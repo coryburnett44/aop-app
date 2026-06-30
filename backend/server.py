@@ -705,45 +705,41 @@ async def seed_default_photo_albums():
         await db.photo_albums.update_one({"id": a["id"]}, {"$set": {"category": auto_categorize_album(a["name"])}})
 
 async def reconcile_pending_set_password():
-    """One-shot boot-time reconciliation for the iter78 fix.
+    """Boot-time reconciliation for the `pending_set_password` flag.
 
-    Re-flags members whose `pending_set_password` was incorrectly cleared by the
-    old auth-login path. A user is considered "never completed setup" when:
-      - They have at least one row in `password_set_tokens` (i.e. a welcome /
-        resend email was issued for them), AND
-      - None of those rows show evidence of being consumed via /auth/set-password
-        (`used=true` AND no `invalidated_by` field).
+    Per iter96 user request: if a member has ever successfully logged in
+    they should NOT be shown as "Pending Password Setup" — that pill is
+    meant for invited members who haven't yet touched their account.
 
-    Only users currently flagged `pending_set_password=false` are touched.
-    Idempotent: subsequent boots are no-ops because re-flagged users won't match
-    the "currently false" filter.
+    Sources of truth that prove a working login:
+      - The member consumed a /set-password token (`password_set_tokens.used=true`).
+      - The member has at least one `login_activity` document.
+
+    We $unset the flag for everyone matching either signal. Idempotent.
     """
-    # Build a set of user_ids who *did* consume a token (proves completion).
-    consumed_uids = set()
+    proven_uids: set = set()
+    # Members who consumed a /set-password token.
     async for t in db.password_set_tokens.find(
         {"used": True, "invalidated_by": {"$exists": False}},
         {"_id": 0, "user_id": 1},
     ):
         if t.get("user_id"):
-            consumed_uids.add(t["user_id"])
-    # Users who were issued any token at all.
-    issued_uids = set()
-    async for t in db.password_set_tokens.find({}, {"_id": 0, "user_id": 1}):
-        if t.get("user_id"):
-            issued_uids.add(t["user_id"])
-    # Re-flag candidates: issued but never consumed AND currently not flagged.
-    candidates = issued_uids - consumed_uids
-    if not candidates:
-        logger.info("[reconcile-pending-setpw] no candidates to re-flag")
+            proven_uids.add(t["user_id"])
+    # Members who have a recorded login session.
+    async for s in db.login_activity.find({}, {"_id": 0, "user_id": 1}):
+        if s.get("user_id"):
+            proven_uids.add(s["user_id"])
+    if not proven_uids:
+        logger.info("[reconcile-pending-setpw] no proven users to clear flag for")
         return
     res = await db.users.update_many(
-        {"id": {"$in": list(candidates)}, "pending_set_password": {"$ne": True}},
-        {"$set": {"pending_set_password": True}},
+        {"id": {"$in": list(proven_uids)}, "pending_set_password": True},
+        {"$unset": {"pending_set_password": ""}},
     )
     if res.modified_count:
-        logger.info(f"[reconcile-pending-setpw] re-flagged {res.modified_count} member(s) who never completed /set-password")
+        logger.info(f"[reconcile-pending-setpw] cleared pending flag for {res.modified_count} member(s) who have logged in")
     else:
-        logger.info("[reconcile-pending-setpw] all candidates already correctly flagged")
+        logger.info("[reconcile-pending-setpw] all proven users already had flag cleared")
 
 
 
@@ -3424,6 +3420,20 @@ routes_auth.register(
     JWT_ALGORITHM=JWT_ALGORITHM,
     iso=iso,
     now_utc=now_utc,
+)
+
+# Login & page-view activity tracking. Registered AFTER routes_auth so it can
+# expose `record_login_session` / `record_logout` helpers that auth.py picks
+# up via `api._record_login_session` / `api._record_logout` (see routes/login_activity.py).
+from routes import login_activity as routes_login_activity  # noqa: E402
+routes_login_activity.register(
+    api,
+    db=db,
+    get_current_user=get_current_user,
+    require_admin=require_admin,
+    iso=iso,
+    now_utc=now_utc,
+    logger=logger,
 )
 
 # Patch the back-compat _ensure_site_settings shim to delegate to the route module
