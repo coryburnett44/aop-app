@@ -13,18 +13,22 @@
  * the event card's attendance numbers.
  */
 import { useEffect, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { api } from "../lib/api";
 import { toast } from "sonner";
-import { UserMinus, Trash2, Search } from "lucide-react";
+import { UserMinus, Trash2, Search, UserPlus, Mail } from "lucide-react";
 
 export default function AdminManageRsvpsDialog({ event, onChanged }) {
     const [open, setOpen] = useState(false);
     const [rows, setRows] = useState([]);
     const [busy, setBusy] = useState(false);
     const [q, setQ] = useState("");
+    // Which row's "Add guest" composer is open. null = none.
+    const [addGuestForRsvp, setAddGuestForRsvp] = useState(null);
 
     async function load() {
         try {
@@ -124,6 +128,16 @@ export default function AdminManageRsvpsDialog({ event, onChanged }) {
                                     </div>
                                     <Button
                                         size="sm"
+                                        variant="outline"
+                                        onClick={() => setAddGuestForRsvp(r)}
+                                        disabled={busy}
+                                        className="rounded-full"
+                                        data-testid={`admin-add-guest-${r.user_id}`}
+                                    >
+                                        <UserPlus className="h-3.5 w-3.5 mr-1" /> Add guest
+                                    </Button>
+                                    <Button
+                                        size="sm"
                                         variant="destructive"
                                         onClick={() => unRsvp(r)}
                                         disabled={busy}
@@ -141,6 +155,12 @@ export default function AdminManageRsvpsDialog({ event, onChanged }) {
                                                     <span className="font-medium">{g.name || <em className="text-muted-foreground">(no name)</em>}</span>
                                                     {g.ticket_type && g.ticket_type !== "general" && (
                                                         <span className="ml-2 text-[10px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-primary/10 text-primary">{g.ticket_type.replace("_", " ")}</span>
+                                                    )}
+                                                    {g.email && (
+                                                        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-muted-foreground" title={g.email_sent_at ? `Ticket emailed ${new Date(g.email_sent_at).toLocaleString()}` : "Email on file — ticket will be emailed on next refresh"}>
+                                                            <Mail className="h-3 w-3" /> {g.email}
+                                                            {g.email_sent_at && <span className="text-emerald-600">✓</span>}
+                                                        </span>
                                                     )}
                                                 </div>
                                                 <button
@@ -161,6 +181,147 @@ export default function AdminManageRsvpsDialog({ event, onChanged }) {
                         ))}
                     </div>
                 )}
+            </DialogContent>
+            <AddGuestDialog
+                event={event}
+                rsvp={addGuestForRsvp}
+                onClose={() => setAddGuestForRsvp(null)}
+                onAdded={async () => {
+                    setAddGuestForRsvp(null);
+                    await load();
+                    if (onChanged) onChanged();
+                }}
+            />
+        </Dialog>
+    );
+}
+
+function AddGuestDialog({ event, rsvp, onClose, onAdded }) {
+    const [name, setName] = useState("");
+    const [email, setEmail] = useState("");
+    const [ticketType, setTicketType] = useState("general");
+    const [sendEmail, setSendEmail] = useState(true);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        if (rsvp) {
+            setName("");
+            setEmail("");
+            setTicketType("general");
+            setSendEmail(true);
+        }
+    }, [rsvp]);
+
+    if (!rsvp) return null;
+
+    async function submit() {
+        const trimmedName = name.trim();
+        if (!trimmedName) {
+            toast.error("Guest name is required");
+            return;
+        }
+        const trimmedEmail = email.trim();
+        if (trimmedEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmedEmail)) {
+            toast.error("That email doesn't look right");
+            return;
+        }
+        setBusy(true);
+        try {
+            const { data } = await api.post(
+                `/events/${event.id}/rsvps/${rsvp.user_id}/guests`,
+                {
+                    guests: [{ name: trimmedName, email: trimmedEmail, ticket_type: ticketType }],
+                    send_email: sendEmail,
+                },
+            );
+            const emailed = (data.emails_sent_to_guests || []).length > 0;
+            if (sendEmail && trimmedEmail && emailed) {
+                toast.success(`Added ${trimmedName} as a guest and emailed their ticket to ${trimmedEmail}`);
+            } else if (sendEmail && !trimmedEmail) {
+                toast.success(`Added ${trimmedName} as a guest. ${rsvp.user_name} will receive the updated ticket email.`);
+            } else {
+                toast.success(`Added ${trimmedName} as a guest of ${rsvp.user_name}`);
+            }
+            onAdded?.();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Failed to add guest");
+        }
+        setBusy(false);
+    }
+
+    return (
+        <Dialog open={!!rsvp} onOpenChange={(o) => !o && onClose()}>
+            <DialogContent className="max-w-md" data-testid="admin-add-guest-dialog">
+                <DialogHeader>
+                    <DialogTitle className="font-heading">
+                        Add a guest for {rsvp.user_name}
+                    </DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div>
+                        <Label htmlFor="add-guest-name">Guest name *</Label>
+                        <Input
+                            id="add-guest-name"
+                            value={name}
+                            autoFocus
+                            onChange={(e) => setName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter" && !busy) submit(); }}
+                            placeholder="e.g. Jane Doe"
+                            className="rounded-xl mt-1.5"
+                            data-testid="add-guest-name-input"
+                        />
+                    </div>
+                    <div>
+                        <Label htmlFor="add-guest-email">Guest email (optional)</Label>
+                        <Input
+                            id="add-guest-email"
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="jane@example.com"
+                            className="rounded-xl mt-1.5"
+                            data-testid="add-guest-email-input"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1.5">
+                            If provided, the guest receives their own QR ticket by email — they don&apos;t need to go through {rsvp.user_name}.
+                        </p>
+                    </div>
+                    <div>
+                        <Label>Ticket type</Label>
+                        <Select value={ticketType} onValueChange={setTicketType}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="add-guest-ticket-type"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="general">General Admission</SelectItem>
+                                <SelectItem value="guest">Guest</SelectItem>
+                                <SelectItem value="vip">VIP</SelectItem>
+                                <SelectItem value="all_access">All Access</SelectItem>
+                                <SelectItem value="volunteer">Volunteer</SelectItem>
+                                <SelectItem value="speaker">Speaker</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm pt-1 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={sendEmail}
+                            onChange={(e) => setSendEmail(e.target.checked)}
+                            className="h-4 w-4 rounded"
+                            data-testid="add-guest-send-email"
+                        />
+                        <span>Send a refreshed ticket email{email.trim() ? " (member + guest)" : " to the member"}</span>
+                    </label>
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={onClose} className="rounded-full" type="button" disabled={busy}>Cancel</Button>
+                    <Button
+                        onClick={submit}
+                        disabled={busy || !name.trim()}
+                        className="rounded-full bg-primary hover:bg-primary/90 text-white"
+                        data-testid="add-guest-submit-btn"
+                    >
+                        {busy ? "Adding…" : "Add guest"}
+                    </Button>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );

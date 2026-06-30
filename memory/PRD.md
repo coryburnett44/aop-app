@@ -15,6 +15,21 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 93 — Admin can add guests to an existing member's RSVP + per-guest ticket emails (2026-02-26) [FEATURE]
+User asked: "Allow admins to add guests to members' event tickets if they already RSVP'd. Also ensure guests get an email of their tickets if the admin inputs their email address."
+
+- **New endpoint `POST /api/events/{event_id}/rsvps/{user_id}/guests`** (`routes/rsvps.py`):
+  - Admin-only. 404 if the member hasn't RSVP'd yet (use `/admin-rsvp` instead). 400 if the guest list is empty or every entry is missing a name.
+  - Each new guest gets a uuid `ticket_id`, `added_by_admin` / `added_by_admin_name` / `added_at` attribution stamps, and an optional `email`.
+  - Capacity-guarded: the new guests are validated against the event's seat cap before being appended.
+- **Per-guest ticket email**: extended `send_rsvp_ticket_email` so that any guest with an `email` field also receives a personal ticket email (containing just THEIR QR + event details + who added them). Idempotent via a per-guest `email_sent_at` stamp — re-running the helper after a guest-list edit does not re-spam already-emailed guests. The member still gets their unified "all tickets in one email" copy.
+- **Frontend `AdminManageRsvpsDialog.jsx`**:
+  - Each member row now has an **"Add guest"** button next to the existing "Un-RSVP".
+  - New `AddGuestDialog` sub-component: name (required), email (optional with inline explainer that the guest gets their own QR if provided), ticket-type dropdown (general/guest/vip/all_access/volunteer/speaker), and a "send refreshed email" toggle.
+  - The dialog shows the host member's name in the title ("Add a guest for Riley Chen") so admins don't get confused when triaging multiple members.
+  - Guests that have an email on file now show their address inline in the existing-guest list, with a ✓ once the personal ticket has been sent.
+- **Tests**: new `tests/test_iteration93_admin_add_guests.py` — **5/5 pass** (happy path, non-admin 403, no-RSVP-yet 404, empty guest list 400, audit-trail + email-field persistence).
+
 ### Iteration 92.1 — Real root cause: sync object-storage I/O blocking event loop (2026-02-26) [P0 BUG FIX]
 After redeploying iter-92, the user re-reported "Same login error after trying to upload a photo." Iter-92's frontend-only fix moved uploads off the bulk endpoint but **a deeper backend bug was still in play**:
 

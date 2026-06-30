@@ -188,9 +188,80 @@ def register(
                 "tags": [{"name": "type", "value": "rsvp_ticket"}, {"name": "event_id", "value": event["id"]}],
             })
             logger.info(f"RSVP ticket email sent to {email} (+ {events_inbox}) for {event_title} ({len(cards_html)} tickets)")
+            # Best-effort: also fire a personal copy to each guest that has an
+            # email on file. We don't re-send if `guest.email_sent_at` is
+            # already populated so guest-list edits remain idempotent.
+            for g in guests:
+                gemail = (g.get("email") or "").strip()
+                if not gemail or g.get("email_sent_at"):
+                    continue
+                ok = await _send_single_guest_ticket_email(
+                    gemail, g.get("name", ""), g.get("ticket_type", "general"),
+                    g.get("ticket_id", ""), event, member,
+                )
+                if ok:
+                    g["email_sent_at"] = iso(now_utc())
+                    await db.rsvps.update_one(
+                        {"id": rsvp.get("id"), "guests.ticket_id": g.get("ticket_id")},
+                        {"$set": {"guests.$.email_sent_at": g["email_sent_at"]}},
+                    )
             return True
         except Exception as e:
             logger.warning(f"RSVP ticket email failed for {email}: {e}")
+            return False
+
+    async def _send_single_guest_ticket_email(guest_email: str, guest_name: str, guest_ticket_type: str, guest_ticket_id: str, event: dict, host_member: dict) -> bool:
+        """Email a SINGLE guest their personal ticket. Triggered when an admin
+        adds a guest with an explicit email so the guest receives the QR they
+        need at the door without going through the member who RSVP'd."""
+        if not resend_api_key:
+            logger.info(f"Guest ticket email skipped (no RESEND_API_KEY) for {guest_email}")
+            return False
+        email = (guest_email or "").strip()
+        if not email:
+            return False
+        frontend = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+        event_title = event.get("title", "Alpha Omega Phi Event")
+        when = ""
+        try:
+            from datetime import datetime as _dt
+            sa = event.get("start_at")
+            if sa:
+                d = _dt.fromisoformat(sa.replace("Z", "+00:00"))
+                when = d.strftime("%A, %b %d, %Y · %I:%M %p UTC")
+        except Exception:
+            when = event.get("start_at", "")
+        where = event.get("location", "")
+        gtoken = make_ticket_token(event["id"], guest_ticket_id, "guest", guest_ticket_type or "general", guest_name or "")
+        gurl = f"{frontend}/checkin/{gtoken}"
+        card = _ticket_card_html(guest_name or "Guest", guest_ticket_type or "general",
+                                 make_qr_png_b64(gurl), event_title, when, where)
+        host_label = host_member.get("name", "") or "an Alpha Omega Phi member"
+        import html as _h
+        body = f"""
+        <div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f7f5f0">
+          <h1 style="color:#0A2463;margin:0 0 4px;font-size:26px">You're on the guest list! 🎟️</h1>
+          <div style="color:#666;font-size:13px">{_h.escape(host_label)} added you as their guest for <strong>{_h.escape(event_title)}</strong>.</div>
+          <div style="background:#fff;border-radius:12px;padding:14px 18px;margin:18px 0;font-size:13px;line-height:1.55">
+            <div><strong>When:</strong> {when or 'TBA'}</div>
+            <div><strong>Where:</strong> {where or 'TBA'}</div>
+          </div>
+          {card}
+          <p style="font-size:12px;color:#888;margin-top:18px;line-height:1.6">Show this QR code at the door — staff will scan it to check you in. Questions? Reply to this email or reach out to {_h.escape(host_label)}.</p>
+        </div>
+        """
+        try:
+            await asyncio.to_thread(resend_sdk.Emails.send, {
+                "from": resend_from,
+                "to": [email],
+                "subject": f"Your guest ticket — {event_title}",
+                "html": body,
+                "tags": [{"name": "type", "value": "guest_ticket"}, {"name": "event_id", "value": event["id"]}],
+            })
+            logger.info(f"Guest ticket email sent to {email} for {event_title}")
+            return True
+        except Exception as e:
+            logger.warning(f"Guest ticket email failed for {email}: {e}")
             return False
 
     # ---------- RSVP creation helper (shared by free + paid-event paths) ----------
@@ -526,6 +597,111 @@ def register(
             "rsvp_id": rsvp_doc["id"],
         }})
         return {"ok": True, "rsvp_id": rsvp_doc["id"], "ticket_id": rsvp_doc["ticket_id"]}
+
+    class AdminAddGuestsIn(BaseModel):
+        guests: List[dict]  # [{name, email?, phone?, ticket_type?}]
+        send_email: bool = True
+
+    @api.post("/events/{event_id}/rsvps/{user_id}/guests")
+    async def admin_add_guests_to_rsvp(
+        event_id: str,
+        user_id: str,
+        body: AdminAddGuestsIn,
+        admin: dict = Depends(require_admin),
+    ):
+        """Admin adds one or more guests to an EXISTING member's RSVP.
+
+        Use case: the member already RSVP'd (themselves) but admin learned
+        offline that they're bringing +1/+2/+3 guests. Each guest gets a
+        per-guest `ticket_id` (uuid) so check-in scans work the same as for
+        member-added guests. If a guest has an `email`, they receive their
+        own QR ticket email; the member also receives a refreshed ticket
+        email containing every QR (one per attendee), so they have the full
+        set in one place.
+
+        Capacity-checked: returns 400 if adding these guests would exceed the
+        event's seat cap. Idempotent in the sense that already-existing
+        guests with the same name are NOT deduped — admins can intentionally
+        add two guests with the same name (different ticket_ids).
+        """
+        e = await db.events.find_one({"id": event_id}, {"_id": 0})
+        if not e:
+            raise HTTPException(status_code=404, detail="Event not found")
+        await _ensure_not_cancelled(e, "guest list is locked")
+        rsvp = await db.rsvps.find_one({"event_id": event_id, "user_id": user_id})
+        if not rsvp:
+            raise HTTPException(status_code=404, detail="That member has not RSVP'd for this event yet. Use 'Admin RSVP' first.")
+        member = await db.users.find_one({"id": user_id}, {"_id": 0})
+        if not member:
+            raise HTTPException(status_code=404, detail="Member not found.")
+
+        # Normalize incoming guest payload — accept either pure strings or
+        # full dicts; require at least a name.
+        new_guests: list = []
+        for g in (body.guests or []):
+            if isinstance(g, str):
+                name = g.strip()
+                if name:
+                    new_guests.append({"name": name, "email": "", "phone": "", "ticket_type": "general"})
+                continue
+            name = str((g or {}).get("name", "")).strip()
+            if not name:
+                continue
+            new_guests.append({
+                "name": name,
+                "email": str((g or {}).get("email", "") or "").strip(),
+                "phone": str((g or {}).get("phone", "") or "").strip(),
+                "ticket_type": (g or {}).get("ticket_type") or "general",
+            })
+        if not new_guests:
+            raise HTTPException(status_code=400, detail="At least one guest with a name is required.")
+
+        # Capacity guard — only the NEW guests count against capacity (the
+        # member is already counted by their original RSVP).
+        delta = len(new_guests)
+        if e.get("capacity", 0) > 0 and (e.get("rsvp_count", 0) + e.get("guest_count", 0) + delta) > e["capacity"]:
+            raise HTTPException(status_code=400, detail="Event does not have enough seats")
+
+        # Build the persistent guest entries with a uuid ticket_id each.
+        existing = list(rsvp.get("guests", []) or [])
+        for ng in new_guests:
+            ng["ticket_id"] = str(uuid.uuid4())
+            ng["checked_in_at"] = None
+            ng["added_by_admin"] = admin["id"]
+            ng["added_by_admin_name"] = admin.get("name", "Admin")
+            ng["added_at"] = iso(now_utc())
+            existing.append(ng)
+        await db.rsvps.update_one({"_id": rsvp["_id"]}, {"$set": {"guests": existing}})
+        await db.events.update_one({"id": event_id}, {"$inc": {"guest_count": delta}})
+
+        # Email path: refresh the member's ticket email (which now also fans
+        # out individual guest emails for any guest with an `email` field).
+        emails_sent_to_guests: list = []
+        member_email_sent = False
+        if body.send_email:
+            fresh = await db.rsvps.find_one({"_id": rsvp["_id"]}, {"_id": 0})
+            if fresh:
+                member_email_sent = await send_rsvp_ticket_email(member, e, fresh)
+                # Reload after send_rsvp_ticket_email's per-guest email_sent_at stamping.
+                fresh2 = await db.rsvps.find_one({"_id": rsvp["_id"]}, {"_id": 0})
+                if fresh2:
+                    new_ticket_ids = {ng["ticket_id"] for ng in new_guests}
+                    for g in (fresh2.get("guests") or []):
+                        if g.get("ticket_id") in new_ticket_ids and g.get("email_sent_at"):
+                            emails_sent_to_guests.append({"name": g.get("name", ""), "email": g.get("email", "")})
+
+        logger.info(
+            f"[admin-add-guests] admin={admin.get('email')} added {delta} guest(s) to "
+            f"member={user_id} event={event_id}; email_to_member={member_email_sent}; "
+            f"emails_to_guests={len(emails_sent_to_guests)}"
+        )
+        return {
+            "ok": True,
+            "added": [{"name": g["name"], "email": g.get("email", ""), "ticket_id": g["ticket_id"], "ticket_type": g["ticket_type"]} for g in new_guests],
+            "total_guests": len(existing),
+            "member_email_sent": member_email_sent,
+            "emails_sent_to_guests": emails_sent_to_guests,
+        }
 
     @api.put("/events/{event_id}/rsvp/guests")
     async def update_rsvp_guests(event_id: str, body: EventRsvpIn, user: dict = Depends(get_current_user)):
