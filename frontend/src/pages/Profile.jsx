@@ -23,6 +23,7 @@ import ZeffyCheckout from "../components/ZeffyCheckout";
 import MyOutstandingBalance from "../components/MyOutstandingBalance";
 import AvatarUploader from "../components/AvatarUploader";
 import { MaritalStatusField, LanguagesEditor, CivilianDegreesEditor } from "../components/ProfileExtrasEditor";
+import { MILITARY_BRANCHES } from "../lib/militaryBranches";
 
 const ICON_MAP = { medal: Medal, star: Star, heart: Heart, "graduation-cap": GraduationCap, sparkles: Sparkles, trophy: Trophy, award: AwardIcon };
 
@@ -36,6 +37,7 @@ export default function Profile() {
         intake_line: "", intake_completed_at: "",
         username: "", phone: "", bio: "", city: "", address: "", state: "", zip_code: "", country: "",
         birthdate: "", interests: "", avatar_url: "", chapter_id: "",
+        branch_of_service: "",
         marital_status: "",
         languages: [],
         civilian_degrees: [],
@@ -83,6 +85,7 @@ export default function Profile() {
                 interests: (user.interests || []).join(", "),
                 avatar_url: user.avatar_url || "",
                 chapter_id: user.chapter_id || "",
+                branch_of_service: user.branch_of_service || "",
                 facebook_url: user.facebook_url || "",
                 instagram_url: user.instagram_url || "",
                 linkedin_url: user.linkedin_url || "",
@@ -119,6 +122,7 @@ export default function Profile() {
                 birthdate: form.birthdate,
                 interests: form.interests.split(",").map((s) => s.trim()).filter(Boolean),
                 avatar_url: form.avatar_url,
+                branch_of_service: form.branch_of_service,
                 facebook_url: form.facebook_url, instagram_url: form.instagram_url,
                 linkedin_url: form.linkedin_url, tiktok_url: form.tiktok_url,
                 twitter_url: form.twitter_url, pinterest_url: form.pinterest_url,
@@ -307,14 +311,37 @@ export default function Profile() {
                             <div><Label>Zip code</Label><Input value={form.zip_code} onChange={(e) => setForm({ ...form, zip_code: e.target.value })} className="rounded-xl mt-1.5" placeholder="77001" data-testid="profile-zip" /></div>
                             <div><Label>Country</Label><Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="rounded-xl mt-1.5" placeholder="USA" data-testid="profile-country" /></div>
                         </div>
-                        <div>
-                            <Label>Chapter</Label>
-                            <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
-                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-chapter"><SelectValue placeholder="Select your chapter" /></SelectTrigger>
-                                <SelectContent>
-                                    {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
+                        <div className="grid sm:grid-cols-2 gap-4">
+                            <div>
+                                <Label>Branch of service</Label>
+                                <Select
+                                    value={form.branch_of_service || "__none__"}
+                                    onValueChange={(v) => setForm({ ...form, branch_of_service: v === "__none__" ? "" : v })}
+                                >
+                                    <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-branch-of-service">
+                                        <SelectValue placeholder="Select your branch" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="__none__">— Not specified —</SelectItem>
+                                        {MILITARY_BRANCHES.map((b) => (
+                                            <SelectItem key={b} value={b} data-testid={`branch-option-${b.replace(/\s+/g, "-").toLowerCase()}`}>{b}</SelectItem>
+                                        ))}
+                                        {/* Legacy: render any non-canonical value already on the user so editing doesn't silently wipe it. */}
+                                        {form.branch_of_service && !MILITARY_BRANCHES.includes(form.branch_of_service) && (
+                                            <SelectItem value={form.branch_of_service}>{form.branch_of_service} (legacy)</SelectItem>
+                                        )}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div>
+                                <Label>Chapter</Label>
+                                <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
+                                    <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-chapter"><SelectValue placeholder="Select your chapter" /></SelectTrigger>
+                                    <SelectContent>
+                                        {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </div>
                         {/* Iter 38: Avatar URL field replaced with upload-only.
                             Calls /api/members/me/avatar which stores in object storage and

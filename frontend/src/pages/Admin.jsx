@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
 import { fmtET, etInputToUtc, utcToEtInput } from "../lib/eventTime";
+import { MILITARY_BRANCHES } from "../lib/militaryBranches";
 import AdminDashboard from "./AdminDashboard";
 import Reports from "./Reports";
 import { FullEditHoursDialog } from "./Hours";
@@ -1418,7 +1419,24 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
                         <div><Label>City</Label><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
-                        <div><Label>Branch of service</Label><Input value={form.branch_of_service} onChange={(e) => setForm({ ...form, branch_of_service: e.target.value })} className="rounded-xl mt-1.5" placeholder="Army, Navy, Marines…" /></div>
+                        <div>
+                            <Label>Branch of service</Label>
+                            <Select
+                                value={form.branch_of_service || "__none__"}
+                                onValueChange={(v) => setForm({ ...form, branch_of_service: v === "__none__" ? "" : v })}
+                            >
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="nm-branch"><SelectValue placeholder="Select branch" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none__">— Not specified —</SelectItem>
+                                    {MILITARY_BRANCHES.map((b) => (
+                                        <SelectItem key={b} value={b}>{b}</SelectItem>
+                                    ))}
+                                    {form.branch_of_service && !MILITARY_BRANCHES.includes(form.branch_of_service) && (
+                                        <SelectItem value={form.branch_of_service}>{form.branch_of_service} (legacy)</SelectItem>
+                                    )}
+                                </SelectContent>
+                            </Select>
+                        </div>
                         <div>
                             <Label>Member status</Label>
                             <Select value={form.member_status} onValueChange={(v) => setForm({ ...form, member_status: v })}>
@@ -1715,7 +1733,24 @@ function EditMemberDialog({ member, chapters, tiers, isFullAdmin = true, onSaved
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                         <div><Label>Birthdate</Label><Input type="date" value={form.birthdate || ""} onChange={(e) => setForm({ ...form, birthdate: e.target.value })} className="rounded-xl mt-1.5" data-testid="em-birthdate" /></div>
-                        <div><Label>Branch of service</Label><Input value={form.branch_of_service || ""} onChange={(e) => setForm({ ...form, branch_of_service: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div>
+                            <Label>Branch of service</Label>
+                            <Select
+                                value={form.branch_of_service || "__none__"}
+                                onValueChange={(v) => setForm({ ...form, branch_of_service: v === "__none__" ? "" : v })}
+                            >
+                                <SelectTrigger className="rounded-xl mt-1.5" data-testid="em-branch"><SelectValue placeholder="Select branch" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none__">— Not specified —</SelectItem>
+                                    {MILITARY_BRANCHES.map((b) => (
+                                        <SelectItem key={b} value={b}>{b}</SelectItem>
+                                    ))}
+                                    {form.branch_of_service && !MILITARY_BRANCHES.includes(form.branch_of_service) && (
+                                        <SelectItem value={form.branch_of_service}>{form.branch_of_service} (legacy)</SelectItem>
+                                    )}
+                                </SelectContent>
+                            </Select>
+                        </div>
                         <div>
                             <Label>Member status</Label>
                             <Select value={form.member_status || "active"} onValueChange={(v) => setForm({ ...form, member_status: v })}>

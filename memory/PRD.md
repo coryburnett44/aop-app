@@ -15,6 +15,14 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 95 — Members self-select their branch of service (2026-02-26) [FEATURE]
+User asked: "Allow members to select their branch of service using Army / Air Force / Marine Corps / Navy / Coast Guard / Space Force. Once they select, update the admin members Branch section."
+
+- **Shared constant** (`/app/frontend/src/lib/militaryBranches.js`): canonical 6-branch list (Army → Air Force → Marine Corps → Navy → Coast Guard → Space Force, DoD seniority order).
+- **`Profile.jsx`**: added a "Branch of service" `<Select>` in the same row as Chapter. Persisted via the existing `PUT /api/members/me` endpoint (`ProfileUpdateIn.branch_of_service` was already in the model, just unwired on the form). "— Not specified —" option clears the field. Legacy non-canonical values (e.g. "Marines", "USAF") render in the dropdown with a `(legacy)` label so editing doesn't silently wipe them.
+- **`Admin.jsx`**: replaced the free-text "Branch of service" `<Input>` with the same dropdown in BOTH the "New member" and "Edit member" dialogs. Admin overrides still write to the same `branch_of_service` field, so the data is unified — members and admins now edit the same value with the same constraints.
+- **Tests**: new `tests/test_iteration95_branch_of_service.py` — **8/8 pass** (one round-trip per canonical branch + clear-to-empty + legacy free-text value still accepted by the backend).
+
 ### Iteration 94 — Event times stay in Eastern Time + sub-event delete is permanent (2026-02-26) [P0 BUG FIX]
 User reported two bugs: "If I put 6 pm as the start time, it needs to stay at 6 pm. All of the tickets have the incorrect time" and "When I delete a sub-event, ensure it stays deleted."
 
