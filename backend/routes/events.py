@@ -198,6 +198,28 @@ def register(api, *, db, admin_tab_dep, event_out, iso, now_utc, resend_sdk=None
 
     @api.delete("/events/{event_id}")
     async def delete_event(event_id: str, _: dict = Depends(admin_tab_dep("events"))):
+        # If the event is a canonical seeded sub-event (e.g. one of the 5
+        # anniversary sub-events), tombstone the title so the boot-time
+        # `seed_anniversary_subevents` reconciler does NOT silently recreate
+        # it on the next backend restart. Same pattern as `deleted_default_albums`.
+        ev = await db.events.find_one({"id": event_id}, {"_id": 0, "title": 1, "parent_event_id": 1})
+        if ev and ev.get("parent_event_id"):
+            from server import ANNIVERSARY_PARENT_TITLE, ANNIVERSARY_SUB_EVENTS  # local import to avoid circular at module load
+            seeded_titles = {s["title"] for s in ANNIVERSARY_SUB_EVENTS}
+            if ev.get("title") in seeded_titles:
+                parent = await db.events.find_one(
+                    {"id": ev["parent_event_id"]}, {"_id": 0, "title": 1}
+                )
+                if parent and parent.get("title") == ANNIVERSARY_PARENT_TITLE:
+                    await db.deleted_default_subevents.update_one(
+                        {"title": ev["title"]},
+                        {"$setOnInsert": {
+                            "title": ev["title"],
+                            "parent_title": ANNIVERSARY_PARENT_TITLE,
+                            "deleted_at": iso(now_utc()),
+                        }},
+                        upsert=True,
+                    )
         await db.events.delete_one({"id": event_id})
         await db.rsvps.delete_many({"event_id": event_id})
         return {"ok": True}

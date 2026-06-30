@@ -13,7 +13,7 @@ import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDas
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
-import { fmtET } from "../lib/eventTime";
+import { fmtET, etInputToUtc, utcToEtInput } from "../lib/eventTime";
 import AdminDashboard from "./AdminDashboard";
 import Reports from "./Reports";
 import { FullEditHoursDialog } from "./Hours";
@@ -138,8 +138,8 @@ function EventDialog({ event, onSaved, trigger }) {
         title: event?.title || "",
         description: event?.description || "",
         location: event?.location || "",
-        start_at: event ? event.start_at.slice(0, 16) : "",
-        end_at: event?.end_at ? event.end_at.slice(0, 16) : "",
+        start_at: event ? utcToEtInput(event.start_at) : "",
+        end_at: event?.end_at ? utcToEtInput(event.end_at) : "",
         capacity: event?.capacity || 0,
         cover_image: event?.cover_image || "",
         category: event?.category || "social",
@@ -176,8 +176,8 @@ function EventDialog({ event, onSaved, trigger }) {
             ...form,
             capacity: Number(form.capacity),
             price: Number(form.price),
-            start_at: new Date(form.start_at).toISOString(),
-            end_at: form.end_at ? new Date(form.end_at).toISOString() : null,
+            start_at: etInputToUtc(form.start_at),
+            end_at: etInputToUtc(form.end_at),
         };
         try {
             let parentId = event?.id;
@@ -198,8 +198,8 @@ function EventDialog({ event, onSaved, trigger }) {
                             title: s.title.trim(),
                             description: "",
                             location: (s.location || "").trim(),
-                            start_at: new Date(s.start_at).toISOString(),
-                            end_at: s.end_at ? new Date(s.end_at).toISOString() : null,
+                            start_at: etInputToUtc(s.start_at),
+                            end_at: etInputToUtc(s.end_at),
                             category: (s.category || "general").trim(),
                             capacity: 0,
                             cover_image: "",
@@ -280,8 +280,8 @@ function EventDialog({ event, onSaved, trigger }) {
                         <Textarea rows={6} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl" data-testid="event-description-input" />
                     </div>
                     <div className="grid sm:grid-cols-2 gap-4">
-                        <div><Label>Start</Label><Input type="datetime-local" value={form.start_at} onChange={(e) => setForm({ ...form, start_at: e.target.value })} className="rounded-xl mt-1.5" data-testid="event-start-input" /></div>
-                        <div><Label>End (optional)</Label><Input type="datetime-local" value={form.end_at} onChange={(e) => setForm({ ...form, end_at: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                        <div><Label>Start <span className="text-xs font-normal text-muted-foreground">(Eastern Time)</span></Label><Input type="datetime-local" value={form.start_at} onChange={(e) => setForm({ ...form, start_at: e.target.value })} className="rounded-xl mt-1.5" data-testid="event-start-input" /></div>
+                        <div><Label>End (optional) <span className="text-xs font-normal text-muted-foreground">(Eastern Time)</span></Label><Input type="datetime-local" value={form.end_at} onChange={(e) => setForm({ ...form, end_at: e.target.value })} className="rounded-xl mt-1.5" /></div>
                         <div><Label>Location</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className="rounded-xl mt-1.5" /></div>
                         <div><Label>Category</Label><Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="rounded-xl mt-1.5" /></div>
                         <div><Label>Capacity (0 = unlimited)</Label><Input type="number" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} className="rounded-xl mt-1.5" /></div>

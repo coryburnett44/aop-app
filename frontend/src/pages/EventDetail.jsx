@@ -8,7 +8,7 @@ import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { format, parseISO } from "date-fns";
-import { fmtET } from "../lib/eventTime";
+import { fmtET, etInputToUtc, utcToEtInput } from "../lib/eventTime";
 import { MapPin, Users, Calendar, ArrowLeft, UserCheck, Trash2, Plus, X, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import PaidEventCheckout from "../components/PaidEventCheckout";
@@ -348,10 +348,10 @@ function SubEventForm({ parentEvent, existing, onDone, onCancel, submitLabel }) 
     const [title, setTitle] = useState(existing?.title || "");
     const [category, setCategory] = useState(existing?.category || "general");
     const [startAt, setStartAt] = useState(
-        existing?.start_at ? existing.start_at.slice(0, 16)
-            : (parentEvent?.start_at ? parentEvent.start_at.slice(0, 16) : "")
+        existing?.start_at ? utcToEtInput(existing.start_at)
+            : (parentEvent?.start_at ? utcToEtInput(parentEvent.start_at) : "")
     );
-    const [endAt, setEndAt] = useState(existing?.end_at ? existing.end_at.slice(0, 16) : "");
+    const [endAt, setEndAt] = useState(existing?.end_at ? utcToEtInput(existing.end_at) : "");
     const [location, setLocation] = useState(existing?.location ?? parentEvent?.location ?? "");
     const [allowsTicketTypes, setAllowsTicketTypes] = useState(!!existing?.allows_ticket_types);
     const [rsvpsClosed, setRsvpsClosed] = useState(!!existing?.rsvps_closed);
@@ -366,8 +366,8 @@ function SubEventForm({ parentEvent, existing, onDone, onCancel, submitLabel }) 
             const payload = {
                 title: title.trim(),
                 location: location.trim(),
-                start_at: new Date(startAt).toISOString(),
-                end_at: endAt ? new Date(endAt).toISOString() : null,
+                start_at: etInputToUtc(startAt),
+                end_at: etInputToUtc(endAt),
                 category: category.trim() || "general",
                 allows_ticket_types: !!allowsTicketTypes,
             };
@@ -405,11 +405,11 @@ function SubEventForm({ parentEvent, existing, onDone, onCancel, submitLabel }) 
             </div>
             <div className="grid sm:grid-cols-2 gap-3">
                 <div>
-                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Starts</label>
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Starts <span className="font-normal normal-case text-[10px]">(Eastern Time)</span></label>
                     <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="mt-1 w-full rounded-xl border border-border px-3 py-2 text-sm" data-testid="sub-event-start" />
                 </div>
                 <div>
-                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Ends <span className="font-normal normal-case">(optional)</span></label>
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Ends <span className="font-normal normal-case text-[10px]">(Eastern Time, optional)</span></label>
                     <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} className="mt-1 w-full rounded-xl border border-border px-3 py-2 text-sm" data-testid="sub-event-end" />
                 </div>
             </div>

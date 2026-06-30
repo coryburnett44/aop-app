@@ -15,6 +15,24 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 94 — Event times stay in Eastern Time + sub-event delete is permanent (2026-02-26) [P0 BUG FIX]
+User reported two bugs: "If I put 6 pm as the start time, it needs to stay at 6 pm. All of the tickets have the incorrect time" and "When I delete a sub-event, ensure it stays deleted."
+
+**Bug A — Times silently shifted by the admin's browser timezone:**
+- Root cause: `<input type="datetime-local">` returns a naive `YYYY-MM-DDTHH:mm` string and the code did `new Date(localStr).toISOString()` — which the browser interpreted in the ADMIN'S local timezone. An admin in Texas (CT) typing 6:00 PM stored 6:00 PM CT (= 00:00 UTC next day) which then rendered as 7:00 PM Eastern on the ticket. The user wants all event times anchored to Eastern Time regardless of who's editing.
+- Fix (frontend, `lib/eventTime.js`): added `etInputToUtc(localStr)` and `utcToEtInput(iso)` helpers wrapping `date-fns-tz`'s `fromZonedTime` / `formatInTimeZone`. They interpret the input as ET wall-clock and round-trip pre-fills.
+- Fix (frontend, `Admin.jsx` + `EventDetail.jsx`): swapped every `new Date(...).toISOString()` and `.slice(0, 16)` site to use the helpers. Added "(Eastern Time)" labels next to every datetime-local input so admins know explicitly.
+- Fix (backend, `routes/rsvps.py`): the ticket email's `when` string previously rendered `%I:%M %p UTC` — now converts to `America/New_York` via `zoneinfo.ZoneInfo` and renders `06:00 PM EST` / `06:00 PM EDT` automatically. Applied to both the member combined-ticket email AND the new per-guest ticket email.
+- Verified end-to-end: admin enters 6:00 PM ET → stored as `2027-01-15T23:00:00Z` → ticket email renders "Friday, Jan 15, 2027 · 06:00 PM EST". Test asserts `06:00 PM` + `EST` after round-trip.
+
+**Bug B — Deleted anniversary sub-events resurrected on backend restart:**
+- Root cause: `seed_anniversary_subevents()` re-inserted any of the 5 canonical sub-events ("Sip & Paint", "Sneaker Ball Banquet", "Top Golf", "Transportation to Sip & Paint", "Transportation to Top Golf") if they were missing — running on every startup. So when an admin deleted one, the next worker restart silently brought it back.
+- Fix (`routes/events.py` DELETE): when the deleted event is a canonical anniversary sub-event under the 10-Year Anniversary parent, write a tombstone document `{title, parent_title, deleted_at}` into a new `deleted_default_subevents` collection (same pattern as `deleted_default_albums` and `deleted_builtin_automated_emails`).
+- Fix (`server.py` seeder): `seed_anniversary_subevents` now loads the tombstone set first and skips any tombstoned title in the reconcile loop. Idempotent — tombstone survives across restarts.
+- Verified: deleted "Sip & Paint" → restarted backend → "Sip & Paint" stays gone. Tombstone doc inspected directly in Mongo confirms `parent_title: "Alpha Omega Phi 10-Year Anniversary"` and `deleted_at` ISO timestamp. After cleanup the canonical event is restored.
+
+**Tests**: new `tests/test_iteration94_et_time_and_subevent_tombstone.py` — 2/2 pass (ET round-trip + tombstone survives reseed). Combined regression with iter93 + photos suite: **18/18 pass**.
+
 ### Iteration 93 — Admin can add guests to an existing member's RSVP + per-guest ticket emails (2026-02-26) [FEATURE]
 User asked: "Allow admins to add guests to members' event tickets if they already RSVP'd. Also ensure guests get an email of their tickets if the admin inputs their email address."
 

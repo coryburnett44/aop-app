@@ -130,10 +130,15 @@ def register(
         when = ""
         try:
             from datetime import datetime as _dt
+            from zoneinfo import ZoneInfo
             sa = event.get("start_at")
             if sa:
                 d = _dt.fromisoformat(sa.replace("Z", "+00:00"))
-                when = d.strftime("%A, %b %d, %Y · %I:%M %p UTC")
+                # Always render in Eastern Time. Org policy: all event times
+                # (flyers, emails, tickets, UI) use ET. `%Z` will print "EST"
+                # in winter / "EDT" in summer automatically.
+                d_et = d.astimezone(ZoneInfo("America/New_York"))
+                when = d_et.strftime("%A, %b %d, %Y · %I:%M %p %Z")
         except Exception:
             when = event.get("start_at", "")
         where = event.get("location", "")
@@ -225,10 +230,12 @@ def register(
         when = ""
         try:
             from datetime import datetime as _dt
+            from zoneinfo import ZoneInfo
             sa = event.get("start_at")
             if sa:
                 d = _dt.fromisoformat(sa.replace("Z", "+00:00"))
-                when = d.strftime("%A, %b %d, %Y · %I:%M %p UTC")
+                d_et = d.astimezone(ZoneInfo("America/New_York"))
+                when = d_et.strftime("%A, %b %d, %Y · %I:%M %p %Z")
         except Exception:
             when = event.get("start_at", "")
         where = event.get("location", "")

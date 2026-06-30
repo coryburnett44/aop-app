@@ -3109,8 +3109,22 @@ async def seed_anniversary_subevents():
     else:
         await db.events.update_one({"id": parent["id"]}, {"$set": parent_updates})
 
-    # Reconcile sub-events: insert missing, update existing.
+    # Reconcile sub-events: insert missing, update existing — but skip any
+    # sub-event title that an admin has explicitly deleted (tombstoned in
+    # `deleted_default_subevents`). This is the same pattern used by
+    # `deleted_default_albums` for photo albums; without it, a deleted
+    # sub-event re-appears on every backend restart and admins lose work.
+    tombstoned = set()
+    async for t in db.deleted_default_subevents.find({"parent_title": ANNIVERSARY_PARENT_TITLE}, {"_id": 0, "title": 1}):
+        tombstoned.add(t.get("title"))
     for spec in ANNIVERSARY_SUB_EVENTS:
+        if spec["title"] in tombstoned:
+            # Admin removed this sub-event deliberately. Do not recreate, do
+            # not even update if it somehow still exists (a re-insertion via
+            # admin UI counts as a fresh canonical seed → caller can clear
+            # the tombstone first via /events/admin/restore-subevent if we
+            # ever expose that). Leaving it alone is the safer default.
+            continue
         sub_start = ANNIVERSARY_START.replace(hour=spec["hour"]) + timedelta(days=spec["day_offset"])
         sub_end = sub_start + timedelta(hours=3)
         sub_updates = {
