@@ -217,7 +217,7 @@ export default function Directory() {
             </div>
 
             <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto" data-testid="member-detail-dialog">
                     <DialogHeader><DialogTitle className="font-heading text-2xl">Member profile</DialogTitle></DialogHeader>
                     {active && <MemberDetail member={active} chapters={chapters} />}
                 </DialogContent>
@@ -266,7 +266,7 @@ function MemberDetail({ member, chapters }) {
             {d.bio && (
                 <div className="mt-5 pt-4 border-t">
                     <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-1">Bio</div>
-                    <p className="text-sm leading-relaxed">{d.bio}</p>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" data-testid="member-detail-bio">{d.bio}</p>
                 </div>
             )}
             {d.interests?.length > 0 && (
