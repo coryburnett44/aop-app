@@ -375,11 +375,30 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
     async def leaderboard_top_donors(period: str = "quarter", user: dict = Depends(get_current_user)):
         """Top 5 chapters + top 5 members by completed donation $ for the period.
         Mirrors `/leaderboards/community-service` shape but reports dollars.
-        period ∈ {quarter, month, year, all}.
+        period ∈ {quarter, month, year, all, q1, q2, q3, q4}.
+
+        `q1`-`q4` are explicit named-quarter shortcuts used by the homepage
+        period switcher; they bound the range on both ends so Q1 data
+        doesn't leak into Q2 later in the year.
         """
+        from datetime import timedelta as _td
         now = now_utc()
         start_iso: Optional[str] = None
-        if period == "quarter":
+        end_iso: Optional[str] = None
+        if period in ("q1", "q2", "q3", "q4"):
+            q_idx = int(period[1]) - 1
+            q_start_month = q_idx * 3 + 1
+            q_end_month = q_start_month + 2
+            q_start = now.replace(month=q_start_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+            if q_end_month == 12:
+                next_start = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            else:
+                next_start = now.replace(month=q_end_month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            q_end = next_start - _td(seconds=1)
+            start_iso = iso(q_start)
+            end_iso = iso(q_end)
+            period_label = f"Q{q_idx + 1} {now.year}"
+        elif period == "quarter":
             q = (now.month - 1) // 3
             q_start = now.replace(month=q * 3 + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
             start_iso = iso(q_start)
@@ -395,7 +414,9 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
             period_label = "All time"
 
         match: dict = {"type": "donation", "status": "completed"}
-        if start_iso:
+        if start_iso and end_iso:
+            match["created_at"] = {"$gte": start_iso, "$lte": end_iso}
+        elif start_iso:
             match["created_at"] = {"$gte": start_iso}
 
         # ---- Top members (anonymous excluded for privacy) ----

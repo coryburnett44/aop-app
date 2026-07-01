@@ -3602,11 +3602,31 @@ routes_balances.register(
 # by approved volunteer hours for the requested period.
 @api.get("/leaderboards/community-service")
 async def leaderboard_community_service(period: str = "quarter", user: dict = Depends(get_current_user)):
-    """period ∈ {quarter, month, year, all}. Returns:
-      {period, period_label, top_chapters: [...top 5], top_members: [...top 5]}"""
+    """period ∈ {quarter, month, year, all, q1, q2, q3, q4}. Returns:
+      {period, period_label, top_chapters: [...top 5], top_members: [...top 5]}
+
+    `q1`-`q4` explicitly target the named quarter of the current calendar
+    year (with an explicit end date so Q1 doesn't leak into Q2 when queried
+    later in the year). Used by the homepage leaderboard period switcher."""
     now = now_utc()
     start_iso: Optional[str] = None
-    if period == "quarter":
+    end_iso: Optional[str] = None
+    # Explicit-quarter switch: q1|q2|q3|q4 all live inside the current year.
+    if period in ("q1", "q2", "q3", "q4"):
+        q_idx = int(period[1]) - 1  # 0..3
+        q_start_month = q_idx * 3 + 1
+        q_end_month = q_start_month + 2
+        q_start = now.replace(month=q_start_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+        # Last day of the quarter's end month — compute via next-month minus a day.
+        if q_end_month == 12:
+            next_start = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            next_start = now.replace(month=q_end_month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        q_end = next_start - timedelta(seconds=1)
+        start_iso = iso(q_start)
+        end_iso = iso(q_end)
+        period_label = f"Q{q_idx + 1} {now.year}"
+    elif period == "quarter":
         q = (now.month - 1) // 3
         q_start = now.replace(month=q * 3 + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
         start_iso = iso(q_start)
@@ -3622,7 +3642,9 @@ async def leaderboard_community_service(period: str = "quarter", user: dict = De
         period_label = "All time"
 
     match: dict = {"status": "approved"}
-    if start_iso:
+    if start_iso and end_iso:
+        match["date"] = {"$gte": start_iso, "$lte": end_iso}
+    elif start_iso:
         match["date"] = {"$gte": start_iso}
 
     # ---- Top members ----

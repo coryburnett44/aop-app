@@ -14,33 +14,26 @@ const GOLD = "#F9D466";
 export default function TopDonorsLeaderboard() {
     const [data, setData] = useState(null);
     const [tab, setTab] = useState("chapters");
+    const [period, setPeriod] = useState(() => `q${Math.floor(new Date().getMonth() / 3) + 1}`);
+    const currentYear = new Date().getFullYear();
 
     useEffect(() => {
-        // Same fallback strategy as CommunityServiceLeaderboard — if the
-        // current quarter has no donations yet, roll up to all-time so
-        // fresh orgs and the very start of each quarter still show
-        // meaningful data instead of a hidden section.
         (async () => {
             try {
-                const { data: q } = await api.get("/leaderboards/top-donors?period=quarter");
-                if ((q.top_chapters?.length || 0) + (q.top_members?.length || 0) > 0) {
-                    setData(q);
-                    return;
-                }
-                const { data: allTime } = await api.get("/leaderboards/top-donors?period=all");
-                setData({ ...allTime, period_label: allTime.period_label || "All time" });
+                const { data: d } = await api.get(`/leaderboards/top-donors?period=${period}`);
+                setData(d);
             } catch {
                 setData({ top_chapters: [], top_members: [], period_label: "This Quarter" });
             }
         })();
-    }, []);
+    }, [period]);
 
     if (!data) {
         return <section className="py-12 max-w-6xl mx-auto px-6 lg:px-10"><div className="h-64 bg-muted rounded-2xl animate-pulse" /></section>;
     }
-    // Keep the section rendered even when empty — the EmptyState UI below is
-    // much clearer than the section vanishing entirely. See parallel comment
-    // in CommunityServiceLeaderboard.jsx.
+    // Section stays mounted even when both lists are empty — the EmptyState
+    // below is clearer than a disappearing widget. Per org policy the
+    // homepage period switcher intentionally excludes "All time".
 
     return (
         <section className="py-14 bg-slate-50" data-testid="home-top-donors">
@@ -51,7 +44,28 @@ export default function TopDonorsLeaderboard() {
                         <HeartHandshake className="h-7 w-7 sm:h-9 sm:w-9" style={{ color: GOLD }} />
                         Top Donors Leader Board
                     </h2>
-                    <p className="text-sm sm:text-base text-slate-600 mt-2">{data.period_label === "All time" ? "Top donors across the whole org — completed donations only." : "Top donors this quarter — completed donations only."}</p>
+                    <p className="text-sm sm:text-base text-slate-600 mt-2">Completed donations for {data.period_label || "the current quarter"}.</p>
+                </div>
+
+                {/* Period switcher — Q1-Q4 of the current year plus full-year totals. */}
+                <div className="flex justify-center mb-4" data-testid="top-donors-period-switcher">
+                    <div className="inline-flex bg-white/70 border border-slate-200 rounded-full p-1 flex-wrap gap-1">
+                        {["q1", "q2", "q3", "q4", "year"].map((p) => {
+                            const label = p === "year" ? String(currentYear) : p.toUpperCase();
+                            const active = period === p;
+                            return (
+                                <button
+                                    key={p}
+                                    type="button"
+                                    onClick={() => setPeriod(p)}
+                                    className={`rounded-full px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-bold transition-colors ${active ? "bg-primary text-white shadow-warm" : "text-muted-foreground hover:text-foreground"}`}
+                                    data-testid={`top-donors-period-${p}`}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
 
                 <div className="flex justify-center mb-6">
@@ -78,7 +92,7 @@ export default function TopDonorsLeaderboard() {
                 {tab === "chapters" ? (
                     <div className="space-y-2 max-w-2xl mx-auto" data-testid="top-donors-chapters-list">
                         {data.top_chapters.length === 0 ? (
-                            <EmptyState text={data.period_label === "All time" ? "No donations recorded yet. Be the first!" : "No chapter donations this quarter yet."} />
+                            <EmptyState text={`No chapter donations for ${data.period_label} yet.`} />
                         ) : data.top_chapters.map((c, idx) => (
                             <DonorRow
                                 key={c.chapter_id || `unassigned-${idx}`}
@@ -95,7 +109,7 @@ export default function TopDonorsLeaderboard() {
                 ) : (
                     <div className="space-y-2 max-w-2xl mx-auto" data-testid="top-donors-members-list">
                         {data.top_members.length === 0 ? (
-                            <EmptyState text={data.period_label === "All time" ? "No donations recorded yet." : "No individual donations this quarter yet."} />
+                            <EmptyState text={`No individual donations for ${data.period_label} yet.`} />
                         ) : data.top_members.map((m, idx) => (
                             <DonorRow
                                 key={m.user_id}

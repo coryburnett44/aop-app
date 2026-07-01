@@ -15,6 +15,20 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 98 — Homepage leaderboards support Q1-Q4 + year period switcher; no "All time" (2026-02-26) [FEATURE]
+User asked to add a period selector to both homepage leaderboards allowing members to switch between quarters within the current year and the full year, and to remove the "All time" fallback that iter92.1 had added.
+
+- **Backend** (`server.py` community-service + `routes/donations.py` top-donors):
+  - Both leaderboard endpoints now accept `period ∈ {quarter, month, year, all, q1, q2, q3, q4}`.
+  - Explicit-quarter shortcuts (`q1`-`q4`) target the named quarter of the **current calendar year** with an explicit end-date bound (`$gte` AND `$lte`) so Q1 data doesn't leak into later-quarter queries.
+  - Existing `period=all` is preserved for admin reporting (still used by non-homepage callers) but the homepage never requests it.
+- **Frontend** (`CommunityServiceLeaderboard.jsx` + `TopDonorsLeaderboard.jsx`):
+  - New period switcher: 5 pill buttons — `Q1 · Q2 · Q3 · Q4 · <YYYY>` — where YYYY is the current calendar year, so admins never have to change the JSX at year rollover.
+  - Default selection = current quarter (computed from `new Date().getMonth()`).
+  - Removed the iter92.1 all-time fallback. If a period has no data the section still renders with a friendly empty-state ("No chapter donations for Q3 2026 yet.").
+  - Subtitle + empty-state copy now interpolate `data.period_label` so the strings stay consistent when the user switches ("Approved volunteer hours for Q1 2026.", "Completed donations for 2026.").
+- **Tests**: `tests/test_iteration98_leaderboard_periods.py` — **12/12 pass, 1 skipped** (no seed donations to cross-verify Q leakage). Verifies: each named period returns the expected `period_label` for both endpoints; Q1+Q2+Q3+Q4 chapter totals never exceed the year total (proves no data leakage); `period=all` still works at the API level for admin reporting.
+
 ### Iteration 97 — Personnel Data Brief download & preview fixes (2026-02-26) [P0 BUG FIX]
 Four bugs the user reported in one shot:
 

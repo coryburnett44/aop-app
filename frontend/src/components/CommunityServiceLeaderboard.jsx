@@ -13,35 +13,27 @@ const GOLD = "#F9D466";
 export default function CommunityServiceLeaderboard() {
     const [data, setData] = useState(null);
     const [tab, setTab] = useState("chapters"); // chapters | members
+    // Default to current quarter. Members can switch to any Q1-Q4 or the
+    // full year, but per org policy we DO NOT expose an "All time" option
+    // on the homepage — the leaderboard is meant to encourage current-year
+    // engagement, not decade-old totals.
+    const [period, setPeriod] = useState(() => `q${Math.floor(new Date().getMonth() / 3) + 1}`);
+    const currentYear = new Date().getFullYear();
 
     useEffect(() => {
-        // Try the current quarter first. If it comes back empty (fresh org or
-        // a new quarter that hasn't accumulated hours yet), silently retry
-        // with `period=all` so returning visitors always see the leaderboard
-        // populated with the org's historical top performers instead of an
-        // empty widget.
         (async () => {
             try {
-                const { data: q } = await api.get("/leaderboards/community-service?period=quarter");
-                if ((q.top_chapters?.length || 0) + (q.top_members?.length || 0) > 0) {
-                    setData(q);
-                    return;
-                }
-                const { data: allTime } = await api.get("/leaderboards/community-service?period=all");
-                setData({ ...allTime, period_label: allTime.period_label || "All time" });
+                const { data: d } = await api.get(`/leaderboards/community-service?period=${period}`);
+                setData(d);
             } catch {
                 setData({ top_chapters: [], top_members: [], period_label: "This Quarter" });
             }
         })();
-    }, []);
+    }, [period]);
 
     if (!data) {
         return <section className="py-12 max-w-6xl mx-auto px-6 lg:px-10"><div className="h-64 bg-muted rounded-2xl animate-pulse" /></section>;
     }
-    // NOTE: we deliberately keep the section mounted even when both lists are
-    // empty. Previously we returned null here, but that silently removed the
-    // entire leaderboard heading + tabs, which the user perceived as "the
-    // leaderboard is missing." The EmptyState below is a much clearer signal.
 
     return (
         <section className="py-14 bg-white" data-testid="home-leaderboard">
@@ -52,10 +44,33 @@ export default function CommunityServiceLeaderboard() {
                         <Trophy className="h-7 w-7 sm:h-9 sm:w-9" style={{ color: GOLD }} />
                         Community Service Leader Board
                     </h2>
-                    <p className="text-sm sm:text-base text-slate-600 mt-2">{data.period_label === "All time" ? "All-time top performers by approved volunteer hours." : "Top performers this quarter — approved volunteer hours."}</p>
+                    <p className="text-sm sm:text-base text-slate-600 mt-2">Approved volunteer hours for {data.period_label || "the current quarter"}.</p>
                 </div>
 
-                {/* Tab toggle */}
+                {/* Period switcher — Q1-Q4 within the current calendar year plus
+                    full-year totals. "All time" is intentionally NOT offered on
+                    the homepage; admins can pull it via /admin reports. */}
+                <div className="flex justify-center mb-4" data-testid="leaderboard-period-switcher">
+                    <div className="inline-flex bg-white/60 border border-border rounded-full p-1 flex-wrap gap-1">
+                        {["q1", "q2", "q3", "q4", "year"].map((p) => {
+                            const label = p === "year" ? String(currentYear) : p.toUpperCase();
+                            const active = period === p;
+                            return (
+                                <button
+                                    key={p}
+                                    type="button"
+                                    onClick={() => setPeriod(p)}
+                                    className={`rounded-full px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-bold transition-colors ${active ? "bg-primary text-white shadow-warm" : "text-muted-foreground hover:text-foreground"}`}
+                                    data-testid={`leaderboard-period-${p}`}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Chapters / Members toggle */}
                 <div className="flex justify-center mb-6">
                     <div className="inline-flex bg-muted rounded-full p-1">
                         <button
@@ -81,7 +96,7 @@ export default function CommunityServiceLeaderboard() {
                 {tab === "chapters" ? (
                     <div className="space-y-2 max-w-2xl mx-auto" data-testid="leaderboard-chapters-list">
                         {data.top_chapters.length === 0 ? (
-                            <EmptyState text="No chapter activity this quarter yet." />
+                            <EmptyState text={`No chapter activity for ${data.period_label} yet.`} />
                         ) : data.top_chapters.map((c, idx) => (
                             <LeaderRow
                                 key={c.chapter_id || `unassigned-${idx}`}
@@ -98,7 +113,7 @@ export default function CommunityServiceLeaderboard() {
                 ) : (
                     <div className="space-y-2 max-w-2xl mx-auto" data-testid="leaderboard-members-list">
                         {data.top_members.length === 0 ? (
-                            <EmptyState text="No individual activity this quarter yet." />
+                            <EmptyState text={`No individual activity for ${data.period_label} yet.`} />
                         ) : data.top_members.map((m, idx) => (
                             <LeaderRow
                                 key={m.user_id}
