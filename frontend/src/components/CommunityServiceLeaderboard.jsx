@@ -15,15 +15,33 @@ export default function CommunityServiceLeaderboard() {
     const [tab, setTab] = useState("chapters"); // chapters | members
 
     useEffect(() => {
-        api.get("/leaderboards/community-service?period=quarter").then(({ data }) => setData(data)).catch(() => setData({ top_chapters: [], top_members: [] }));
+        // Try the current quarter first. If it comes back empty (fresh org or
+        // a new quarter that hasn't accumulated hours yet), silently retry
+        // with `period=all` so returning visitors always see the leaderboard
+        // populated with the org's historical top performers instead of an
+        // empty widget.
+        (async () => {
+            try {
+                const { data: q } = await api.get("/leaderboards/community-service?period=quarter");
+                if ((q.top_chapters?.length || 0) + (q.top_members?.length || 0) > 0) {
+                    setData(q);
+                    return;
+                }
+                const { data: allTime } = await api.get("/leaderboards/community-service?period=all");
+                setData({ ...allTime, period_label: allTime.period_label || "All time" });
+            } catch {
+                setData({ top_chapters: [], top_members: [], period_label: "This Quarter" });
+            }
+        })();
     }, []);
 
     if (!data) {
         return <section className="py-12 max-w-6xl mx-auto px-6 lg:px-10"><div className="h-64 bg-muted rounded-2xl animate-pulse" /></section>;
     }
-    if ((data.top_chapters || []).length === 0 && (data.top_members || []).length === 0) {
-        return null; // hide widget when there's no approved data yet
-    }
+    // NOTE: we deliberately keep the section mounted even when both lists are
+    // empty. Previously we returned null here, but that silently removed the
+    // entire leaderboard heading + tabs, which the user perceived as "the
+    // leaderboard is missing." The EmptyState below is a much clearer signal.
 
     return (
         <section className="py-14 bg-white" data-testid="home-leaderboard">
@@ -34,7 +52,7 @@ export default function CommunityServiceLeaderboard() {
                         <Trophy className="h-7 w-7 sm:h-9 sm:w-9" style={{ color: GOLD }} />
                         Community Service Leader Board
                     </h2>
-                    <p className="text-sm sm:text-base text-slate-600 mt-2">Top performers this quarter — approved volunteer hours.</p>
+                    <p className="text-sm sm:text-base text-slate-600 mt-2">{data.period_label === "All time" ? "All-time top performers by approved volunteer hours." : "Top performers this quarter — approved volunteer hours."}</p>
                 </div>
 
                 {/* Tab toggle */}

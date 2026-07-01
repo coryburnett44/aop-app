@@ -16,17 +16,31 @@ export default function TopDonorsLeaderboard() {
     const [tab, setTab] = useState("chapters");
 
     useEffect(() => {
-        api.get("/leaderboards/top-donors?period=quarter")
-            .then(({ data }) => setData(data))
-            .catch(() => setData({ top_chapters: [], top_members: [] }));
+        // Same fallback strategy as CommunityServiceLeaderboard — if the
+        // current quarter has no donations yet, roll up to all-time so
+        // fresh orgs and the very start of each quarter still show
+        // meaningful data instead of a hidden section.
+        (async () => {
+            try {
+                const { data: q } = await api.get("/leaderboards/top-donors?period=quarter");
+                if ((q.top_chapters?.length || 0) + (q.top_members?.length || 0) > 0) {
+                    setData(q);
+                    return;
+                }
+                const { data: allTime } = await api.get("/leaderboards/top-donors?period=all");
+                setData({ ...allTime, period_label: allTime.period_label || "All time" });
+            } catch {
+                setData({ top_chapters: [], top_members: [], period_label: "This Quarter" });
+            }
+        })();
     }, []);
 
     if (!data) {
         return <section className="py-12 max-w-6xl mx-auto px-6 lg:px-10"><div className="h-64 bg-muted rounded-2xl animate-pulse" /></section>;
     }
-    if ((data.top_chapters || []).length === 0 && (data.top_members || []).length === 0) {
-        return null;
-    }
+    // Keep the section rendered even when empty — the EmptyState UI below is
+    // much clearer than the section vanishing entirely. See parallel comment
+    // in CommunityServiceLeaderboard.jsx.
 
     return (
         <section className="py-14 bg-slate-50" data-testid="home-top-donors">
@@ -37,7 +51,7 @@ export default function TopDonorsLeaderboard() {
                         <HeartHandshake className="h-7 w-7 sm:h-9 sm:w-9" style={{ color: GOLD }} />
                         Top Donors Leader Board
                     </h2>
-                    <p className="text-sm sm:text-base text-slate-600 mt-2">Top donors this quarter — completed donations only.</p>
+                    <p className="text-sm sm:text-base text-slate-600 mt-2">{data.period_label === "All time" ? "Top donors across the whole org — completed donations only." : "Top donors this quarter — completed donations only."}</p>
                 </div>
 
                 <div className="flex justify-center mb-6">
@@ -64,7 +78,7 @@ export default function TopDonorsLeaderboard() {
                 {tab === "chapters" ? (
                     <div className="space-y-2 max-w-2xl mx-auto" data-testid="top-donors-chapters-list">
                         {data.top_chapters.length === 0 ? (
-                            <EmptyState text="No chapter donations this quarter yet." />
+                            <EmptyState text={data.period_label === "All time" ? "No donations recorded yet. Be the first!" : "No chapter donations this quarter yet."} />
                         ) : data.top_chapters.map((c, idx) => (
                             <DonorRow
                                 key={c.chapter_id || `unassigned-${idx}`}
@@ -81,7 +95,7 @@ export default function TopDonorsLeaderboard() {
                 ) : (
                     <div className="space-y-2 max-w-2xl mx-auto" data-testid="top-donors-members-list">
                         {data.top_members.length === 0 ? (
-                            <EmptyState text="No individual donations this quarter yet." />
+                            <EmptyState text={data.period_label === "All time" ? "No donations recorded yet." : "No individual donations this quarter yet."} />
                         ) : data.top_members.map((m, idx) => (
                             <DonorRow
                                 key={m.user_id}
