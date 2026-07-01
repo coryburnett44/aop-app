@@ -835,7 +835,7 @@ def register(
         section_title = ParagraphStyle(
             "OrbSectionTitle", parent=styles["BodyText"],
             textColor=colors.white, fontName="Helvetica-Bold",
-            fontSize=9, leading=11, alignment=TA_LEFT,
+            fontSize=10.5, leading=13, alignment=TA_LEFT,
         )
         # Detail-page section bar (used only when detailed=True). Slightly
         # bigger, with horizontal spacing so multi-page detail attachments
@@ -859,17 +859,17 @@ def register(
             )
             t.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, -1), AOP_NAVY),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ]))
             return t
 
-        body_style = ParagraphStyle("AopBody", parent=styles["BodyText"], fontSize=9, leading=12)
-        tiny = ParagraphStyle("AopTiny", parent=styles["BodyText"], fontSize=7.5, leading=10)
-        small = ParagraphStyle("AopSmall", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#666666"))
+        body_style = ParagraphStyle("AopBody", parent=styles["BodyText"], fontSize=9.5, leading=13)
+        tiny = ParagraphStyle("AopTiny", parent=styles["BodyText"], fontSize=8.5, leading=12)
+        small = ParagraphStyle("AopSmall", parent=styles["BodyText"], fontSize=8.5, leading=11.5, textColor=colors.HexColor("#666666"))
 
         m = data["member"]
         chapter = data.get("chapter") or {}
@@ -979,16 +979,18 @@ def register(
         # -------------------- Page 1 — 3-column ORB grid --------------------
 
         def orb_kvp(rows):
-            """Compact label-value table for ORB tiles."""
+            """Compact label-value table for ORB tiles. Row padding set so the
+            three columns stretch to fill the landscape page vertically."""
             t = Table(rows, colWidths=[1.0 * inch, 2.2 * inch])
             t.setStyle(TableStyle([
-                ("FONT", (0, 0), (-1, -1), "Helvetica", 7.5),
+                ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
                 ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
                 ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#666666")),
                 ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#222222")),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#EEEEEE")),
             ]))
             return t
 
@@ -998,9 +1000,9 @@ def register(
                 return Paragraph("<i>—</i>", tiny)
             t = Table(rows, colWidths=[3.2 * inch])
             t.setStyle(TableStyle([
-                ("FONT", (0, 0), (-1, -1), "Helvetica", 7.5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
                 ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#EEEEEE")),
             ]))
             return t
@@ -1140,9 +1142,19 @@ def register(
         else:
             col3.append(Paragraph("<i>No check-ins this year.</i>", tiny))
 
-        # Wrap each col in a sub-table so they get their own padding/divider lines
+        # Wrap each col in a sub-table so they get their own padding/divider lines.
+        # `rowHeights=None` with generous padding lets each section expand to
+        # fill available vertical space in the column, so the whole page
+        # is used instead of leaving whitespace at the bottom.
         def _column(elements_list):
-            return Table([[el] for el in elements_list], colWidths=[3.3 * inch])
+            t = Table([[el] for el in elements_list], colWidths=[3.3 * inch])
+            t.setStyle(TableStyle([
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]))
+            return t
 
         body_tbl = Table(
             [[_column(col1), _column(col2), _column(col3)]],
@@ -1164,7 +1176,7 @@ def register(
 
         # Optional multi-page detail attachments (iter87 — admin asked for a
         # second "Detailed Data Brief" download alongside the one-pager). Page 1
-        # remains the dense ORB summary; pages 2+ are the full §III-§X
+        # remains the dense ORB summary; pages 2+ are the full §I-§XI
         # exhaustive tables so nothing is truncated.
         if detailed:
             elements.append(PageBreak())
@@ -1184,6 +1196,38 @@ def register(
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ]))
                 return t
+
+            # §I — Personal Data: mirrors the screen preview. Was missing from
+            # the download prior to iter97.
+            elements.append(Paragraph("SECTION I &mdash; PERSONAL DATA", section))
+            personal_rows = [
+                ["Address", m.get("address") or "—"],
+                ["City", m.get("city") or "—"],
+                ["State", m.get("state") or "—"],
+                ["Zip Code", m.get("zip_code") or "—"],
+                ["Country", m.get("country") or "—"],
+                ["Birthdate", (m.get("birthdate") or "")[:10] or "—"],
+                ["Branch of Service", m.get("branch_of_service") or "—"],
+                ["Marital Status", m.get("marital_status") or "—"],
+                ["Email", m.get("email") or "—"],
+                ["Phone", m.get("phone") or "—"],
+            ]
+            elements.append(data_table(["Field", "Value"], personal_rows, [2.5 * inch, 7.7 * inch]))
+
+            # §II — Organization: chapter, tier, role, joined, renewal. Also
+            # missing from prior downloads.
+            elements.append(Paragraph("SECTION II &mdash; ORGANIZATION", section))
+            org_rows = [
+                ["Chapter", chapter.get("name") or "—"],
+                ["Region", chapter.get("region") or "—"],
+                ["Status", (m.get("status") or "—").upper()],
+                ["Tier", tier.get("name") or "—"],
+                ["Role", (m.get("role") or "member").capitalize()],
+                ["Joined", (m.get("join_date") or m.get("created_at") or "—")[:10]],
+                ["Renewal", (m.get("membership_expires_at") or "—")[:10]],
+                ["Line Name", m.get("line_name") or "—"],
+            ]
+            elements.append(data_table(["Field", "Value"], org_rows, [2.5 * inch, 7.7 * inch]))
 
             elements.append(Paragraph("SECTION III &mdash; CIVILIAN EDUCATION (FULL)", section))
             all_degrees = sorted(list(m.get("civilian_degrees") or []), key=lambda d: (d.get("graduation_year") or 0, d.get("graduation_month") or 0))
@@ -1231,18 +1275,30 @@ def register(
             elements.append(data_table(["Date", "Event", "Location", "Ticket"], ev_rows, [1.2 * inch, 4.0 * inch, 2.5 * inch, 1.5 * inch]))
 
             elements.append(Paragraph("SECTION XI &mdash; ASSIGNMENT HISTORY (FULL)", section))
-            asns = sorted(list(m.get("assignments") or []), key=lambda a: (a.get("date_started") or ""), reverse=True)
+            # Prior bug: read from `m.get("assignments")` and used per-row
+            # keys that don't exist on the schema (`title`, `date_started`,
+            # `duties`). The actual field is `assignment_history` with
+            # `duty_title`, `start_date`, `end_date`, `chapter_name`, `rank`,
+            # `state`, `location`. That's why the download's assignment
+            # section was always empty — the field lookup missed entirely.
+            asns_raw = list(m.get("assignment_history") or [])
+            asns = sorted(
+                asns_raw,
+                key=lambda a: (0 if a.get("is_current") else 1, -1 * int((a.get("start_date") or "").replace("-", "") or 0)),
+            )
             asn_rows = []
             for a in asns:
-                title = a.get("title") or a.get("position_title") or "—"
-                org = a.get("organization") or a.get("unit") or "—"
-                started = (a.get("date_started") or "")[:10]
-                ended = "Present" if a.get("is_current") else ((a.get("date_ended") or "")[:10] or "—")
-                asn_rows.append([title, org, (a.get("location") or "—")[:30], started, ended, (a.get("duties") or "")[:80]])
+                duty = a.get("duty_title") or a.get("title") or "—"
+                chap = a.get("chapter_name") or "—"
+                loc_bits = [x for x in [a.get("location") or "", a.get("state") or ""] if x]
+                loc = (", ".join(loc_bits))[:40] or "—"
+                started = (a.get("start_date") or "")[:10] or "—"
+                ended = "Present" if a.get("is_current") else ((a.get("end_date") or "")[:10] or "—")
+                asn_rows.append([duty, chap, loc, a.get("rank") or "—", started, ended])
             elements.append(data_table(
-                ["Title", "Organization", "Location", "Started", "Ended", "Duties"],
+                ["Duty Title", "Chapter", "Location", "Rank", "Started", "Ended"],
                 asn_rows,
-                [1.6 * inch, 1.8 * inch, 1.6 * inch, 1.0 * inch, 1.0 * inch, 2.2 * inch],
+                [2.4 * inch, 2.0 * inch, 2.0 * inch, 1.2 * inch, 1.3 * inch, 1.3 * inch],
             ))
 
 

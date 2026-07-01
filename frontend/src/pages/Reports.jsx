@@ -1363,8 +1363,15 @@ function BriefBody({ b }) {
 function BriefSection({ num, title, children }) {
     return (
         <div data-testid={`brief-section-${num}`}>
-            <h3 className="font-heading text-sm uppercase tracking-widest text-white bg-[hsl(220_45%_12%)] px-3 py-1.5 rounded mb-2">
-                <span className="opacity-60 mr-2">SECTION {num} —</span>{title}
+            {/* Inline style so the navy-on-white title always renders — the
+                previous arbitrary Tailwind class `bg-[hsl(220_45%_12%)]` was
+                colliding with the parent's `print:text-black` and producing
+                "black bars with no visible title" per the user's report. */}
+            <h3
+                className="font-heading text-sm uppercase tracking-widest px-3 py-1.5 rounded mb-2 print:!text-white"
+                style={{ backgroundColor: "#0C1B33", color: "#FFFFFF" }}
+            >
+                <span style={{ opacity: 0.7, marginRight: "0.5rem" }}>SECTION {num} —</span>{title}
             </h3>
             <div className="space-y-1">{children}</div>
         </div>
@@ -1382,14 +1389,25 @@ const OrbKv = ({ k, v }) => (
         <span className="font-semibold text-foreground/90 truncate">{v || "—"}</span>
     </div>
 );
-const OrbTile = ({ title: tileTitle, children, "data-testid": testId }) => (
-    <div data-testid={testId}>
-        <div className="bg-[hsl(220_45%_12%)] text-white text-[10px] uppercase tracking-[0.15em] font-black px-2 py-1 rounded-sm">
-            {tileTitle}
+const OrbTile = ({ title, tileTitle, children, "data-testid": testId }) => {
+    // Accept BOTH `title` and `tileTitle` props — legacy callers in this file
+    // pass `tileTitle` (from when the outer variable was renamed to avoid the
+    // ORB component collision). Prior to iter97 the destructure only matched
+    // `title`, so every caller sending `tileTitle` produced a navy bar with no
+    // visible text (the "black lines" the user reported).
+    const label = title ?? tileTitle;
+    return (
+        <div data-testid={testId}>
+            <div
+                className="text-[10px] uppercase tracking-[0.15em] font-black px-2 py-1 rounded-sm print:!text-white"
+                style={{ backgroundColor: "#0C1B33", color: "#FFFFFF" }}
+            >
+                {label}
+            </div>
+            <div className="px-1 pt-1">{children}</div>
         </div>
-        <div className="px-1 pt-1">{children}</div>
-    </div>
-);
+    );
+};
 const OrbRow = ({ children }) => (
     <div className="text-[11px] leading-tight border-b border-border/40 py-1">{children}</div>
 );

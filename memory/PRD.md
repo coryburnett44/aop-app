@@ -15,6 +15,16 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 97 — Personnel Data Brief download & preview fixes (2026-02-26) [P0 BUG FIX]
+Four bugs the user reported in one shot:
+
+- **Bug 1: Detailed PDF download was missing Personal Data + Organization sections.** They showed on-screen but not in the download. Added §I Personal Data (address, city, state, zip, country, birthdate, branch, marital, email, phone) and §II Organization (chapter, region, status, tier, role, joined, renewal, line name) as full data tables at the top of the detail attachment in `routes/reports.py`.
+- **Bug 2: Assignment History section was always empty in the download.** Root cause: the code read `m.get("assignments")` (wrong key — the real field is `assignment_history`) and each entry was read with wrong sub-keys (`title`, `date_started`, `duties`) that don't exist on the schema. Fixed to read `assignment_history` and use the actual fields (`duty_title`, `chapter_name`, `rank`, `state`, `location`, `start_date`, `end_date`, `is_current`). Also added sort so current assignment appears first.
+- **Bug 3: One-pager didn't fill the landscape page.** Bumped section-title font 9pt → 10.5pt, body/tile fonts 7.5pt → 8pt, row padding 1pt → 3pt (tiles) / 4pt/5pt (section bars), and added 4pt outer column padding. Result: content stretches to fill ~90% of the 8.5" vertical space (was ~55%). Pytest asserts it stays exactly 1 page on a landscape letter.
+- **Bug 4: Preview screen showed empty navy bars instead of section titles.** Root cause was a **prop name mismatch** — `OrbTile` component destructured `title` but every caller passed `tileTitle`, so the label was `undefined` and the navy bar rendered blank. Also the Tailwind arbitrary values `bg-[hsl(220_45%_12%)]` + `text-white` were fragile against the `print:text-black` parent variant. Fixed both: accept either `title` or `tileTitle`, use inline `style={{ backgroundColor: "#0C1B33", color: "#FFFFFF" }}` so nothing can strip it, and added `print:!text-white` for safety. Verified via computed-style read: `color=rgb(255,255,255) bg=rgb(12,27,51)`.
+
+**Tests**: new `tests/test_iteration97_personnel_brief.py` — 4/4 pass (§I/§II present in detail, assignment rows populated with all required fields, one-pager stays at 1 page + landscape dims, tile titles come through in the PDF text). Two pre-existing tests (`test_iteration30::test_brief_pdf_has_all_10_sections` and `test_iteration73::test_pdf_page1_landscape_and_orb_sections`) were failing BEFORE my changes — verified via `git stash` — they check for stale section names ("Personal Information") that were superseded when iter73 introduced the ORB layout.
+
 ### Iteration 96 — Sign-in activity log for full-access admins + auto-clear "Pending Password Setup" pill (2026-02-26) [FEATURE + BUG FIX]
 User asked two things:
 - "Allow full access Admins the ability to see sign-in activity from members and the pages they visited. Show the date and time logged in, and the pages visited, and the duration of login."
