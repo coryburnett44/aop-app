@@ -334,12 +334,30 @@ export default function Profile() {
                             </div>
                             <div>
                                 <Label>Chapter</Label>
-                                <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
-                                    <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-chapter"><SelectValue placeholder="Select your chapter" /></SelectTrigger>
-                                    <SelectContent>
-                                        {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                {/* Iter 100: Governor Managers are chapter-scoped admins whose
+                                    authority is tied to their assigned chapter. They cannot
+                                    self-reassign — a full-access admin must do it. */}
+                                {user?.role === "admin" && (user?.admin_role === "governor_manager") ? (
+                                    <>
+                                        <div
+                                            className="rounded-xl mt-1.5 border border-input bg-muted/40 px-3 py-2 text-sm text-muted-foreground flex items-center justify-between"
+                                            data-testid="profile-chapter-locked"
+                                        >
+                                            <span>{chapters.find((c) => c.id === form.chapter_id)?.name || "Not assigned"}</span>
+                                            <span className="text-[10px] uppercase tracking-wider font-bold bg-primary/15 text-primary rounded-full px-2 py-0.5">Locked</span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1.5">
+                                            Governor Managers can&apos;t change their own chapter. Please reach out to a full-access admin to be reassigned.
+                                        </p>
+                                    </>
+                                ) : (
+                                    <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
+                                        <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-chapter"><SelectValue placeholder="Select your chapter" /></SelectTrigger>
+                                        <SelectContent>
+                                            {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                )}
                             </div>
                         </div>
                         {/* Iter 38: Avatar URL field replaced with upload-only.

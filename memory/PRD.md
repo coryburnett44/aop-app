@@ -15,6 +15,15 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 100 — Governor Managers cannot change their own chapter (2026-02-26) [SECURITY]
+User request: "Ensure that members coded as a Governor Manager (Admin) cannot change their chapter in their profile."
+
+- **Context**: Iter99 opened up chapter self-service via `PUT /members/me` so plain members could pick their chapter. Governor Managers are chapter-scoped admins whose authority is tied to their assigned chapter — if they could self-reassign, they could silently migrate their admin scope without oversight. Only a full-access admin should be able to move them.
+- **Backend (`server.py` `/members/me`)**: when the caller's `role="admin"` AND `admin_role="governor_manager"` AND the incoming `chapter_id` differs from the current value, respond with **HTTP 403** and detail "Governor Managers cannot change their own chapter. Ask a full-access admin to reassign." A no-op save (same chapter, other fields changed) still succeeds.
+- **Frontend (`Profile.jsx`)**: for governor managers the chapter dropdown is replaced with a locked read-only display showing the current chapter name + a "Locked" pill and an inline explainer directing them to a full-access admin. Plain members and full admins still see the normal dropdown.
+- **Admin path preserved**: `PUT /members/{user_id}/chapter` (admin-only) still works for full-access admins to reassign a governor's chapter — verified by regression test.
+- **Tests**: `tests/test_iteration100_governor_chapter_lock.py` — **4/4 pass** covering: governor blocked with 403 on chapter change; governor can still edit other profile fields; full admin can still reassign; plain members retain self-service. Combined with iter99: **8/8 pass**.
+
 ### Iteration 99 — Members can self-assign their chapter (2026-02-26) [P0 BUG FIX]
 User bug: "When the member selects their Chapter, it goes blank when they leave the profile page. However, the admin member 'Chapter' field may have a chapter selected."
 

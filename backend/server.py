@@ -412,14 +412,30 @@ async def update_me(body: ProfileUpdateIn, user: dict = Depends(get_current_user
     # in the UI but never persisted, and the admin's view diverged from
     # the member's.
     if "chapter_id" in updates:
-        cid = (updates.get("chapter_id") or "").strip()
-        if cid:
-            chap = await db.chapters.find_one({"id": cid}, {"_id": 0, "id": 1})
-            if not chap:
-                raise HTTPException(status_code=400, detail="Unknown chapter")
-            updates["chapter_id"] = cid
+        # Iter100: Governor Managers are chapter-scoped admins — their
+        # authority is TIED to their assigned chapter. Letting them
+        # self-reassign their chapter would let a Governor migrate their
+        # admin scope silently. Only a "full" admin (or another Governor
+        # via the admin path) can move them. Reject the change.
+        if user.get("role") == "admin" and (user.get("admin_role") or "full") == "governor_manager":
+            cid_incoming = (updates.get("chapter_id") or "").strip() or None
+            current = user.get("chapter_id") or None
+            if cid_incoming != current:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Governor Managers cannot change their own chapter. Ask a full-access admin to reassign.",
+                )
+            # No-op — strip so we don't re-write the same value.
+            updates.pop("chapter_id", None)
         else:
-            updates["chapter_id"] = None
+            cid = (updates.get("chapter_id") or "").strip()
+            if cid:
+                chap = await db.chapters.find_one({"id": cid}, {"_id": 0, "id": 1})
+                if not chap:
+                    raise HTTPException(status_code=400, detail="Unknown chapter")
+                updates["chapter_id"] = cid
+            else:
+                updates["chapter_id"] = None
     # Intake completion date requires admin approval — never write straight to
     # intake_completed_at, instead stash on pending_intake_completed_at. Skip
     # entirely if the value matches what's already saved (no change requested).
