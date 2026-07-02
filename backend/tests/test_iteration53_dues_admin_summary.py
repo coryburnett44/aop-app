@@ -97,7 +97,7 @@ def test_admin_summary_sends_one_email_per_admin(fake_env):
     assert len(sent) == 2
     for payload in sent:
         assert "AOP dues reminders" in payload["subject"]
-        assert "2 sent on" in payload["subject"]
+        assert "2 members to follow up on" in payload["subject"]
         assert "Riley Chen" in payload["html"]
         assert "Maya Patel" in payload["html"]
         # Expiration dates rendered in a friendly format

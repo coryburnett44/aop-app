@@ -15,6 +15,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 101 — Dues reminders: members receive emails; admin digest excludes Governor Managers (2026-02-26) [POLICY]
+User first asked to send dues reminders only to Admins, then corrected: "exclude only governor managers receiving the reminders. I want members to continue receiving the emails."
+
+- **Backend (`routes/automated_emails.py`)**:
+  - `_send_dues_reminders`: continues to email each individual member at the 30d / 15d / 5d / +1d grace windows via `send_bulk_email`, honoring `email_opt_out` and `email_prefs.dues_reminders`.
+  - `_send_admin_dues_summary`: eligible admin recipients narrowed to `admin_role in {None, "", "full", "operations_manager", "membership_manager"}`. Governor Managers (and any future admin sub-role) are explicitly excluded so they aren't spammed with digests unrelated to their scope.
+  - Digest subject: `AOP dues reminders — N members to follow up on`.
+  - Footer copy updated to reflect the new eligible-admin population.
+- **Tests**:
+  - Rewrote `tests/test_iteration101_dues_reminder_admin_only.py` (4 tests) — asserts members receive direct reminders, full/ops/membership managers receive the digest, governor manager excluded, and dedupe prevents re-sends within a cycle.
+  - Fixed subject-format drift in `tests/test_iteration53_dues_admin_summary.py`.
+- **Regression**: iter53 (6) + iter101 (4) all green.
+
 ### Iteration 100 — Governor Managers cannot change their own chapter (2026-02-26) [SECURITY]
 User request: "Ensure that members coded as a Governor Manager (Admin) cannot change their chapter in their profile."
 

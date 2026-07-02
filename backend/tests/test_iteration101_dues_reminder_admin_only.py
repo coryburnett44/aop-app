@@ -1,158 +1,244 @@
-"""Iteration 101 — Dues reminders go ONLY to admin roles, not members.
+"""Iteration 101 — Dues reminders: members receive direct emails, and the
+admin summary digest is scoped to full-access / operations_manager /
+membership_manager (Governor Managers are excluded).
 
-User request: "Change the email reminders so only Admins (full-access,
-operations managers, and membership managers) receive dues reminders
-emails."
+Verifies `_send_dues_reminders` end-to-end with fake db collections and
+mocked delivery hooks (`send_bulk_email` + `resend_sdk.Emails.send`):
 
-This test drives the `_send_dues_reminders` coroutine directly with
-`resend_sdk.Emails.send` monkey-patched to capture what would be emailed,
-seeds users at each of the 4 stage windows (30d / 15d / 5d before / +1d
-grace), and asserts:
+1. Members whose dues hit each stage window receive a direct reminder via
+   `send_bulk_email`.
+2. Governor Managers are excluded from the admin digest.
+3. Full-access, operations_manager, and membership_manager admins DO
+   receive the digest.
+4. Dedupe collection prevents re-alerts within the same cycle.
 
-1. No members receive direct reminder emails.
-2. A digest is delivered ONLY to admins whose `admin_role` is in
-   {"full", None, "", "operations_manager", "membership_manager"}.
-3. Governor Managers and other admin sub-roles are excluded.
-4. Members with `email_opt_out=true` do NOT block the admin digest.
-5. The `dues_reminders_sent` collection is populated so subsequent
-   cycles don't re-alert on the same member/stage.
+Run: pytest /app/backend/tests/test_iteration101_dues_reminder_admin_only.py -v
 """
 import asyncio
-import os
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+import importlib
+import sys
+import types
+from datetime import timedelta
 
 import pytest
-from pymongo import MongoClient
 
-MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
-DB_NAME = os.environ.get("DB_NAME", "clubhaven_db")
 
-# The tests import from backend directly.
-import sys
 sys.path.insert(0, "/app/backend")
+server = importlib.import_module("server")
+ae = importlib.import_module("routes.automated_emails")
 
 
-@pytest.fixture(scope="function")
-def isolated_db(request):
-    """Snapshot & restore the users / dues_reminders_sent collections so
-    seeding doesn't leak into other test modules."""
-    client = MongoClient(MONGO_URL)
-    db = client[DB_NAME]
-    snapshot_users = list(db.users.find({}, {"_id": 0}))
-    db.dues_reminders_sent.delete_many({})
-    yield db
-    # Restore original user set (drop everything we seeded).
-    seeded_ids = [u["id"] for u in snapshot_users]
-    db.users.delete_many({"id": {"$nin": seeded_ids}})
-    # Reset flags we mutated on seeded users.
-    for u in snapshot_users:
-        db.users.update_one({"id": u["id"]}, {"$set": u}, upsert=False)
-    db.dues_reminders_sent.delete_many({})
+# ---------- Async-aware fake collections ----------
+class _FakeCursor:
+    def __init__(self, docs):
+        self._docs = list(docs)
+
+    def __aiter__(self):
+        async def gen():
+            for d in self._docs:
+                yield d
+        return gen()
 
 
-def _seed_user(db, *, id_, email, role="member", admin_role=None, expires_days=None, email_opt_out=False, dues_prefs=True):
-    from datetime import datetime as _dt
-    now = _dt.now(timezone.utc)
-    expires_at = None
-    if expires_days is not None:
-        expires_at = (now + timedelta(days=expires_days)).replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
-    db.users.update_one(
-        {"id": id_},
-        {"$set": {
-            "id": id_,
-            "email": email,
-            "name": email.split("@")[0].title(),
-            "role": role,
-            "admin_role": admin_role,
-            "status": "active",
-            "is_lifetime_member": False,
-            "membership_expires_at": expires_at,
-            "email_opt_out": email_opt_out,
-            "email_prefs": {"dues_reminders": dues_prefs},
-        }},
-        upsert=True,
+class _FakeUsers:
+    """`db.users.find(query, projection)` filters an in-memory list against
+    the fields `_send_dues_reminders` and `_send_admin_dues_summary`
+    actually use (role, membership_expires_at range, email presence,
+    email_opt_out, email_prefs.dues_reminders)."""
+    def __init__(self, docs):
+        self._docs = docs
+
+    def find(self, query, projection=None):
+        out = []
+        for u in self._docs:
+            if "role" in query and u.get("role") != query["role"]:
+                continue
+            if "membership_expires_at" in query:
+                rng = query["membership_expires_at"]
+                exp = u.get("membership_expires_at")
+                if not exp:
+                    continue
+                if "$gte" in rng and exp < rng["$gte"]:
+                    continue
+                if "$lt" in rng and exp >= rng["$lt"]:
+                    continue
+            if query.get("status", {}).get("$ne") == "inactive" and u.get("status") == "inactive":
+                continue
+            if query.get("is_lifetime_member", {}).get("$ne") is True and u.get("is_lifetime_member") is True:
+                continue
+            if "email" in query:
+                email_q = query["email"]
+                if email_q.get("$exists") and not u.get("email"):
+                    continue
+                if email_q.get("$ne") == "" and u.get("email") == "":
+                    continue
+            if query.get("email_opt_out", {}).get("$ne") is True and u.get("email_opt_out") is True:
+                continue
+            if query.get("email_prefs.dues_reminders", {}).get("$ne") is False:
+                if (u.get("email_prefs") or {}).get("dues_reminders") is False:
+                    continue
+            out.append(u)
+        return _FakeCursor(out)
+
+
+class _FakeReminderSent:
+    """Async-compatible fake for `db.dues_reminders_sent`."""
+    def __init__(self):
+        self._store = []
+
+    async def find_one(self, query, projection=None):
+        for r in self._store:
+            if all(r.get(k) == v for k, v in query.items()):
+                return r
+        return None
+
+    async def insert_one(self, doc):
+        self._store.append(dict(doc))
+        return types.SimpleNamespace(inserted_id=doc.get("id"))
+
+
+# ---------- Fixture ----------
+@pytest.fixture
+def dues_env(monkeypatch):
+    """Wire up fake db + capture mocks for both member delivery and admin
+    digest delivery."""
+    member_emails: list[dict] = []
+    admin_emails: list[dict] = []
+
+    async def fake_send_bulk(*, to_email, subject, html_body, recipient_id=None, tags=None, **kw):
+        member_emails.append({
+            "to": to_email, "subject": subject, "html": html_body,
+            "recipient_id": recipient_id, "tags": tags or [],
+        })
+
+    monkeypatch.setattr(ae, "send_bulk_email", fake_send_bulk, raising=False)
+    monkeypatch.setattr(ae, "RESEND_API_KEY", "test-key", raising=False)
+    monkeypatch.setattr(ae, "resend_sdk", server.resend_sdk, raising=False)
+    monkeypatch.setattr(ae, "RESEND_FROM", "test@local", raising=False)
+    monkeypatch.setattr(ae, "RESEND_REPLY_TO", "test@local", raising=False)
+    monkeypatch.setattr(ae, "iso", server.iso, raising=False)
+    monkeypatch.setattr(ae, "now_utc", server.now_utc, raising=False)
+    monkeypatch.setattr(ae, "logger", server.logger, raising=False)
+    monkeypatch.setattr(
+        server.resend_sdk.Emails, "send",
+        lambda payload: admin_emails.append(payload) or {"id": f"id-{len(admin_emails)}"},
     )
 
+    state = {
+        "users": [],
+        "reminder_sent": _FakeReminderSent(),
+        "member_emails": member_emails,
+        "admin_emails": admin_emails,
+    }
 
-def test_only_eligible_admins_receive_dues_reminder(isolated_db, monkeypatch):
-    db = isolated_db
-    # 3 members whose dues hit each stage window.
-    _seed_user(db, id_="qa-m30", email="qa-m30@test.local", expires_days=30)
-    _seed_user(db, id_="qa-m15", email="qa-m15@test.local", expires_days=15)
-    _seed_user(db, id_="qa-m5", email="qa-m5@test.local", expires_days=5)
-    # 4 admins covering ALL admin sub-roles — only 3 should be in the To: list.
-    _seed_user(db, id_="qa-admin-full", email="qa-full@test.local", role="admin", admin_role=None)  # legacy full
-    _seed_user(db, id_="qa-admin-ops", email="qa-ops@test.local", role="admin", admin_role="operations_manager")
-    _seed_user(db, id_="qa-admin-mem", email="qa-mem@test.local", role="admin", admin_role="membership_manager")
-    _seed_user(db, id_="qa-admin-gov", email="qa-gov@test.local", role="admin", admin_role="governor_manager")
+    def _set_users(docs):
+        state["users"] = docs
+        fake_db = types.SimpleNamespace(
+            users=_FakeUsers(state["users"]),
+            dues_reminders_sent=state["reminder_sent"],
+        )
+        monkeypatch.setattr(ae, "db", fake_db, raising=False)
 
-    # Patch resend send + RESEND_API_KEY presence.
-    captured = []
+    state["set_users"] = _set_users
+    _set_users([])  # default empty
+    return state
 
-    def fake_send(payload):
-        captured.append(payload)
-        return {"id": "fake-msg-id"}
 
-    from routes import automated_emails as ae
-    monkeypatch.setattr(ae, "RESEND_API_KEY", "fake-key-for-test")
-    monkeypatch.setattr(ae.resend_sdk.Emails, "send", fake_send)
+def _member(id_, email, expires_days, **overrides):
+    now = server.now_utc()
+    exp = (now + timedelta(days=expires_days)).replace(hour=12, minute=0, second=0, microsecond=0)
+    return {
+        "id": id_, "email": email, "name": email.split("@")[0].title(),
+        "role": "member", "status": "active", "is_lifetime_member": False,
+        "membership_expires_at": exp.isoformat(),
+        "email_opt_out": False, "email_prefs": {"dues_reminders": True},
+        **overrides,
+    }
 
-    campaign = {"id": "qa-campaign", "name": "QA reminders", "kind": "dues_reminders"}
-    total_pending = asyncio.get_event_loop().run_until_complete(ae._send_dues_reminders(campaign))
 
-    # 3 members hit their windows.
-    assert total_pending == 3
-    # No member received a direct email; every send() call must be to one of the 3 eligible admins.
+def _admin(id_, email, admin_role):
+    return {
+        "id": id_, "email": email, "name": email.split("@")[0].title(),
+        "role": "admin", "admin_role": admin_role, "status": "active",
+        "email_opt_out": False, "email_prefs": {"dues_reminders": True},
+    }
+
+
+# ---------- Tests ----------
+def test_members_receive_reminders_and_digest_excludes_governor(dues_env):
+    dues_env["set_users"]([
+        _member("m30", "m30@ex.com", expires_days=30),
+        _member("m15", "m15@ex.com", expires_days=15),
+        _member("m5",  "m5@ex.com",  expires_days=5),
+        _admin("a-full", "full@ex.com", None),  # legacy full-access
+        _admin("a-full2", "full2@ex.com", "full"),
+        _admin("a-ops", "ops@ex.com", "operations_manager"),
+        _admin("a-mem", "mem@ex.com", "membership_manager"),
+        _admin("a-gov", "gov@ex.com", "governor_manager"),  # MUST be excluded
+    ])
+    sent = asyncio.run(ae._send_dues_reminders({
+        "id": "c1", "name": "Dues reminders", "kind": "dues_reminders",
+    }))
+    assert sent == 3
+
+    # Members received direct reminders (one per stage window).
+    member_recipients = {e["to"] for e in dues_env["member_emails"]}
+    assert member_recipients == {"m30@ex.com", "m15@ex.com", "m5@ex.com"}
+
+    # Admin digest sent to full/full2/ops/mem — NOT the governor manager.
     admin_recipients = set()
-    for payload in captured:
-        for addr in payload.get("to") or []:
+    for payload in dues_env["admin_emails"]:
+        for addr in payload.get("to", []) or []:
             admin_recipients.add(addr)
-    assert admin_recipients == {"qa-full@test.local", "qa-ops@test.local", "qa-mem@test.local"}, admin_recipients
-    # No captured email was addressed to a member OR to the governor admin.
-    for member_email in ["qa-m30@test.local", "qa-m15@test.local", "qa-m5@test.local", "qa-gov@test.local"]:
-        assert member_email not in admin_recipients, f"{member_email} should NOT have received a dues reminder"
-    # Each admin got exactly one digest per cycle (regardless of member count).
-    assert len(captured) == 3
-    # Subject reflects the "reminder" framing.
-    for payload in captured:
-        assert "dues reminders" in (payload.get("subject") or "").lower()
-        assert "3 members" in (payload.get("subject") or "").lower()
+    assert admin_recipients == {"full@ex.com", "full2@ex.com", "ops@ex.com", "mem@ex.com"}
+    assert "gov@ex.com" not in admin_recipients
+
+    # Each eligible admin got exactly one digest.
+    assert len(dues_env["admin_emails"]) == 4
+    for payload in dues_env["admin_emails"]:
+        assert "3 members to follow up on" in payload["subject"]
 
 
-def test_dues_reminders_sent_collection_prevents_duplicate_cycles(isolated_db, monkeypatch):
-    db = isolated_db
-    _seed_user(db, id_="qa-m30-dup", email="qa-m30-dup@test.local", expires_days=30)
-    _seed_user(db, id_="qa-admin-full-dup", email="qa-full-dup@test.local", role="admin", admin_role=None)
-
-    from routes import automated_emails as ae
-    monkeypatch.setattr(ae, "RESEND_API_KEY", "fake-key-for-test")
-    calls = []
-    monkeypatch.setattr(ae.resend_sdk.Emails, "send", lambda p: (calls.append(p) or {"id": "ok"}))
-
-    campaign = {"id": "qa-dup", "name": "QA dup", "kind": "dues_reminders"}
-    # First cycle picks up the member.
-    n1 = asyncio.get_event_loop().run_until_complete(ae._send_dues_reminders(campaign))
+def test_dedupe_prevents_duplicate_sends_in_same_cycle(dues_env):
+    dues_env["set_users"]([
+        _member("m30-dup", "dup@ex.com", expires_days=30),
+        _admin("a-full", "full@ex.com", None),
+    ])
+    campaign = {"id": "c2", "name": "Dues reminders", "kind": "dues_reminders"}
+    n1 = asyncio.run(ae._send_dues_reminders(campaign))
+    n2 = asyncio.run(ae._send_dues_reminders(campaign))
     assert n1 == 1
-    # Second cycle on the same day: dedupe kicks in, nothing new to report.
-    n2 = asyncio.get_event_loop().run_until_complete(ae._send_dues_reminders(campaign))
     assert n2 == 0
-    # Only one digest email should have been sent across both cycles.
-    assert len(calls) == 1
+    # Only ONE member email and ONE admin digest across both cycles.
+    assert len(dues_env["member_emails"]) == 1
+    assert len(dues_env["admin_emails"]) == 1
 
 
-def test_no_members_at_any_stage_window_sends_no_email(isolated_db, monkeypatch):
-    """When no members have dues coming up in the stage windows, no email
-    (member OR admin) should be sent."""
-    db = isolated_db
-    _seed_user(db, id_="qa-m-far", email="qa-far@test.local", expires_days=90)  # outside any window
-    _seed_user(db, id_="qa-admin-full-2", email="qa-full-2@test.local", role="admin", admin_role=None)
-
-    from routes import automated_emails as ae
-    monkeypatch.setattr(ae, "RESEND_API_KEY", "fake-key-for-test")
-    calls = []
-    monkeypatch.setattr(ae.resend_sdk.Emails, "send", lambda p: (calls.append(p) or {"id": "ok"}))
-
-    n = asyncio.get_event_loop().run_until_complete(ae._send_dues_reminders({"id": "qa-empty", "name": "QA empty"}))
+def test_no_members_in_window_sends_nothing(dues_env):
+    dues_env["set_users"]([
+        _member("m-far", "far@ex.com", expires_days=90),  # outside all windows
+        _admin("a-full", "full@ex.com", None),
+    ])
+    n = asyncio.run(ae._send_dues_reminders({
+        "id": "c3", "name": "Dues reminders", "kind": "dues_reminders",
+    }))
     assert n == 0
-    assert len(calls) == 0
+    assert dues_env["member_emails"] == []
+    assert dues_env["admin_emails"] == []
+
+
+def test_member_opt_out_skips_that_member_but_still_notifies_others(dues_env):
+    dues_env["set_users"]([
+        _member("m30-opt", "opt@ex.com", expires_days=30, email_opt_out=True),
+        _member("m15-keep", "keep@ex.com", expires_days=15),
+        _admin("a-full", "full@ex.com", None),
+    ])
+    n = asyncio.run(ae._send_dues_reminders({
+        "id": "c4", "name": "Dues reminders", "kind": "dues_reminders",
+    }))
+    assert n == 1
+    to_list = {e["to"] for e in dues_env["member_emails"]}
+    assert to_list == {"keep@ex.com"}
+    # Admin still gets a digest for the 1 opted-in member.
+    assert len(dues_env["admin_emails"]) == 1
+    assert "1 member to follow up on" in dues_env["admin_emails"][0]["subject"]
