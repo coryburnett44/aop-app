@@ -131,15 +131,14 @@ export default function Profile() {
                 languages: form.languages,
                 civilian_degrees: form.civilian_degrees,
                 custom_fields: form.custom_fields,
+                // Send chapter_id in the main payload — prior to iter99 this
+                // went to a separate admin-only endpoint that silently 403'd
+                // for members, which is why picking a chapter appeared to
+                // "save" and then vanish on the next page load.
+                chapter_id: form.chapter_id || "",
             };
             const { data } = await api.put("/members/me", payload);
-            // Chapter is a separate endpoint
-            if (form.chapter_id && form.chapter_id !== user.chapter_id) {
-                const { data: data2 } = await api.put(`/members/${user.id}/chapter`, { chapter_id: form.chapter_id });
-                setUser(data2);
-            } else {
-                setUser(data);
-            }
+            setUser(data);
             // Notify the user if the intake change is waiting on admin approval
             if (form.intake_completed_at && form.intake_completed_at !== (user.intake_completed_at || "") && data.pending_intake_completed_at) {
                 toast.success("Profile saved. Your intake completion date change is pending admin approval.", { duration: 6500 });

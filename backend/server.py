@@ -405,6 +405,21 @@ async def update_me(body: ProfileUpdateIn, user: dict = Depends(get_current_user
         existing = await db.users.find_one({"username": updates["username"], "id": {"$ne": user["id"]}})
         if existing:
             raise HTTPException(status_code=400, detail="Username already taken")
+    # Members can self-assign their chapter — must reference a real chapter,
+    # empty string clears the assignment. Prior to iter99 chapter changes
+    # from the member profile page went through a separate admin-only
+    # endpoint and silently failed with 403, so the field appeared to save
+    # in the UI but never persisted, and the admin's view diverged from
+    # the member's.
+    if "chapter_id" in updates:
+        cid = (updates.get("chapter_id") or "").strip()
+        if cid:
+            chap = await db.chapters.find_one({"id": cid}, {"_id": 0, "id": 1})
+            if not chap:
+                raise HTTPException(status_code=400, detail="Unknown chapter")
+            updates["chapter_id"] = cid
+        else:
+            updates["chapter_id"] = None
     # Intake completion date requires admin approval — never write straight to
     # intake_completed_at, instead stash on pending_intake_completed_at. Skip
     # entirely if the value matches what's already saved (no change requested).

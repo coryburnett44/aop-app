@@ -121,6 +121,7 @@ class ProfileUpdateIn(BaseModel):
     country: Optional[str] = None
     birthdate: Optional[str] = None
     branch_of_service: Optional[str] = None
+    chapter_id: Optional[str] = None
     marital_status: Optional[str] = None
     languages: Optional[List[LanguageEntry]] = None
     civilian_degrees: Optional[List[CivilianDegreeEntry]] = None

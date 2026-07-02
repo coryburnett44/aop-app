@@ -15,6 +15,17 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 99 — Members can self-assign their chapter (2026-02-26) [P0 BUG FIX]
+User bug: "When the member selects their Chapter, it goes blank when they leave the profile page. However, the admin member 'Chapter' field may have a chapter selected."
+
+- **Root cause**: `ProfileUpdateIn` had no `chapter_id` field, so the frontend Profile page routed chapter changes to `PUT /members/{user_id}/chapter` — an admin-only endpoint guarded by `admin_tab_dep("members")`. Every member's chapter selection returned 403 and silently discarded the change, leaving the on-screen field blank on the next load while the admin's Members list still reflected whatever chapter had been set previously.
+- **Fix (`models.py`)**: added `chapter_id: Optional[str]` to `ProfileUpdateIn`.
+- **Fix (`server.py` `/members/me`)**: validate `chapter_id` when present — must reference an existing chapter (400 "Unknown chapter" if not) or be empty to clear the assignment.
+- **Fix (`pages/Profile.jsx`)**: removed the separate admin-endpoint call and just include `chapter_id` in the main `PUT /members/me` payload. Same path handles both set and clear.
+- **Admin-side unchanged**: the admin `PUT /members/{user_id}/chapter` endpoint keeps its 403 gate for non-admins (verified by regression test).
+- **Verified end-to-end**: member sets DMV → persists on `/auth/me` → admin's Members listing shows DMV → member clears it → cleared → unknown chapter rejected. Screenshot + curl round-trip both green.
+- **Tests**: `tests/test_iteration99_member_chapter_self_assign.py` — **4/4 pass**. Combined regression with iter96+97+98: **25 pass, 1 skipped**.
+
 ### Iteration 98 — Homepage leaderboards support Q1-Q4 + year period switcher; no "All time" (2026-02-26) [FEATURE]
 User asked to add a period selector to both homepage leaderboards allowing members to switch between quarters within the current year and the full year, and to remove the "All time" fallback that iter92.1 had added.
 
