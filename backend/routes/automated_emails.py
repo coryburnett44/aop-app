@@ -367,28 +367,46 @@ def _dues_reminder_email_html(
     return subject, body
 
 
-async def _send_admin_dues_summary(campaign: dict, sent_records: list[dict]) -> int:
-    if not RESEND_API_KEY or not sent_records:
+async def _send_admin_dues_summary(campaign: dict, pending_records: list[dict]) -> int:
+    """Send the dues-reminder digest to eligible admins.
+
+    Per iter101 the campaign no longer emails members directly — instead
+    each cycle sends ONE consolidated dues-reminder email to admins whose
+    role is one of:
+      - full-access admin (`admin_role in {None, "", "full"}`)
+      - operations manager (`admin_role == "operations_manager"`)
+      - membership manager (`admin_role == "membership_manager"`)
+    Other admin sub-roles (governor_manager, etc.) are skipped — they
+    were never the ones chasing renewals in the first place.
+    """
+    if not RESEND_API_KEY or not pending_records:
         return 0
+    # Whitelist of admin_roles that should receive dues reminders. `None`
+    # / "" / "full" all map to the top-level "full-access admin" bucket
+    # because legacy admins were seeded without an admin_role.
+    ELIGIBLE_ADMIN_ROLES = {None, "", "full", "operations_manager", "membership_manager"}
     admin_cursor = db.users.find(
         {
             "role": "admin",
             "email": {"$exists": True, "$ne": ""},
             "email_opt_out": {"$ne": True},
+            "email_prefs.dues_reminders": {"$ne": False},
         },
-        {"_id": 0, "id": 1, "name": 1, "email": 1},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "admin_role": 1},
     )
     admins = []
     async for a in admin_cursor:
+        if a.get("admin_role") not in ELIGIBLE_ADMIN_ROLES:
+            continue
         email = (a.get("email") or "").strip()
         if email:
             admins.append({"name": a.get("name", "") or email, "email": email})
     if not admins:
-        logger.info("Dues reminder summary: no admin recipients to notify.")
+        logger.info("Dues reminder: no eligible admin recipients (full-access / operations / membership managers).")
         return 0
 
     by_stage: dict[str, list[dict]] = {}
-    for r in sent_records:
+    for r in pending_records:
         by_stage.setdefault(r["stage_label"], []).append(r)
 
     today_label = now_utc().strftime("%b %d, %Y")
@@ -420,15 +438,14 @@ async def _send_admin_dues_summary(campaign: dict, sent_records: list[dict]) -> 
                 f'</tr>'
             )
 
-    total = len(sent_records)
-    subject = f"AOP dues reminders — {total} sent on {today_label}"
+    total = len(pending_records)
+    subject = f"AOP dues reminders — {total} member{'s' if total != 1 else ''} to follow up on"
     body_html = f"""<div style="font-family:-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:24px;background:#f7f5f0">
-  <h1 style="color:#0A2463;margin:0 0 6px;font-size:22px">Dues Reminder Summary</h1>
+  <h1 style="color:#0A2463;margin:0 0 6px;font-size:22px">Dues Reminder</h1>
   <div style="height:3px;background:#C8102E;width:54px;margin-bottom:14px"></div>
   <p style="color:#444;font-size:14px;margin:0 0 18px;line-height:1.5">
-    The automated dues-reminder campaign <strong>{_h.escape(campaign.get("name") or "Dues reminders")}</strong>
-    sent <strong>{total}</strong> email{"s" if total != 1 else ""} on {today_label}.
-    Each row lists the member's membership expiration date.
+    The following <strong>{total}</strong> member{"s have" if total != 1 else " has"} dues coming due — <strong>{_h.escape(campaign.get("name") or "Dues reminders")}</strong> automated check on {today_label}.
+    Please follow up personally to renew their membership.
   </p>
   <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e5e0">
     <thead>
@@ -442,7 +459,7 @@ async def _send_admin_dues_summary(campaign: dict, sent_records: list[dict]) -> 
     </tbody>
   </table>
   <p style="font-size:11px;color:#999;margin-top:22px;border-top:1px solid #e7e5e0;padding-top:14px">
-    You're receiving this because you're an Alpha Omega Phi admin. Reminder stages: 30 days, 15 days, 5 days before expiration, and a 1-day grace notice.
+    You&#39;re receiving this because you&#39;re a full-access admin, operations manager, or membership manager for Alpha Omega Phi. Reminder stages: 30 days, 15 days, 5 days before expiration, and a 1-day grace notice.
   </p>
 </div>"""
 
