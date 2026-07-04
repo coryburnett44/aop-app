@@ -15,6 +15,26 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 102 — Member Recruitment tracking (2026-02-26) [FEATURE]
+User request: "Create tracking for Member Recruitment. Make an admin tab for recruitment to track members who recruited members currently in the organization. Have the tab track an admin report exactly like the RSVPs, Hours, and Donations tabs. Allow admin to upload a csv file to track recruitment. In addition, make a top Member Recruitment Leader Board on the home page just like the other leader boards."
+
+- **Data model** (`db.recruitments` collection): `id`, `recruiter_id`+`recruiter_name`+`recruiter_email`, `recruit_id`+`recruit_name`+`recruit_email`, `chapter_id`+`chapter_name` (from recruiter, denormalized), `date_recruited` (ISO), `notes`, audit fields (`created_by`/`updated_at`). Denormalized names/emails/chapter avoid $lookups on list + report + leaderboard queries.
+- **Backend module** (`/app/backend/routes/recruitment.py`, ~470 lines) exposes:
+  - Admin CRUD: `GET /recruitments` (w/ `q=` search), `POST /recruitments`, `PUT /recruitments/{rid}`, `DELETE /recruitments/{rid}` — all behind `admin_tab_dep("recruitment")`.
+  - Guards: `recruiter_id == recruit_id → 400`, duplicate (`recruiter, recruit, date`) tuple → 409.
+  - Chapter-scoped Governor Managers see only recruitments touching their chapter's members.
+  - CSV: `/recruitments/csv/template` (header + example), `/recruitments/csv/export` (full-table download), `/recruitments/csv` (dry_run preview + commit). Member resolution: `email → full_name → first_last`; ambiguity is a hard error, duplicates are `SKIP` not `ERROR`.
+  - Reports: `/reports/recruitment` (entries) + `/reports/recruitment/summary?group_by=recruiter|chapter|month` with year/period/chapter filters.
+  - Homepage leaderboard: `/leaderboards/top-recruiters?period=q1..q4|year` returns top 5 chapters + top 5 recruiters, mirrors the top-donors shape.
+- **Admin tab permissions**: `recruitment` added to all four admin_role tab sets (`full`, `membership_manager`, `operations_manager`, `governor_manager`) in `ADMIN_ROLE_TABS` (server.py) + the frontend mirror in `Admin.jsx`.
+- **Frontend**:
+  - `components/RecruitmentAdmin.jsx` — table w/ New/Edit/Delete + CSV Import/Export + per-recruit search. MemberSelect dropdown excludes the counterpart to prevent self-recruitment client-side.
+  - `components/TopRecruitersLeaderboard.jsx` — Q1/Q2/Q3/Q4/{year} switcher + Top Chapters / Top Recruiters sub-tabs; matches the visual weight of `TopDonorsLeaderboard`.
+  - `pages/Reports.jsx` — new `Recruitment` tab with 4 sub-views (Individual entries / By recruiter / By chapter / Monthly trend) + filters + CSV export + inline bar-chart for the monthly trend.
+  - `pages/Home.jsx` — `TopRecruitersLeaderboard` inserted right below `TopDonorsLeaderboard`.
+- **Seed fix**: `mm.tx@clubhaven.app` was drift-seeded as `role="member"` — corrected to `role="admin"/admin_role="membership_manager"` so future testing sessions can validate the Membership Manager access path.
+- **Tests**: 12/12 pass in `tests/test_iteration102_recruitment.py` covering CRUD, self-recruit guard, duplicate 409, CSV template + email/name-fallback import + skip-duplicates + error rows, all report groupings, leaderboard period=q3 & year, and anonymous-access lockout. Frontend end-to-end also 100% via Playwright testing agent.
+
 ### Iteration 101 — Dues reminders: members receive emails; admin digest excludes Governor Managers (2026-02-26) [POLICY]
 User first asked to send dues reminders only to Admins, then corrected: "exclude only governor managers receiving the reminders. I want members to continue receiving the emails."
 
