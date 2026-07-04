@@ -15,6 +15,16 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 103 — RSVPs report includes walk-in check-ins (2026-02-26) [BUG FIX]
+User bug: "I created an event that has passed. I checked members in so I can track who went, but when I check in the admin reports → RSVPs → and filter by 'Event date', nothing comes up for the past event. I want the 'Checked In' count to work regardless of an RSVP."
+
+- **Root cause**: `/api/reports/rsvps` iterated `db.rsvps` only. Members who were checked in without an RSVP never appeared, so an event whose entire attendance was walk-in-only looked empty.
+- **Fix (`routes/reports.py`)**: after building the RSVP-based rows, union in `db.checkins` records where `(event_id, user_id)` isn't already represented. Each becomes a row with `is_walk_in=True`, `rsvped_at=None`, and a synthetic `rsvp_id="walkin-{event_id}-{user_id}"` (guests are excluded — they still ride under their host's RSVP row).
+  - Walk-in scope respects the same event / period / chapter filters as the RSVP branch. When `date_field=rsvped_at` (default) and no event scope is set, walk-ins are bounded by `checked_in_at` so we don't sweep unrelated events into the period.
+- **Fix (summary counts)**: `rsvp_count` no longer counts walk-ins (they didn't RSVP). New `walk_in_count` total. `checked_in_count` still counts every row with `checked_in_at`. Per-member, per-chapter, and per-period aggregations honor the same split. Period buckets pick `checked_in_at` for walk-ins when the toggle is RSVP-date so past attendance still surfaces on "By period".
+- **Frontend (`pages/Reports.jsx`)**: Totals card grew to 4 tiles (RSVPs / Walk-ins / Guests / Checked in). Individual-entries table shows a yellow **Walk-in** pill in the RSVPed column when `is_walk_in`.
+- **Tests**: `tests/test_iteration103_rsvp_walkins.py` — 4/4 pass. Regression: iter102 (12) + iter103 (4) = 16/16 green.
+
 ### Iteration 102 — Member Recruitment tracking (2026-02-26) [FEATURE]
 User request: "Create tracking for Member Recruitment. Make an admin tab for recruitment to track members who recruited members currently in the organization. Have the tab track an admin report exactly like the RSVPs, Hours, and Donations tabs. Allow admin to upload a csv file to track recruitment. In addition, make a top Member Recruitment Leader Board on the home page just like the other leader boards."
 

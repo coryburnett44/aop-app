@@ -374,8 +374,9 @@ function RsvpsReport() {
             </Tabs>
 
             {summary && (
-                <div className="grid sm:grid-cols-3 gap-3 mt-4" data-testid="rsvps-summary-totals">
+                <div className="grid sm:grid-cols-4 gap-3 mt-4" data-testid="rsvps-summary-totals">
                     <Stat label="RSVPs" value={summary.totals?.rsvp_count} />
+                    <Stat label="Walk-ins" value={summary.totals?.walk_in_count} />
                     <Stat label="Guests" value={summary.totals?.guest_count} />
                     <Stat label="Checked in" value={summary.totals?.checked_in_count} />
                 </div>
@@ -405,7 +406,13 @@ function RsvpsReport() {
                                         <div>{r.user_name}</div>
                                         {r.chapter_name && <div className="text-[11px] text-muted-foreground">{r.chapter_name}</div>}
                                     </td>
-                                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">{r.rsvped_at ? format(parseISO(r.rsvped_at), "MMM d, yyyy h:mm a") : "—"}</td>
+                                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
+                                        {r.rsvped_at
+                                            ? format(parseISO(r.rsvped_at), "MMM d, yyyy h:mm a")
+                                            : (r.is_walk_in
+                                                ? <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-amber-100 text-amber-800" data-testid={`rsvps-walkin-${r.user_id}-${r.event_id}`}>Walk-in</span>
+                                                : "—")}
+                                    </td>
                                     <td className="px-4 py-2.5">{r.ticket_type ? <span className="text-xs uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-primary/10 text-primary">{r.ticket_type.replace("_", " ")}</span> : <span className="text-xs text-muted-foreground italic">—</span>}</td>
                                     <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{r.checked_in_at ? format(parseISO(r.checked_in_at), "MMM d, h:mm a") : "—"}</td>
                                     <td className="px-4 py-2.5">

@@ -188,7 +188,85 @@ def register(
                 "guest_count": len(r.get("guests", []) or []),
                 "ticket_type": tt,
                 "checked_in_at": (ck or {}).get("checked_in_at"),
+                "is_walk_in": False,
             })
+
+        # Walk-in union (iter103): include member check-ins that never had an
+        # RSVP. Without this, past events checked in by walk-ins never appear
+        # in the report because we were iterating only `db.rsvps`. Guest-only
+        # check-ins (user_id=None) are intentionally skipped — they belong to
+        # their host's RSVP row via `guests`.
+        already_pairs = {(r["event_id"], r["user_id"]) for r in rows}
+        checkin_q: dict = {"user_id": {"$ne": None}}
+        existing_eid = rsvp_q.get("event_id")
+        if isinstance(existing_eid, str):
+            checkin_q["event_id"] = existing_eid
+        elif isinstance(existing_eid, dict) and "$in" in existing_eid:
+            checkin_q["event_id"] = {"$in": existing_eid["$in"]}
+        elif period_event_ids is not None:
+            checkin_q["event_id"] = {"$in": period_event_ids}
+        # When filtering by rsvped-date period (no event-date scoping), bound
+        # walk-ins by checked_in_at so we don't sweep in check-ins from
+        # unrelated events.
+        if period_from and not use_event_date and "event_id" not in checkin_q:
+            checkin_q["checked_in_at"] = {"$gte": period_from, "$lte": period_to}
+        if is_chapter_scoped(admin):
+            existing_uid = rsvp_q.get("user_id")
+            if isinstance(existing_uid, dict) and "$in" in existing_uid:
+                checkin_q["user_id"] = {"$in": existing_uid["$in"]}
+        walkins = await db.checkins.find(
+            checkin_q,
+            {"_id": 0, "id": 1, "event_id": 1, "user_id": 1, "user_name": 1, "ticket_type": 1, "checked_in_at": 1},
+        ).sort("checked_in_at", -1).limit(5000).to_list(5000)
+        # Enrich event + user maps for any walk-in events/users we haven't seen.
+        new_event_ids = [c["event_id"] for c in walkins if c["event_id"] not in event_by_id]
+        if new_event_ids:
+            more_events = await db.events.find(
+                {"id": {"$in": list(set(new_event_ids))}},
+                {"_id": 0, "id": 1, "title": 1, "start_at": 1, "parent_event_id": 1},
+            ).to_list(500)
+            for e in more_events:
+                event_by_id[e["id"]] = e
+        new_uids = [c["user_id"] for c in walkins if c["user_id"] not in users_by_id]
+        if new_uids:
+            more_users = await db.users.find(
+                {"id": {"$in": list(set(new_uids))}},
+                {"_id": 0, "id": 1, "chapter_id": 1, "name": 1},
+            ).to_list(len(set(new_uids)))
+            for u in more_users:
+                users_by_id[u["id"]] = u
+            more_cids = list({u.get("chapter_id") for u in more_users if u.get("chapter_id") and u.get("chapter_id") not in chaps_by_id})
+            if more_cids:
+                async for c in db.chapters.find({"id": {"$in": more_cids}}, {"_id": 0, "id": 1, "name": 1}):
+                    chaps_by_id[c["id"]] = c
+        for ck in walkins:
+            key = (ck["event_id"], ck["user_id"])
+            if key in already_pairs:
+                continue
+            tt = ck.get("ticket_type") or "general"
+            if ticket_type and tt != ticket_type:
+                continue
+            udoc = users_by_id.get(ck["user_id"], {})
+            cid = udoc.get("chapter_id")
+            ev = event_by_id.get(ck["event_id"], {})
+            rows.append({
+                "rsvp_id": f"walkin-{ck['event_id']}-{ck['user_id']}",
+                "event_id": ck["event_id"],
+                "event_title": ev.get("title", "") or ck.get("event_title", ""),
+                "event_start_at": ev.get("start_at"),
+                "parent_event_id": ev.get("parent_event_id"),
+                "user_id": ck["user_id"],
+                "user_name": udoc.get("name", "") or ck.get("user_name", ""),
+                "chapter_id": cid,
+                "chapter_name": chaps_by_id.get(cid, {}).get("name", "") if cid else "Unassigned",
+                "rsvped_at": None,
+                "guests": [],
+                "guest_count": 0,
+                "ticket_type": tt,
+                "checked_in_at": ck.get("checked_in_at"),
+                "is_walk_in": True,
+            })
+            already_pairs.add(key)
         return rows
 
     # ---------- /reports/rsvps/summary ----------
@@ -217,9 +295,10 @@ def register(
             admin=admin,
         )
         totals = {
-            "rsvp_count": len(rows),
+            "rsvp_count": sum(1 for r in rows if not r.get("is_walk_in")),
             "guest_count": sum(r.get("guest_count", 0) for r in rows),
             "checked_in_count": sum(1 for r in rows if r.get("checked_in_at")),
+            "walk_in_count": sum(1 for r in rows if r.get("is_walk_in")),
         }
         out_rows: list = []
         if group_by == "member":
@@ -227,19 +306,21 @@ def register(
             for r in rows:
                 uid = r["user_id"]
                 groups.setdefault(uid, {"user_name": r["user_name"], "chapter_id": r.get("chapter_id"), "chapter_name": r.get("chapter_name", ""), "rsvp_count": 0, "guest_count": 0, "checked_in_count": 0})
-                groups[uid]["rsvp_count"] += 1
+                if not r.get("is_walk_in"):
+                    groups[uid]["rsvp_count"] += 1
                 groups[uid]["guest_count"] += r.get("guest_count", 0)
                 if r.get("checked_in_at"):
                     groups[uid]["checked_in_count"] += 1
             for uid, g in groups.items():
                 out_rows.append({"user_id": uid, **g})
-            out_rows.sort(key=lambda r: r["rsvp_count"], reverse=True)
+            out_rows.sort(key=lambda r: (r["checked_in_count"], r["rsvp_count"]), reverse=True)
         elif group_by == "chapter":
             groups2: dict = {}
             for r in rows:
                 cid = r.get("chapter_id") or "unassigned"
                 groups2.setdefault(cid, {"chapter_name": r.get("chapter_name") or "Unassigned", "rsvp_count": 0, "guest_count": 0, "checked_in_count": 0, "members": set()})
-                groups2[cid]["rsvp_count"] += 1
+                if not r.get("is_walk_in"):
+                    groups2[cid]["rsvp_count"] += 1
                 groups2[cid]["guest_count"] += r.get("guest_count", 0)
                 if r.get("checked_in_at"):
                     groups2[cid]["checked_in_count"] += 1
@@ -253,20 +334,27 @@ def register(
                     "checked_in_count": g["checked_in_count"],
                     "member_count": len(g["members"]),
                 })
-            out_rows.sort(key=lambda r: r["rsvp_count"], reverse=True)
+            out_rows.sort(key=lambda r: (r["checked_in_count"], r["rsvp_count"]), reverse=True)
         else:
             # by period — bucket key tracks the toggle: by RSVP creation month
             # when date_field=rsvped_at (default), or by event-start month when
-            # date_field=event_start_at. Mirrors the row filter so the bucket
-            # labels match the rows visible in "Individual entries".
+            # date_field=event_start_at. Walk-ins have no rsvped_at; when the
+            # toggle is rsvped_at we bucket them by checked_in_at so past
+            # attendance still surfaces on the "By period" view.
             buckets: dict = {}
             for r in rows:
-                src = r.get("event_start_at") if date_field == "event_start_at" else r.get("rsvped_at")
+                if date_field == "event_start_at":
+                    src = r.get("event_start_at")
+                elif r.get("is_walk_in"):
+                    src = r.get("checked_in_at")
+                else:
+                    src = r.get("rsvped_at")
                 ds = (src or "")[:7]  # YYYY-MM
                 if not ds:
                     continue
                 buckets.setdefault(ds, {"label": ds, "rsvp_count": 0, "guest_count": 0, "checked_in_count": 0})
-                buckets[ds]["rsvp_count"] += 1
+                if not r.get("is_walk_in"):
+                    buckets[ds]["rsvp_count"] += 1
                 buckets[ds]["guest_count"] += r.get("guest_count", 0)
                 if r.get("checked_in_at"):
                     buckets[ds]["checked_in_count"] += 1
