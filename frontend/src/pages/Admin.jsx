@@ -9,7 +9,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
@@ -27,6 +27,7 @@ import BulkImportMembersDialog from "../components/BulkImportMembersDialog";
 import MemberBalanceEditor from "../components/MemberBalanceEditor";
 import AssignmentHistoryEditor from "../components/AssignmentHistoryEditor";
 import SignInActivityAdmin from "../components/SignInActivityAdmin";
+import RecruitmentAdmin from "../components/RecruitmentAdmin";
 
 export default function Admin() {
     const [tab, setTab] = useState("dashboard");
@@ -70,6 +71,7 @@ export default function Admin() {
                         {allowed("tiers") && <TabsTrigger value="tiers" className="rounded-full" data-testid="admin-tab-tiers"><Layers className="h-4 w-4 mr-1.5" />Tiers</TabsTrigger>}
                         {allowed("events") && <TabsTrigger value="events" className="rounded-full" data-testid="admin-tab-events"><Calendar className="h-4 w-4 mr-1.5" />Events</TabsTrigger>}
                         {allowed("hours") && <TabsTrigger value="hours" className="rounded-full" data-testid="admin-tab-hours"><Clock className="h-4 w-4 mr-1.5" />Hours</TabsTrigger>}
+                        {allowed("recruitment") && <TabsTrigger value="recruitment" className="rounded-full" data-testid="admin-tab-recruitment"><UserPlus className="h-4 w-4 mr-1.5" />Recruitment</TabsTrigger>}
                         {allowed("awards") && <TabsTrigger value="awards" className="rounded-full" data-testid="admin-tab-awards"><Trophy className="h-4 w-4 mr-1.5" />Awards</TabsTrigger>}
                         {allowed("gear") && <TabsTrigger value="gear" className="rounded-full" data-testid="admin-tab-gear"><ShoppingBag className="h-4 w-4 mr-1.5" />Gear</TabsTrigger>}
                         {allowed("causes") && <TabsTrigger value="causes" className="rounded-full" data-testid="admin-tab-causes"><Heart className="h-4 w-4 mr-1.5" />Causes</TabsTrigger>}
@@ -87,6 +89,7 @@ export default function Admin() {
                 {allowed("tiers") && <TabsContent value="tiers" className="mt-6"><TiersAdmin /></TabsContent>}
                 {allowed("events") && <TabsContent value="events" className="mt-6"><EventsAdmin /></TabsContent>}
                 {allowed("hours") && <TabsContent value="hours" className="mt-6"><HoursAdmin scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
+                {allowed("recruitment") && <TabsContent value="recruitment" className="mt-6"><RecruitmentAdmin /></TabsContent>}
                 {allowed("awards") && <TabsContent value="awards" className="mt-6"><AwardsAdmin /></TabsContent>}
                 {allowed("gear") && <TabsContent value="gear" className="mt-6"><GearAdmin /></TabsContent>}
                 {allowed("causes") && <TabsContent value="causes" className="mt-6"><CausesAdmin scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
@@ -1489,13 +1492,13 @@ function NewMemberDialog({ chapters, tiers, onSaved }) {
 /* -------- Admin tab permissions editor (full-Admin only) -------- */
 const ALL_ADMIN_TAB_KEYS = [
     "dashboard", "members", "chapters", "tiers", "events", "hours", "awards",
-    "gear", "causes", "reports", "email", "news", "pages", "documents",
+    "gear", "causes", "reports", "email", "news", "pages", "documents", "recruitment",
 ];
 const ADMIN_ROLE_DEFAULT_TABS = {
     full: new Set(ALL_ADMIN_TAB_KEYS),
-    membership_manager: new Set(["dashboard", "members", "chapters", "tiers", "events", "awards", "reports", "email"]),
-    operations_manager: new Set(["dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news", "documents"]),
-    governor_manager: new Set(["dashboard", "hours", "causes", "reports"]),
+    membership_manager: new Set(["dashboard", "members", "chapters", "tiers", "events", "awards", "reports", "email", "recruitment"]),
+    operations_manager: new Set(["dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news", "documents", "recruitment"]),
+    governor_manager: new Set(["dashboard", "hours", "causes", "reports", "recruitment"]),
 };
 function AdminTabPermissionsEditor({ value = [], onChange, disabled = false, adminRole = "full" }) {
     const hasCustom = Array.isArray(value) && value.length > 0;

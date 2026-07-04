@@ -39,6 +39,7 @@ export default function Reports() {
                 <TabsTrigger value="rsvps" className="rounded-full" data-testid="reports-tab-rsvps">RSVPs</TabsTrigger>
                 <TabsTrigger value="hours" className="rounded-full" data-testid="reports-tab-hours">Hours</TabsTrigger>
                 <TabsTrigger value="donations" className="rounded-full" data-testid="reports-tab-donations">Donations</TabsTrigger>
+                <TabsTrigger value="recruitment" className="rounded-full" data-testid="reports-tab-recruitment">Recruitment</TabsTrigger>
                 <TabsTrigger value="dues" className="rounded-full" data-testid="reports-tab-dues">Dues approvals</TabsTrigger>
                 <TabsTrigger value="dues-reminders" className="rounded-full" data-testid="reports-tab-dues-reminders">Dues reminders</TabsTrigger>
                 <TabsTrigger value="event-tickets" className="rounded-full" data-testid="reports-tab-event-tickets">Event tickets</TabsTrigger>
@@ -49,6 +50,7 @@ export default function Reports() {
             <TabsContent value="rsvps" className="mt-6"><RsvpsReport /></TabsContent>
             <TabsContent value="hours" className="mt-6"><HoursReport /></TabsContent>
             <TabsContent value="donations" className="mt-6"><DonationsReport /></TabsContent>
+            <TabsContent value="recruitment" className="mt-6"><RecruitmentReport /></TabsContent>
             <TabsContent value="dues" className="mt-6"><ZeffyDuesApprovals /></TabsContent>
             <TabsContent value="dues-reminders" className="mt-6"><DuesRemindersReport /></TabsContent>
             <TabsContent value="event-tickets" className="mt-6"><EventTicketApprovals /></TabsContent>
@@ -498,6 +500,267 @@ function Stat({ label, value }) {
         </div>
     );
 }
+
+/* -------- Recruitment Report -------- */
+function RecruitmentReport() {
+    const now = new Date();
+    const [view, setView] = useState("entries"); // entries | by_recruiter | by_chapter | by_month
+    const [chapters, setChapters] = useState([]);
+    const [year, setYear] = useState(String(now.getFullYear()));
+    const [period, setPeriod] = useState("all");
+    const [chapterId, setChapterId] = useState("");
+    const [rows, setRows] = useState([]);
+    const [summary, setSummary] = useState(null);
+
+    useEffect(() => {
+        api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
+    }, []);
+
+    function buildParams() {
+        const p = {};
+        if (year !== "all") {
+            p.year = year;
+            if (period !== "all") p.period = period;
+        }
+        if (chapterId) p.chapter_id = chapterId;
+        return p;
+    }
+
+    async function run() {
+        const params = buildParams();
+        if (view === "entries") {
+            const { data } = await api.get("/reports/recruitment", { params });
+            setRows(data);
+            setSummary({ totals: { total_recruits: data.length, distinct_recruiters: new Set(data.map((r) => r.recruiter_id)).size } });
+        } else {
+            const groupBy = view === "by_recruiter" ? "recruiter" : view === "by_chapter" ? "chapter" : "month";
+            const { data } = await api.get("/reports/recruitment/summary", { params: { ...params, group_by: groupBy } });
+            setRows(data.rows || []);
+            setSummary(data);
+        }
+    }
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        setRows([]);
+        run();
+    }, [view, year, period, chapterId]);
+
+    function exportCSV() {
+        let headers;
+        const fname = `recruitment-${view}-${year === "all" ? "all-years" : year}${year !== "all" && period !== "all" ? "-" + period : ""}.csv`;
+        if (view === "entries") {
+            headers = [
+                { label: "Date", get: (r) => (r.date_recruited || "").slice(0, 10) },
+                { label: "Recruiter", get: (r) => r.recruiter_name || "" },
+                { label: "Recruiter email", get: (r) => r.recruiter_email || "" },
+                { label: "Recruit", get: (r) => r.recruit_name || "" },
+                { label: "Recruit email", get: (r) => r.recruit_email || "" },
+                { label: "Chapter", get: (r) => r.chapter_name || "" },
+                { label: "Notes", get: (r) => r.notes || "" },
+            ];
+        } else if (view === "by_recruiter") {
+            headers = [
+                { label: "Recruiter", get: (r) => r.user_name },
+                { label: "Email", get: (r) => r.user_email },
+                { label: "Chapter", get: (r) => r.chapter_name || "Unassigned" },
+                { label: "Total recruits", get: (r) => r.count },
+            ];
+        } else if (view === "by_chapter") {
+            headers = [
+                { label: "Chapter", get: (r) => r.chapter_name },
+                { label: "Total recruits", get: (r) => r.count },
+                { label: "Distinct recruiters", get: (r) => r.recruiter_count },
+            ];
+        } else {
+            headers = [
+                { label: "Month", get: (r) => r.period_label },
+                { label: "Recruits", get: (r) => r.count },
+            ];
+        }
+        downloadCSV(fname, csvify(rows, headers));
+    }
+
+    const years = (() => {
+        const cy = now.getFullYear();
+        const list = [];
+        for (let y = cy; y >= 2017; y--) list.push(y);
+        return list;
+    })();
+    const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    // Simple bar-chart component for the "by month" view — matches the visual
+    // weight of the donations/hours monthly trend cards.
+    function MonthlyTrendChart({ data }) {
+        const max = Math.max(1, ...data.map((r) => r.count || 0));
+        return (
+            <div className="bg-card rounded-2xl border p-5" data-testid="recruitment-trend">
+                <div className="text-sm font-semibold mb-4">Monthly trend</div>
+                <div className="flex items-end gap-2 h-40">
+                    {data.map((r) => {
+                        const pct = Math.round(((r.count || 0) / max) * 100);
+                        return (
+                            <div key={r.period_label} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                                <div className="text-[10px] text-muted-foreground font-bold">{r.count}</div>
+                                <div className="w-full rounded-t-md" style={{ height: `${Math.max(pct, 3)}%`, backgroundColor: "#C8102E", minHeight: "3px" }} />
+                                <div className="text-[10px] text-muted-foreground truncate">{r.period_label.slice(5)}</div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div data-testid="recruitment-report">
+            <div className="bg-card rounded-2xl border p-5 mb-4">
+                <div className="flex items-center gap-2 text-sm font-semibold mb-3"><Filter className="h-4 w-4" /> Filters</div>
+                <div className="grid sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    <FilterSelect label="Year" value={year} onChange={setYear} options={[{ value: "all", label: "All years" }, ...years.map((y) => ({ value: String(y), label: String(y) }))]} testid="recruitment-filter-year" />
+                    <div>
+                        <Label className="text-xs">Period</Label>
+                        <Select value={period} onValueChange={setPeriod} disabled={year === "all"}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="recruitment-filter-period"><SelectValue placeholder={year === "all" ? "—" : ""} /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">Entire year</SelectItem>
+                                <SelectItem value="q1">Q1</SelectItem>
+                                <SelectItem value="q2">Q2</SelectItem>
+                                <SelectItem value="q3">Q3</SelectItem>
+                                <SelectItem value="q4">Q4</SelectItem>
+                                {MONTH_NAMES.map((mn, i) => <SelectItem key={i + 1} value={`m${i + 1}`}>{mn}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <FilterSelect label="Chapter" value={chapterId} onChange={setChapterId} options={[{ value: "", label: "All chapters" }, ...chapters.map((c) => ({ value: c.id, label: c.name }))]} testid="recruitment-filter-chapter" />
+                </div>
+                <div className="flex flex-wrap justify-end gap-2 mt-4">
+                    <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="recruitment-report-run">Run report</Button>
+                    <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="recruitment-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
+                </div>
+            </div>
+
+            <Tabs value={view} onValueChange={setView}>
+                <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
+                    <TabsTrigger value="entries" className="rounded-full" data-testid="recruitment-view-entries">Individual entries</TabsTrigger>
+                    <TabsTrigger value="by_recruiter" className="rounded-full" data-testid="recruitment-view-by-recruiter">By recruiter</TabsTrigger>
+                    <TabsTrigger value="by_chapter" className="rounded-full" data-testid="recruitment-view-by-chapter">By chapter</TabsTrigger>
+                    <TabsTrigger value="by_month" className="rounded-full" data-testid="recruitment-view-by-month">Monthly trend</TabsTrigger>
+                </TabsList>
+            </Tabs>
+
+            {summary?.totals && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4" data-testid="recruitment-totals">
+                    <Stat label="Total recruits" value={summary.totals.total_recruits} />
+                    <Stat label="Distinct recruiters" value={summary.totals.distinct_recruiters} />
+                </div>
+            )}
+
+            <div className="text-sm text-muted-foreground mt-4 mb-2">{rows.length} row{rows.length !== 1 ? "s" : ""}</div>
+
+            {view === "by_month" && rows.length > 0 && (
+                <div className="mb-4"><MonthlyTrendChart data={rows} /></div>
+            )}
+
+            <div className="bg-card rounded-2xl border overflow-x-auto">
+                <table className="w-full text-sm">
+                    {view === "entries" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr>
+                                    <th className="text-left px-4 py-3">Date</th>
+                                    <th className="text-left px-4 py-3">Recruiter</th>
+                                    <th className="text-left px-4 py-3">Recruit</th>
+                                    <th className="text-left px-4 py-3">Chapter</th>
+                                    <th className="text-left px-4 py-3">Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.id} className="border-t" data-testid={`recruitment-row-${r.id}`}>
+                                        <td className="px-4 py-3 whitespace-nowrap font-medium">{(r.date_recruited || "").slice(0, 10)}</td>
+                                        <td className="px-4 py-3">
+                                            <div className="font-semibold">{r.recruiter_name || "—"}</div>
+                                            <div className="text-xs text-muted-foreground">{r.recruiter_email}</div>
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <div className="font-semibold">{r.recruit_name || "—"}</div>
+                                            <div className="text-xs text-muted-foreground">{r.recruit_email}</div>
+                                        </td>
+                                        <td className="px-4 py-3">{r.chapter_name || "—"}</td>
+                                        <td className="px-4 py-3 max-w-[300px] truncate" title={r.notes}>{r.notes}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_recruiter" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr>
+                                    <th className="text-left px-4 py-3">Recruiter</th>
+                                    <th className="text-left px-4 py-3">Chapter</th>
+                                    <th className="text-right px-4 py-3">Total recruits</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.user_id} className="border-t" data-testid={`recruitment-recruiter-${r.user_id}`}>
+                                        <td className="px-4 py-3">
+                                            <div className="font-semibold">{r.user_name}</div>
+                                            <div className="text-xs text-muted-foreground">{r.user_email}</div>
+                                        </td>
+                                        <td className="px-4 py-3">{r.chapter_name}</td>
+                                        <td className="px-4 py-3 text-right font-bold">{r.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_chapter" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr>
+                                    <th className="text-left px-4 py-3">Chapter</th>
+                                    <th className="text-right px-4 py-3">Total recruits</th>
+                                    <th className="text-right px-4 py-3">Distinct recruiters</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.chapter_id || "unassigned"} className="border-t" data-testid={`recruitment-chapter-${r.chapter_id || "unassigned"}`}>
+                                        <td className="px-4 py-3 font-semibold">{r.chapter_name}</td>
+                                        <td className="px-4 py-3 text-right font-bold">{r.count}</td>
+                                        <td className="px-4 py-3 text-right">{r.recruiter_count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                    {view === "by_month" && (
+                        <>
+                            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                                <tr>
+                                    <th className="text-left px-4 py-3">Month</th>
+                                    <th className="text-right px-4 py-3">Recruits</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((r) => (
+                                    <tr key={r.period_label} className="border-t" data-testid={`recruitment-month-${r.period_label}`}>
+                                        <td className="px-4 py-3 font-medium">{r.period_label}</td>
+                                        <td className="px-4 py-3 text-right font-bold">{r.count}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </>
+                    )}
+                </table>
+            </div>
+        </div>
+    );
+}
+
 
 function HoursReport() {
     const now = new Date();

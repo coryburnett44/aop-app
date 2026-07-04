@@ -284,10 +284,10 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 # Admin sub-role permissions — UI tabs an admin can access.
 # "full" admin has access to everything.
 ADMIN_ROLE_TABS: dict[str, set[str]] = {
-    "full": {"dashboard", "members", "chapters", "tiers", "events", "hours", "awards", "gear", "causes", "reports", "email", "news", "pages", "documents"},
-    "membership_manager": {"dashboard", "members", "chapters", "tiers", "events", "awards", "reports", "email"},
-    "operations_manager": {"dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news", "documents"},
-    "governor_manager": {"dashboard", "hours", "causes", "reports"},
+    "full": {"dashboard", "members", "chapters", "tiers", "events", "hours", "awards", "gear", "causes", "reports", "email", "news", "pages", "documents", "recruitment"},
+    "membership_manager": {"dashboard", "members", "chapters", "tiers", "events", "awards", "reports", "email", "recruitment"},
+    "operations_manager": {"dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news", "documents", "recruitment"},
+    "governor_manager": {"dashboard", "hours", "causes", "reports", "recruitment"},
 }
 
 # Canonical list of every admin-console tab key — used for admin_can validation and
@@ -3320,6 +3320,7 @@ from routes import chat as routes_chat  # noqa: E402
 from routes import donations as routes_donations  # noqa: E402
 from routes import awards as routes_awards  # noqa: E402
 from routes import email as routes_email  # noqa: E402
+from routes import recruitment as routes_recruitment  # noqa: E402
 
 routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
@@ -3353,6 +3354,16 @@ routes_chat.register(
     logger=logger,
 )
 routes_donations.register(
+    api,
+    db=db,
+    iso=iso,
+    now_utc=now_utc,
+    get_current_user=get_current_user,
+    admin_tab_dep=admin_tab_dep,
+    is_chapter_scoped=is_chapter_scoped,
+    chapter_scope_user_ids=chapter_scope_user_ids,
+)
+routes_recruitment.register(
     api,
     db=db,
     iso=iso,

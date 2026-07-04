@@ -8,6 +8,7 @@ import { format, parseISO } from "date-fns";
 // Countdown import removed — anniversary banner now lives only on /anniversary (Iter 38).
 import CommunityServiceLeaderboard from "../components/CommunityServiceLeaderboard";
 import TopDonorsLeaderboard from "../components/TopDonorsLeaderboard";
+import TopRecruitersLeaderboard from "../components/TopRecruitersLeaderboard";
 import OfTheYearWinners from "../components/OfTheYearWinners";
 import { BlocksRenderer } from "../components/cms/BlockRenderer";
 
@@ -223,6 +224,9 @@ export default function Home() {
 
             {/* Top Donors Leader Board — same shape, dollars-based instead of hours */}
             {showSection("leaderboard") && <TopDonorsLeaderboard />}
+
+            {/* Top Recruiters Leader Board — same shape, recruitment-count based */}
+            {showSection("leaderboard") && <TopRecruitersLeaderboard />}
 
             {/* Current-year "Of The Year" winners across all 7 categories */}
             {showSection("leaderboard") && <OfTheYearWinners />}
