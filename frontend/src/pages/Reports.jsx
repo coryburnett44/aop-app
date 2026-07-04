@@ -502,6 +502,33 @@ function Stat({ label, value }) {
 }
 
 /* -------- Recruitment Report -------- */
+// Bar-chart for the "by month" view — matches the visual weight of the
+// donations/hours monthly trend cards. Renders defensively (skips rows
+// missing `period_label`) because state can briefly hold stale data from
+// a prior view between the tab click and the useEffect refetch.
+function RecruitmentMonthlyTrendChart({ data }) {
+    const safe = (data || []).filter((r) => r && typeof r.period_label === "string");
+    if (safe.length === 0) return null;
+    const max = Math.max(1, ...safe.map((r) => r.count || 0));
+    return (
+        <div className="bg-card rounded-2xl border p-5" data-testid="recruitment-trend">
+            <div className="text-sm font-semibold mb-4">Monthly trend</div>
+            <div className="flex items-end gap-2 h-40">
+                {safe.map((r) => {
+                    const pct = Math.round(((r.count || 0) / max) * 100);
+                    return (
+                        <div key={r.period_label} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                            <div className="text-[10px] text-muted-foreground font-bold">{r.count}</div>
+                            <div className="w-full rounded-t-md" style={{ height: `${Math.max(pct, 3)}%`, backgroundColor: "#C8102E", minHeight: "3px" }} />
+                            <div className="text-[10px] text-muted-foreground truncate">{r.period_label.slice(5)}</div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 function RecruitmentReport() {
     const now = new Date();
     const [view, setView] = useState("entries"); // entries | by_recruiter | by_chapter | by_month
@@ -589,29 +616,6 @@ function RecruitmentReport() {
     })();
     const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-    // Simple bar-chart component for the "by month" view — matches the visual
-    // weight of the donations/hours monthly trend cards.
-    function MonthlyTrendChart({ data }) {
-        const max = Math.max(1, ...data.map((r) => r.count || 0));
-        return (
-            <div className="bg-card rounded-2xl border p-5" data-testid="recruitment-trend">
-                <div className="text-sm font-semibold mb-4">Monthly trend</div>
-                <div className="flex items-end gap-2 h-40">
-                    {data.map((r) => {
-                        const pct = Math.round(((r.count || 0) / max) * 100);
-                        return (
-                            <div key={r.period_label} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                                <div className="text-[10px] text-muted-foreground font-bold">{r.count}</div>
-                                <div className="w-full rounded-t-md" style={{ height: `${Math.max(pct, 3)}%`, backgroundColor: "#C8102E", minHeight: "3px" }} />
-                                <div className="text-[10px] text-muted-foreground truncate">{r.period_label.slice(5)}</div>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div data-testid="recruitment-report">
             <div className="bg-card rounded-2xl border p-5 mb-4">
@@ -659,7 +663,7 @@ function RecruitmentReport() {
             <div className="text-sm text-muted-foreground mt-4 mb-2">{rows.length} row{rows.length !== 1 ? "s" : ""}</div>
 
             {view === "by_month" && rows.length > 0 && (
-                <div className="mb-4"><MonthlyTrendChart data={rows} /></div>
+                <div className="mb-4"><RecruitmentMonthlyTrendChart data={rows} /></div>
             )}
 
             <div className="bg-card rounded-2xl border overflow-x-auto">
@@ -746,7 +750,7 @@ function RecruitmentReport() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {rows.map((r) => (
+                                {rows.filter((r) => typeof r.period_label === "string").map((r) => (
                                     <tr key={r.period_label} className="border-t" data-testid={`recruitment-month-${r.period_label}`}>
                                         <td className="px-4 py-3 font-medium">{r.period_label}</td>
                                         <td className="px-4 py-3 text-right font-bold">{r.count}</td>
