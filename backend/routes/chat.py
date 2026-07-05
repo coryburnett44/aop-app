@@ -187,6 +187,8 @@ def register(
             "ttl_seconds": int(m.get("ttl_seconds") or 0),
             "first_read_at": m.get("first_read_at"),
             "expires_at": m.get("expires_at"),
+            "kind": m.get("kind") or "text",
+            "meeting": m.get("meeting"),
         }
 
     # ---------- Conversations ----------
@@ -248,17 +250,23 @@ def register(
             sets["avatar_url"] = body.avatar_url
         if body.ttl is not None:
             sets["ttl"] = body.ttl
-        # Member changes only allowed in group chats.
-        if c.get("type") == "group":
-            members = set(c.get("member_ids", []))
-            if body.add_member_ids:
-                members.update(body.add_member_ids)
-            if body.remove_member_ids:
-                for rid in body.remove_member_ids:
-                    members.discard(rid)
-            members.add(user["id"])  # editor can't accidentally remove themselves
-            if members != set(c.get("member_ids", [])):
-                sets["member_ids"] = list(members)
+        # Member changes: allow both group AND dm (dm auto-converts to group
+        # once a 3rd participant is added, keeping the full message history).
+        current_members = set(c.get("member_ids", []))
+        new_members = set(current_members)
+        if body.add_member_ids:
+            new_members.update(body.add_member_ids)
+        if body.remove_member_ids:
+            if c.get("type") != "group":
+                raise HTTPException(status_code=400, detail="Can't remove members from a DM — leave the chat instead")
+            for rid in body.remove_member_ids:
+                new_members.discard(rid)
+        new_members.add(user["id"])  # editor can't accidentally remove themselves
+        if new_members != current_members:
+            sets["member_ids"] = list(new_members)
+            # DM → group auto-promotion when 3+ members are present.
+            if c.get("type") == "dm" and len(new_members) > 2:
+                sets["type"] = "group"
         if sets:
             await db.conversations.update_one({"id": cid}, {"$set": sets})
         c2 = await db.conversations.find_one({"id": cid}, {"_id": 0})
@@ -398,6 +406,59 @@ def register(
         if c:
             await chat_hub.push(c.get("member_ids", []), {"type": "message:deleted", "message_id": mid, "conversation_id": m["conversation_id"]})
         return {"ok": True}
+
+    # ---------- Video meetings (Jitsi Meet — free, no key required) ----------
+    @api.post("/conversations/{cid}/video-meeting")
+    async def start_video_meeting(cid: str, user: dict = Depends(get_current_user)):
+        """Generate a fresh Jitsi room URL and post it as a system-flavored
+        message so every member sees an in-thread 'Join meeting' card.
+        Anyone in the conversation may start a meeting — rooms are ephemeral
+        and only live on jitsi's server for as long as someone is present."""
+        c = await db.conversations.find_one({"id": cid, "member_ids": user["id"]})
+        if not c:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        # Use a URL-safe slug so the room name is stable per-conversation +
+        # per-launch but still hard to guess (16 bytes of entropy).
+        slug = ''.join(ch for ch in (c.get("name") or "aop-chat").lower() if ch.isalnum())[:20] or "aop-chat"
+        room = f"aop-{slug}-{uuid.uuid4().hex[:12]}"
+        meeting_url = f"https://meet.jit.si/{room}"
+        now_iso = _now_iso()
+        doc = {
+            "id": str(uuid.uuid4()),
+            "conversation_id": cid,
+            "sender_id": user["id"],
+            "sender_name": user.get("name", ""),
+            "sender_avatar": user.get("avatar_url", ""),
+            "body": "",
+            "attachments": [],
+            "reply_to": None,
+            "ttl_seconds": 0,  # meeting cards never disappear
+            "first_read_at": None,
+            "created_at": now_iso,
+            "edited_at": None,
+            "deleted_at": None,
+            "kind": "video_meeting",
+            "meeting": {
+                "url": meeting_url,
+                "room": room,
+                "started_by": user["id"],
+                "started_by_name": user.get("name", ""),
+                "started_at": now_iso,
+            },
+        }
+        await db.messages.insert_one(doc)
+        preview = f"📹 {user.get('name', 'Someone')} started a video meeting"
+        await db.conversations.update_one(
+            {"id": cid},
+            {"$set": {"last_message_at": now_iso, "last_message_preview": preview[:140], f"read_state.{user['id']}": now_iso}},
+        )
+        payload = message_out(doc, user["id"])
+        await chat_hub.push(c.get("member_ids", []), {"type": "message:new", "message": payload})
+        try:
+            await queue_chat_notifications(c, doc, user)
+        except Exception as e:
+            logger.warning(f"queue_chat_notifications (video) failed: {e}")
+        return payload
 
     # ---------- File uploads ----------
     @api.post("/chat/upload")

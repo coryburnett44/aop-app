@@ -8,7 +8,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "../components/ui/dialog";
 import { ScrollArea } from "../components/ui/scroll-area";
-import { Plus, Send, Paperclip, X, Search, Users as UsersIcon, Trash2, LogOut, Settings, FileText, Image as ImageIcon, Download, ArrowLeft, Upload, Camera, Reply, Smile, Timer, AlarmClock } from "lucide-react";
+import { Plus, Send, Paperclip, X, Search, Users as UsersIcon, Trash2, LogOut, Settings, FileText, Image as ImageIcon, Download, ArrowLeft, Upload, Camera, Reply, Smile, Timer, AlarmClock, Video, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 
@@ -276,6 +276,7 @@ function ChatThread({ conversation, onRefresh, onBack }) {
                         {conversation.type === "group" ? `${conversation.members.length} members` : "Direct message"}
                     </div>
                 </div>
+                <StartVideoMeetingButton conversation={conversation} />
                 <ConversationSettings conversation={conversation} onChanged={onRefresh} />
             </header>
 
@@ -311,6 +312,11 @@ function ChatThread({ conversation, onRefresh, onBack }) {
 
 function MessageBubble({ message, mine, showSender, allMessages, onReply }) {
     const isDeleted = !!message.deleted_at;
+    // Video meeting messages get a full-width actionable card instead of the
+    // usual chat bubble. Renders whether the current user started it or not.
+    if (!isDeleted && message.kind === "video_meeting" && message.meeting?.url) {
+        return <VideoMeetingCard message={message} mine={mine} />;
+    }
     const repliedTo = message.reply_to ? (allMessages || []).find((m) => m.id === message.reply_to) : null;
     const ttl = parseInt(message.ttl_seconds || 0, 10);
     return (
@@ -764,8 +770,201 @@ function NewChatDialog({ onCreated }) {
     );
 }
 
-function ConversationSettings({ conversation, onChanged }) {
-    const { user } = useAuth();
+/* ---------- Video meeting card (rendered inline in the thread) ---------- */
+function VideoMeetingCard({ message, mine }) {
+    const meeting = message.meeting || {};
+    const starterName = meeting.started_by_name || message.sender_name || "Someone";
+    const startedAt = message.created_at ? format(parseISO(message.created_at), "MMM d, h:mm a") : "";
+    return (
+        <div className="my-3 flex justify-center" data-testid={`video-meeting-card-${message.id}`}>
+            <div className="w-full max-w-md rounded-2xl border-2 p-4 shadow-sm bg-gradient-to-br from-indigo-50 to-white" style={{ borderColor: NAVY }}>
+                <div className="flex items-center gap-3 mb-3">
+                    <div className="h-10 w-10 rounded-full grid place-items-center shrink-0" style={{ backgroundColor: NAVY, color: "#fff" }}>
+                        <Video className="h-5 w-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="font-heading font-bold text-sm" style={{ color: NAVY }}>Video meeting started</div>
+                        <div className="text-xs text-slate-500 truncate">{mine ? "You" : starterName} · {startedAt}</div>
+                    </div>
+                </div>
+                <a
+                    href={meeting.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full rounded-full py-2.5 text-sm font-bold text-white transition-colors"
+                    style={{ backgroundColor: RED }}
+                    data-testid={`join-meeting-${message.id}`}
+                >
+                    <Video className="h-4 w-4" /> Join meeting
+                </a>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400 text-center mt-2">Powered by Jitsi · opens in new tab</div>
+            </div>
+        </div>
+    );
+}
+
+/* ---------- Header "Start video meeting" button ---------- */
+function StartVideoMeetingButton({ conversation }) {
+    const [busy, setBusy] = useState(false);
+    async function start() {
+        if (busy) return;
+        setBusy(true);
+        try {
+            const { data } = await api.post(`/conversations/${conversation.id}/video-meeting`);
+            const url = data?.meeting?.url;
+            toast.success("Video meeting started — link posted in the chat");
+            // Open the room in a new tab so the initiator lands directly in.
+            if (url) window.open(url, "_blank", "noopener,noreferrer");
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Couldn't start meeting");
+        } finally {
+            setBusy(false);
+        }
+    }
+    return (
+        <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0"
+            onClick={start}
+            disabled={busy}
+            title="Start video meeting"
+            data-testid="start-video-meeting-btn"
+        >
+            <Video className="h-4 w-4" />
+        </Button>
+    );
+}
+
+/* ---------- Add-members dialog (from ConversationSettings) ---------- */
+function AddMembersDialog({ conversation, onAdded }) {
+    const [open, setOpen] = useState(false);
+    const [q, setQ] = useState("");
+    const [candidates, setCandidates] = useState([]);
+    const [selected, setSelected] = useState(new Set());
+    const [busy, setBusy] = useState(false);
+    const isDm = conversation.type === "dm";
+
+    useEffect(() => {
+        if (!open) return;
+        api.get("/members").then(({ data }) => setCandidates(data)).catch(() => setCandidates([]));
+        setSelected(new Set());
+        setQ("");
+    }, [open]);
+
+    const existingIds = new Set(conversation.member_ids || conversation.members?.map((m) => m.id) || []);
+    const filtered = candidates
+        .filter((m) => !existingIds.has(m.id))
+        .filter((m) => {
+            const query = q.trim().toLowerCase();
+            if (!query) return true;
+            return (m.name || "").toLowerCase().includes(query) || (m.email || "").toLowerCase().includes(query);
+        })
+        .slice(0, 100);
+
+    function toggle(id) {
+        setSelected((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+
+    async function submit() {
+        if (selected.size === 0) return;
+        setBusy(true);
+        try {
+            await api.put(`/conversations/${conversation.id}`, { add_member_ids: [...selected] });
+            toast.success(isDm && selected.size > 0
+                ? `Added ${selected.size} member${selected.size > 1 ? "s" : ""} — chat converted to group`
+                : `Added ${selected.size} member${selected.size > 1 ? "s" : ""}`);
+            setOpen(false);
+            onAdded?.();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Failed to add members");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button variant="outline" className="rounded-full w-full" data-testid="add-members-btn">
+                    <UserPlus className="h-4 w-4 mr-1.5" /> Add members
+                </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md" data-testid="add-members-dialog">
+                <DialogHeader>
+                    <DialogTitle className="font-heading text-2xl" style={{ color: NAVY }}>Add members</DialogTitle>
+                </DialogHeader>
+                {isDm && (
+                    <div className="text-xs bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-800" data-testid="dm-convert-notice">
+                        Adding people will convert this DM into a group chat. Message history is preserved.
+                    </div>
+                )}
+                <div className="relative mt-2">
+                    <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <Input
+                        value={q}
+                        onChange={(e) => setQ(e.target.value)}
+                        placeholder="Search members…"
+                        className="pl-9 rounded-xl"
+                        data-testid="add-members-search"
+                    />
+                </div>
+                <div className="max-h-72 overflow-y-auto space-y-1 mt-2">
+                    {filtered.length === 0 && (
+                        <div className="text-center text-xs text-slate-500 py-6">
+                            {q.trim() ? "No matches." : "Everyone else is already in this chat."}
+                        </div>
+                    )}
+                    {filtered.map((m) => {
+                        const on = selected.has(m.id);
+                        return (
+                            <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => toggle(m.id)}
+                                className={`w-full text-left flex items-center gap-3 p-2 rounded-xl border-2 transition-colors ${on ? "border-primary bg-primary/5" : "border-transparent hover:bg-slate-50"}`}
+                                data-testid={`add-member-row-${m.id}`}
+                            >
+                                <Avatar className="h-8 w-8">
+                                    {m.avatar_url && <AvatarImage src={m.avatar_url} />}
+                                    <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">
+                                        {(m.name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase()}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-semibold truncate">{m.name}</div>
+                                    <div className="text-xs text-slate-500 truncate">{m.email}</div>
+                                </div>
+                                {on && <div className="text-primary text-xs font-bold">Selected</div>}
+                            </button>
+                        );
+                    })}
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpen(false)} className="rounded-full" data-testid="add-members-cancel">Cancel</Button>
+                    <Button
+                        onClick={submit}
+                        disabled={busy || selected.size === 0}
+                        className="rounded-full text-white"
+                        style={{ backgroundColor: NAVY }}
+                        data-testid="add-members-submit"
+                    >
+                        {busy ? "Adding…" : `Add ${selected.size || ""}`.trim()}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+
+
+function ConversationSettings({ conversation, onChanged }) {    const { user } = useAuth();
     const [open, setOpen] = useState(false);
     const [name, setName] = useState(conversation.raw_name || "");
     const isGroup = conversation.type === "group";
@@ -852,6 +1051,9 @@ function ConversationSettings({ conversation, onChanged }) {
                                     <div className="flex-1 text-sm">{m.name}{m.id === conversation.created_by && <span className="ml-2 text-[10px] uppercase tracking-wider font-bold" style={{ color: RED }}>Creator</span>}</div>
                                 </div>
                             ))}
+                        </div>
+                        <div className="mt-2">
+                            <AddMembersDialog conversation={conversation} onAdded={() => { setOpen(false); onChanged(); }} />
                         </div>
                     </div>
                     <div className="flex gap-2 pt-2 border-t">

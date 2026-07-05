@@ -15,6 +15,22 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 104 — Chat: add members mid-thread + video meetings via Jitsi (2026-02-27) [FEATURE]
+User request (choices 1c, 2a, 3c): "Allow members to be added to a chat and groups after the chat messages have already began. Allow video meeting in the chat."
+
+- **Add members to existing chats** (`routes/chat.py::update_conversation`):
+  - Group chats: `PUT /conversations/{cid}` with `add_member_ids` now supports adding to groups **and** DMs.
+  - **DM → group auto-promotion**: adding any 3rd participant flips `type` from `"dm"` to `"group"` while preserving the entire message history.
+  - `remove_member_ids` is still group-only (DMs must be left via `POST /conversations/{cid}/leave`, or use `DELETE` if you created it).
+  - Frontend: new `AddMembersDialog` inside `ConversationSettings` on every chat (DM + group). Shows an amber "This will convert your DM into a group chat — history preserved" notice on DMs.
+- **Video meetings** (Jitsi Meet):
+  - New backend endpoint `POST /conversations/{cid}/video-meeting`. Generates a fresh `https://meet.jit.si/aop-{convslug}-{uuid-hex}` room per call (unique per launch so old links can't be reused), and posts it into the chat as a message with `kind="video_meeting"` and a `meeting` object (`url`, `room`, `started_by`, `started_by_name`, `started_at`).
+  - `message_out` now returns `kind` and `meeting` fields on every message (backwards compatible — legacy rows default `kind="text"`).
+  - Frontend: new **Video** icon in the thread header (`start-video-meeting-btn`). Clicking it (a) posts the meeting card to the chat via WebSocket so every member sees it in real time, (b) opens the Jitsi room in a new tab for the starter, and (c) toasts confirmation.
+  - Every video-meeting message renders as a **full-width actionable card** (`VideoMeetingCard`): header shows starter + timestamp, prominent red **Join meeting** button, "Powered by Jitsi · opens in new tab" footer. Non-text kinds bypass the standard bubble path so they visually stand out.
+- **Tests**: `tests/test_iteration104_chat_addmembers_video.py` — 6/6 pass. Covers add-to-group, DM auto-convert (with history preservation), DM remove-forbidden 400, meeting posts with correct URL shape, unique room per call, and 404 on non-member conversation.
+- **No new integrations required**: Jitsi Meet is free, self-hosted at meet.jit.si, no API key, no account. Works on any browser/device.
+
 ### Iteration 103 — RSVPs report includes walk-in check-ins (2026-02-26) [BUG FIX]
 User bug: "I created an event that has passed. I checked members in so I can track who went, but when I check in the admin reports → RSVPs → and filter by 'Event date', nothing comes up for the past event. I want the 'Checked In' count to work regardless of an RSVP."
 
