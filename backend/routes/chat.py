@@ -83,6 +83,9 @@ class ConversationUpdateIn(BaseModel):
     avatar_url: Optional[str] = None
     add_member_ids: Optional[List[str]] = None
     remove_member_ids: Optional[List[str]] = None
+    promote_ids: Optional[List[str]] = None
+    demote_ids: Optional[List[str]] = None
+    member_add_policy: Optional[Literal["admins_only", "anyone"]] = None
     ttl: Optional[Literal["off", "1h", "24h", "7d"]] = None
 
 
@@ -148,6 +151,8 @@ def register(
             "avatar_url": avatar,
             "members": member_briefs,
             "member_ids": c.get("member_ids", []),
+            "admin_ids": c.get("admin_ids", []),
+            "member_add_policy": c.get("member_add_policy", "admins_only"),
             "created_by": c.get("created_by"),
             "created_at": c.get("created_at"),
             "last_message_at": c.get("last_message_at"),
@@ -220,6 +225,8 @@ def register(
             "name": body.name,
             "avatar_url": body.avatar_url or "",
             "member_ids": members,
+            "admin_ids": [],  # creator is implicitly an admin; extras go here
+            "member_add_policy": "admins_only",
             "created_by": user["id"],
             "ttl": body.ttl or "off",
             "created_at": _now_iso(),
@@ -243,6 +250,17 @@ def register(
         c = await db.conversations.find_one({"id": cid, "member_ids": user["id"]})
         if not c:
             raise HTTPException(status_code=404, detail="Conversation not found")
+
+        # Role of the requester within this conversation. Site-admins are
+        # granted creator-level power everywhere so they can moderate any chat.
+        creator_id = c.get("created_by")
+        admin_ids = list(c.get("admin_ids", []) or [])
+        is_creator = user["id"] == creator_id or user.get("role") == "admin"
+        is_group_admin = is_creator or user["id"] in admin_ids
+        policy = c.get("member_add_policy", "admins_only")
+        is_dm = c.get("type") == "dm"
+        can_add_members = is_dm or is_group_admin or (policy == "anyone")
+
         sets: dict = {}
         if body.name is not None:
             sets["name"] = body.name
@@ -250,23 +268,78 @@ def register(
             sets["avatar_url"] = body.avatar_url
         if body.ttl is not None:
             sets["ttl"] = body.ttl
-        # Member changes: allow both group AND dm (dm auto-converts to group
-        # once a 3rd participant is added, keeping the full message history).
+        if body.member_add_policy is not None:
+            if is_dm:
+                raise HTTPException(status_code=400, detail="Policy applies to group chats only")
+            if not is_creator:
+                raise HTTPException(status_code=403, detail="Only the creator can change who may add members")
+            sets["member_add_policy"] = body.member_add_policy
+
+        # ---- Membership changes ----
         current_members = set(c.get("member_ids", []))
         new_members = set(current_members)
+        member_ids_dirty = False
         if body.add_member_ids:
+            if not can_add_members:
+                raise HTTPException(status_code=403, detail="Only group admins can add members to this chat")
+            before = set(new_members)
             new_members.update(body.add_member_ids)
+            if new_members != before:
+                member_ids_dirty = True
         if body.remove_member_ids:
-            if c.get("type") != "group":
+            if is_dm:
                 raise HTTPException(status_code=400, detail="Can't remove members from a DM — leave the chat instead")
+            if not is_group_admin:
+                raise HTTPException(status_code=403, detail="Only the creator or group admins can remove members")
+            if creator_id in body.remove_member_ids:
+                raise HTTPException(status_code=400, detail="The group creator can't be removed — they must delete the group instead")
+            before = set(new_members)
             for rid in body.remove_member_ids:
                 new_members.discard(rid)
-        new_members.add(user["id"])  # editor can't accidentally remove themselves
-        if new_members != current_members:
+                # If the removed member was a group-admin, also drop from admin_ids.
+                if rid in admin_ids:
+                    admin_ids.remove(rid)
+            if new_members != before:
+                member_ids_dirty = True
+        # The editor can never accidentally remove themselves via this endpoint.
+        new_members.add(user["id"])
+        if member_ids_dirty:
             sets["member_ids"] = list(new_members)
-            # DM → group auto-promotion when 3+ members are present.
-            if c.get("type") == "dm" and len(new_members) > 2:
+            # DM → group auto-promotion when a 3rd participant joins.
+            if is_dm and len(new_members) > 2:
                 sets["type"] = "group"
+                # First person to add is treated as the (still) creator — no
+                # extra bootstrap; other DM parties stay regular members.
+
+        # ---- Promote / demote (creator-only) ----
+        admin_ids_dirty = False
+        if body.promote_ids or body.demote_ids:
+            if is_dm:
+                raise HTTPException(status_code=400, detail="Only group chats have group admins")
+            if not is_creator:
+                raise HTTPException(status_code=403, detail="Only the creator can change group admins")
+            final_members = new_members if member_ids_dirty else current_members
+            if body.promote_ids:
+                for pid in body.promote_ids:
+                    if pid == creator_id:
+                        continue  # already implicit admin
+                    if pid not in final_members:
+                        raise HTTPException(status_code=400, detail="Can't promote a non-member — add them first")
+                    if pid not in admin_ids:
+                        admin_ids.append(pid)
+                        admin_ids_dirty = True
+            if body.demote_ids:
+                for did in body.demote_ids:
+                    if did == creator_id:
+                        raise HTTPException(status_code=400, detail="The creator can't be demoted")
+                    if did in admin_ids:
+                        admin_ids.remove(did)
+                        admin_ids_dirty = True
+
+        # Removed members who happened to be admins were already popped above.
+        if admin_ids_dirty or (member_ids_dirty and set(admin_ids) != set(c.get("admin_ids", []) or [])):
+            sets["admin_ids"] = admin_ids
+
         if sets:
             await db.conversations.update_one({"id": cid}, {"$set": sets})
         c2 = await db.conversations.find_one({"id": cid}, {"_id": 0})
@@ -286,7 +359,13 @@ def register(
             await db.conversations.delete_one({"id": cid})
             await db.messages.delete_many({"conversation_id": cid})
             return {"ok": True, "deleted": True}
-        await db.conversations.update_one({"id": cid}, {"$set": {"member_ids": new_members}})
+        # Drop leaver from admin_ids if they had that role.
+        sets = {"member_ids": new_members}
+        current_admins = list(c.get("admin_ids", []) or [])
+        if user["id"] in current_admins:
+            current_admins.remove(user["id"])
+            sets["admin_ids"] = current_admins
+        await db.conversations.update_one({"id": cid}, {"$set": sets})
         await chat_hub.push(c.get("member_ids", []), {"type": "conversation:member_left", "conversation_id": cid, "user_id": user["id"]})
         return {"ok": True}
 

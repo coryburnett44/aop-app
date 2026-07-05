@@ -964,12 +964,103 @@ function AddMembersDialog({ conversation, onAdded }) {
 
 
 
+/* ---------- One row in the settings members list ---------- */
+function MemberRow({ member, conversation, viewerId, canModerate, isCreator, onChanged }) {
+    const [busy, setBusy] = useState(false);
+    const isSelf = member.id === viewerId;
+    const isTheCreator = member.id === conversation.created_by;
+    const isGroupAdmin = (conversation.admin_ids || []).includes(member.id);
+    const isGroup = conversation.type === "group";
+
+    async function toggleAdmin() {
+        if (busy) return;
+        setBusy(true);
+        try {
+            const key = isGroupAdmin ? "demote_ids" : "promote_ids";
+            await api.put(`/conversations/${conversation.id}`, { [key]: [member.id] });
+            toast.success(isGroupAdmin ? `${member.name} is no longer an admin` : `${member.name} is now a group admin`);
+            onChanged();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Failed");
+        } finally { setBusy(false); }
+    }
+
+    async function removeFromGroup() {
+        if (busy) return;
+        if (!confirm(`Remove ${member.name} from this group?`)) return;
+        setBusy(true);
+        try {
+            await api.put(`/conversations/${conversation.id}`, { remove_member_ids: [member.id] });
+            toast.success(`${member.name} removed`);
+            onChanged();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Failed");
+        } finally { setBusy(false); }
+    }
+
+    return (
+        <div className="flex items-center gap-3 p-2 bg-slate-50 rounded-xl" data-testid={`chat-member-row-${member.id}`}>
+            <Avatar className="h-8 w-8">
+                {member.avatar_url && <AvatarImage src={member.avatar_url} />}
+                <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">
+                    {member.name?.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase()}
+                </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold truncate">{member.name}{isSelf && <span className="ml-1.5 text-[10px] text-slate-400">(you)</span>}</div>
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                    {isTheCreator && <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full text-white" style={{ backgroundColor: RED }} data-testid={`chat-member-creator-${member.id}`}>Creator</span>}
+                    {!isTheCreator && isGroupAdmin && <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800" data-testid={`chat-member-admin-${member.id}`}>Admin</span>}
+                </div>
+            </div>
+            {isGroup && !isSelf && !isTheCreator && (
+                <div className="flex items-center gap-1 shrink-0">
+                    {isCreator && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="rounded-full h-7 px-2 text-xs"
+                            onClick={toggleAdmin}
+                            disabled={busy}
+                            data-testid={`chat-member-toggle-admin-${member.id}`}
+                            title={isGroupAdmin ? "Remove admin role" : "Make group admin"}
+                        >
+                            {isGroupAdmin ? "Remove admin" : "Make admin"}
+                        </Button>
+                    )}
+                    {canModerate && (
+                        <button
+                            type="button"
+                            onClick={removeFromGroup}
+                            disabled={busy}
+                            className="text-slate-400 hover:text-destructive p-1 rounded"
+                            title="Remove from group"
+                            data-testid={`chat-member-remove-${member.id}`}
+                        >
+                            <X className="h-3.5 w-3.5" />
+                        </button>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function ConversationSettings({ conversation, onChanged }) {    const { user } = useAuth();
     const [open, setOpen] = useState(false);
     const [name, setName] = useState(conversation.raw_name || "");
     const isGroup = conversation.type === "group";
-    const isCreator = conversation.created_by === user.id;
+    const isDm = conversation.type === "dm";
+    // "Creator" here is the effective role — org-level admins moderate every chat.
+    const isCreator = conversation.created_by === user.id || user.role === "admin";
     const isAdmin = user.role === "admin";
+    const groupAdminIds = conversation.admin_ids || [];
+    const isGroupAdmin = isCreator || groupAdminIds.includes(user.id);
+    // Who can moderate the roster (add/remove).
+    const canModerate = isGroupAdmin;
+    const policy = conversation.member_add_policy || "admins_only";
+    // Who sees the "Add members" button in the sheet.
+    const canAdd = isDm || isGroupAdmin || (isGroup && policy === "anyone");
 
     useEffect(() => { setName(conversation.raw_name || ""); }, [conversation.id, conversation.raw_name]);
 
@@ -1041,20 +1132,49 @@ function ConversationSettings({ conversation, onChanged }) {    const { user } =
                     </div>
                     <div>
                         <Label className="text-xs">Members ({conversation.members?.length || 0})</Label>
-                        <div className="mt-2 space-y-1.5 max-h-56 overflow-y-auto">
+                        <div className="mt-2 space-y-1.5 max-h-72 overflow-y-auto" data-testid="chat-members-list">
                             {conversation.members?.map((m) => (
-                                <div key={m.id} className="flex items-center gap-3 p-2 bg-slate-50 rounded-xl">
-                                    <Avatar className="h-7 w-7">
-                                        {m.avatar_url && <AvatarImage src={m.avatar_url} />}
-                                        <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">{m.name?.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase()}</AvatarFallback>
-                                    </Avatar>
-                                    <div className="flex-1 text-sm">{m.name}{m.id === conversation.created_by && <span className="ml-2 text-[10px] uppercase tracking-wider font-bold" style={{ color: RED }}>Creator</span>}</div>
-                                </div>
+                                <MemberRow
+                                    key={m.id}
+                                    member={m}
+                                    conversation={conversation}
+                                    viewerId={user.id}
+                                    canModerate={canModerate}
+                                    isCreator={isCreator}
+                                    onChanged={onChanged}
+                                />
                             ))}
                         </div>
-                        <div className="mt-2">
-                            <AddMembersDialog conversation={conversation} onAdded={() => { setOpen(false); onChanged(); }} />
-                        </div>
+                        {isGroup && isCreator && (
+                            <div className="mt-3 flex items-center justify-between gap-3 bg-slate-50 rounded-xl p-3" data-testid="member-add-policy">
+                                <div className="text-xs flex-1">
+                                    <div className="font-semibold text-slate-700">Who can add members?</div>
+                                    <div className="text-slate-500 mt-0.5">Creator and admins can always add. Turn this on to let everyone in the group invite too.</div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        const next = policy === "anyone" ? "admins_only" : "anyone";
+                                        try {
+                                            await api.put(`/conversations/${conversation.id}`, { member_add_policy: next });
+                                            toast.success(next === "anyone" ? "Anyone can add members now" : "Only admins can add members");
+                                            onChanged();
+                                        } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+                                    }}
+                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${policy === "anyone" ? "bg-primary" : "bg-slate-300"}`}
+                                    data-testid="member-add-policy-toggle"
+                                    aria-checked={policy === "anyone"}
+                                    role="switch"
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${policy === "anyone" ? "translate-x-6" : "translate-x-1"}`} />
+                                </button>
+                            </div>
+                        )}
+                        {canAdd && (
+                            <div className="mt-2">
+                                <AddMembersDialog conversation={conversation} onAdded={() => { setOpen(false); onChanged(); }} />
+                            </div>
+                        )}
                     </div>
                     <div className="flex gap-2 pt-2 border-t">
                         {isGroup && (

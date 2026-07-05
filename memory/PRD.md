@@ -15,6 +15,25 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 105 — Chat group admins + creator-controlled add-members policy (2026-02-27) [FEATURE]
+User request: "Allow creator of group to make members admins in the group chat, and allow the creator and admins to add and remove members from the groups." + "Also allow creator to choose whether regular members can add members to a group."
+
+- **Backend (`routes/chat.py`)**:
+  - Every group conversation now stores `admin_ids: List[str]` (creator is *implicit*, extras go here) and `member_add_policy: "admins_only" | "anyone"` (default `admins_only`).
+  - `ConversationUpdateIn` gains `promote_ids`, `demote_ids`, `member_add_policy`.
+  - `update_conversation` permission matrix:
+    - **Creator (or site-admin)**: full control — rename, promote/demote, add/remove, toggle policy.
+    - **Group-admins** (in `admin_ids`): add + remove members, but cannot promote/demote or toggle policy.
+    - **Regular members**: cannot add unless `member_add_policy=="anyone"`; cannot remove.
+    - **DM special case**: any DM party can add — that call auto-promotes the chat to a group (existing iter104 behavior preserved).
+  - Guardrails: creator can't be demoted or removed; only members can be promoted (400 otherwise); removing a group-admin auto-strips them from `admin_ids`; leaving a group as a group-admin auto-strips as well.
+  - `conversation_out` returns the new `admin_ids` + `member_add_policy` for the frontend to render badges + toggle.
+- **Frontend (`pages/Chat.jsx`)**:
+  - New `MemberRow` component: shows **Creator** pill (red) or **Admin** pill (amber) per member; creator sees a **Make admin / Remove admin** button per non-creator, non-self member; creator + group-admins see a small **X** to remove.
+  - Creator-only "Who can add members?" toggle inline in settings — flips `member_add_policy` between `admins_only` and `anyone` with toast confirmation.
+  - `AddMembersDialog` button is now gated: visible on DMs, and on groups only when the viewer is creator/admin OR the policy is `anyone`.
+- **Tests**: `tests/test_iteration105_chat_group_admins.py` — 13/13 pass. Full matrix covered including site-admin-added-then-moderates flow. iter104 regression: 6/6 green.
+
 ### Iteration 104 — Chat: add members mid-thread + video meetings via Jitsi (2026-02-27) [FEATURE]
 User request (choices 1c, 2a, 3c): "Allow members to be added to a chat and groups after the chat messages have already began. Allow video meeting in the chat."
 
