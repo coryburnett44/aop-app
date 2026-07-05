@@ -126,6 +126,7 @@ export default function Chat() {
     if (!user) return null;
     return (
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-10 py-6">
+            <VideoMeetingModal />
             <div className="grid lg:grid-cols-[320px_1fr] gap-4 h-[calc(100vh-180px)] min-h-[600px]">
                 <aside className={`bg-white rounded-3xl border-2 shadow-warm overflow-hidden flex flex-col ${active ? "hidden lg:flex" : "flex"}`} style={{ borderColor: `${NAVY}20` }} data-testid="chat-sidebar">
                     <div className="px-5 py-4 border-b flex items-center justify-between">
@@ -770,6 +771,69 @@ function NewChatDialog({ onCreated }) {
     );
 }
 
+/* ---------- Embedded Jitsi meeting modal ---------- */
+// Global controller so any component can trigger the same modal from a
+// simple hook — avoids threading state through props for every join button.
+let _openMeetingModalFn = null;
+function openMeetingModal(meeting) {
+    if (_openMeetingModalFn) _openMeetingModalFn(meeting);
+}
+
+function VideoMeetingModal() {
+    const [meeting, setMeeting] = useState(null);
+    useEffect(() => {
+        _openMeetingModalFn = (m) => setMeeting(m);
+        return () => { _openMeetingModalFn = null; };
+    }, []);
+    // Constrain the Jitsi URL with query params that skip Jitsi's own
+    // pre-join screen and disable the mobile-app deep-link banner.
+    const src = meeting?.url ? `${meeting.url}#config.prejoinPageEnabled=false&config.disableDeepLinking=true` : "";
+    return (
+        <Dialog open={!!meeting} onOpenChange={(o) => !o && setMeeting(null)}>
+            <DialogContent
+                className="p-0 gap-0 max-w-[100vw] w-[100vw] h-[100vh] sm:max-w-5xl sm:w-[95vw] sm:h-[85vh] sm:rounded-2xl flex flex-col overflow-hidden"
+                data-testid="video-meeting-modal"
+            >
+                <div className="flex items-center gap-3 px-4 py-3 border-b bg-white shrink-0">
+                    <div className="h-8 w-8 rounded-full grid place-items-center shrink-0" style={{ backgroundColor: NAVY, color: "#fff" }}>
+                        <Video className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="font-heading font-bold text-sm truncate" style={{ color: NAVY }}>Video meeting</div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-400 truncate">Powered by Jitsi · {meeting?.room}</div>
+                    </div>
+                    <a
+                        href={meeting?.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-slate-500 hover:text-slate-800 underline hidden sm:inline"
+                        data-testid="video-meeting-open-tab"
+                    >Open in new tab</a>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full"
+                        onClick={() => setMeeting(null)}
+                        data-testid="video-meeting-leave-btn"
+                    >
+                        <X className="h-3.5 w-3.5 mr-1" /> Leave
+                    </Button>
+                </div>
+                {meeting && (
+                    <iframe
+                        title="Video meeting"
+                        src={src}
+                        // Full A/V + screen-share permissions delegated to Jitsi.
+                        allow="camera; microphone; fullscreen; display-capture; autoplay; clipboard-write"
+                        className="flex-1 w-full border-0"
+                        data-testid="video-meeting-iframe"
+                    />
+                )}
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 /* ---------- Video meeting card (rendered inline in the thread) ---------- */
 function VideoMeetingCard({ message, mine }) {
     const meeting = message.meeting || {};
@@ -787,17 +851,16 @@ function VideoMeetingCard({ message, mine }) {
                         <div className="text-xs text-slate-500 truncate">{mine ? "You" : starterName} · {startedAt}</div>
                     </div>
                 </div>
-                <a
-                    href={meeting.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 w-full rounded-full py-2.5 text-sm font-bold text-white transition-colors"
+                <button
+                    type="button"
+                    onClick={() => openMeetingModal(meeting)}
+                    className="flex items-center justify-center gap-2 w-full rounded-full py-2.5 text-sm font-bold text-white transition-colors hover:opacity-90"
                     style={{ backgroundColor: RED }}
                     data-testid={`join-meeting-${message.id}`}
                 >
                     <Video className="h-4 w-4" /> Join meeting
-                </a>
-                <div className="text-[10px] uppercase tracking-wider text-slate-400 text-center mt-2">Powered by Jitsi · opens in new tab</div>
+                </button>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400 text-center mt-2">Powered by Jitsi · opens in-app</div>
             </div>
         </div>
     );
@@ -811,10 +874,9 @@ function StartVideoMeetingButton({ conversation }) {
         setBusy(true);
         try {
             const { data } = await api.post(`/conversations/${conversation.id}/video-meeting`);
-            const url = data?.meeting?.url;
             toast.success("Video meeting started — link posted in the chat");
-            // Open the room in a new tab so the initiator lands directly in.
-            if (url) window.open(url, "_blank", "noopener,noreferrer");
+            // Land the initiator directly into the embedded modal.
+            if (data?.meeting) openMeetingModal(data.meeting);
         } catch (e) {
             toast.error(e.response?.data?.detail || "Couldn't start meeting");
         } finally {

@@ -15,6 +15,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 106 — Chat: embedded Jitsi video modal (2026-02-27) [ENHANCEMENT]
+User request: "want an in-app embedded Jitsi player (iframe modal) instead of a new-tab redirect."
+
+- **Change**: replaced the "opens in new tab" flow (iter104) with a fullscreen in-app modal driven by a global controller. Now clicking **Start video meeting** or **Join meeting** opens the same `<Dialog>` — no context switch, still on the AOP site.
+- **`VideoMeetingModal`** (`pages/Chat.jsx`):
+  - Mounted once at the Chat page root so any component can trigger it via `openMeetingModal(meeting)` (avoids prop-drilling).
+  - Iframe loads `${meeting.url}#config.prejoinPageEnabled=false&config.disableDeepLinking=true` — skips Jitsi's pre-join screen and suppresses the mobile-app deep-link banner.
+  - `allow="camera; microphone; fullscreen; display-capture; autoplay; clipboard-write"` delegates full A/V + screen-share capability to Jitsi.
+  - Header: room label + **Open in new tab** escape hatch (desktop only) + **Leave** button. Sizing: full-viewport on mobile, ~85vh × 5xl on desktop with rounded corners.
+- **`VideoMeetingCard` / `StartVideoMeetingButton`**: `Join meeting` is now a `<button>` calling `openMeetingModal(meeting)`; starter flow also opens the modal in-place (no `window.open`). Card footer copy updated to "Powered by Jitsi · opens in-app".
+- **No new backend changes**: same `POST /conversations/{cid}/video-meeting` endpoint from iter104 — iframes just consume the URL it already returns.
+- **Regression**: iter104 (6/6) + iter105 (13/13) still green. Playwright smoke confirmed modal opens, iframe loads Jitsi with correct permissions, and Leave closes cleanly.
+
 ### Iteration 105 — Chat group admins + creator-controlled add-members policy (2026-02-27) [FEATURE]
 User request: "Allow creator of group to make members admins in the group chat, and allow the creator and admins to add and remove members from the groups." + "Also allow creator to choose whether regular members can add members to a group."
 
