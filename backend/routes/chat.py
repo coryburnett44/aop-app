@@ -487,6 +487,15 @@ def register(
         return {"ok": True}
 
     # ---------- Video meetings (Jitsi Meet — free, no key required) ----------
+    # A participant is considered "active" if their `last_seen_at` heartbeat
+    # is within this window. Chosen to be 2× the client's 15s polling cadence.
+    MEETING_ACTIVE_WINDOW_SECONDS = 30
+    # A meeting is "over" once someone has joined AND no participants are
+    # currently active. Cards use this flag to stop their 15s poller.
+
+    def _meeting_over(any_ever_joined: bool, active_count: int) -> bool:
+        return any_ever_joined and active_count == 0
+
     @api.post("/conversations/{cid}/video-meeting")
     async def start_video_meeting(cid: str, user: dict = Depends(get_current_user)):
         """Generate a fresh Jitsi room URL and post it as a system-flavored
@@ -538,6 +547,78 @@ def register(
         except Exception as e:
             logger.warning(f"queue_chat_notifications (video) failed: {e}")
         return payload
+
+    async def _meeting_participants_summary(meeting_id: str) -> dict:
+        """Compute {active, count, is_over} for a meeting. Active window is
+        {MEETING_ACTIVE_WINDOW_SECONDS}s (2× the client's 15s poll)."""
+        from datetime import timedelta
+        now = now_utc()
+        cutoff = iso(now - timedelta(seconds=MEETING_ACTIVE_WINDOW_SECONDS))
+        active_cursor = db.meeting_participants.find(
+            {
+                "meeting_id": meeting_id,
+                "left_at": None,
+                "last_seen_at": {"$gte": cutoff},
+            },
+            {"_id": 0, "user_id": 1, "user_name": 1, "avatar_url": 1, "last_seen_at": 1, "joined_at": 1},
+        ).sort("joined_at", 1)
+        active = [p async for p in active_cursor]
+        any_ever = await db.meeting_participants.count_documents({"meeting_id": meeting_id}) > 0
+        return {
+            "meeting_id": meeting_id,
+            "active": active,
+            "count": len(active),
+            "is_over": _meeting_over(any_ever, len(active)),
+            "any_ever_joined": any_ever,
+        }
+
+    async def _ensure_can_view_meeting(mid: str, user: dict) -> tuple[dict, dict]:
+        m = await db.messages.find_one({"id": mid, "kind": "video_meeting"}, {"_id": 0})
+        if not m:
+            raise HTTPException(status_code=404, detail="Meeting message not found")
+        c = await db.conversations.find_one({"id": m["conversation_id"], "member_ids": user["id"]})
+        if not c:
+            raise HTTPException(status_code=404, detail="Meeting message not found")
+        return m, c
+
+    @api.post("/meetings/{mid}/heartbeat")
+    async def meeting_heartbeat(mid: str, left: bool = False, user: dict = Depends(get_current_user)):
+        """Called by the client every 15s while the meeting modal is open,
+        and once with `left=true` when the user closes/leaves."""
+        m, _c = await _ensure_can_view_meeting(mid, user)
+        now = _now_iso()
+        set_doc = {
+            "meeting_id": mid,
+            "conversation_id": m["conversation_id"],
+            "user_id": user["id"],
+            "user_name": user.get("name", ""),
+            "avatar_url": user.get("avatar_url", ""),
+            "last_seen_at": now,
+            "left_at": now if left else None,
+        }
+        # Upsert: `joined_at` set only on first insert; subsequent heartbeats
+        # only refresh last_seen_at / left_at.
+        await db.meeting_participants.update_one(
+            {"meeting_id": mid, "user_id": user["id"]},
+            {"$set": set_doc, "$setOnInsert": {"id": str(uuid.uuid4()), "joined_at": now}},
+            upsert=True,
+        )
+        summary = await _meeting_participants_summary(mid)
+        # Broadcast so other members' cards update near-instantly (in addition
+        # to their own 15s poll) — cheap because it only fires on join/leave.
+        try:
+            await chat_hub.push(
+                (await db.conversations.find_one({"id": m["conversation_id"]}, {"_id": 0, "member_ids": 1})).get("member_ids", []),
+                {"type": "meeting:update", "conversation_id": m["conversation_id"], "summary": summary},
+            )
+        except Exception as e:
+            logger.warning(f"meeting:update push failed: {e}")
+        return summary
+
+    @api.get("/meetings/{mid}/participants")
+    async def meeting_participants(mid: str, user: dict = Depends(get_current_user)):
+        await _ensure_can_view_meeting(mid, user)
+        return await _meeting_participants_summary(mid)
 
     # ---------- File uploads ----------
     @api.post("/chat/upload")

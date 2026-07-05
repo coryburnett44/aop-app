@@ -15,6 +15,26 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 107 — Video meeting live participant indicator (2026-02-27) [ENHANCEMENT]
+User request: "show an indicator who's in the meeting. But when the meeting is over, stop the 15 second updates."
+
+- **Backend (`routes/chat.py`)**:
+  - New `db.meeting_participants` collection: `{meeting_id, conversation_id, user_id, user_name, avatar_url, joined_at, last_seen_at, left_at}`. Composite upsert on `(meeting_id, user_id)`.
+  - `POST /meetings/{mid}/heartbeat` (optional `?left=true`) upserts the record and refreshes `last_seen_at`.
+  - `GET /meetings/{mid}/participants` returns `{active, count, is_over, any_ever_joined, meeting_id}`. "Active" = `last_seen_at` within 30s (2× the client's 15s cadence) AND `left_at is null`. `is_over = any_ever_joined AND count == 0`.
+  - Both endpoints enforce membership on the parent conversation (outsiders get 404).
+  - Every heartbeat pushes a `meeting:update` event over the existing WebSocket so cards refresh near-instantly for other members (in addition to their own polling fallback).
+- **Frontend (`pages/Chat.jsx`)**:
+  - `VideoMeetingCard` polls `/meetings/{id}/participants` every 15s and renders:
+    - Up to 4 stacked avatars + "+N more" overflow chip when >4 participants are live
+    - A pulsing red "live" dot when count > 0
+    - Status text: "N in meeting" / "Waiting for members to join" / "Meeting ended"
+    - Button state: green **Start / join** when 0 live, red **Join meeting** when live, greyed **Meeting ended** disabled state when `is_over`.
+  - **Polling stops** the moment `is_over === true` — `useEffect` short-circuits and the interval is cleared. Reload/subscription needs no re-render since the state persists.
+  - `VideoMeetingModal` sends its own heartbeat every 15s while open + a `left=true` heartbeat on close so is_over flips promptly (no 30s stale-timeout wait).
+  - Top-level `Chat` component forwards the WebSocket `meeting:update` event to a global `chat:meeting_update` browser event; cards react to it for instant updates.
+- **Tests**: `tests/test_iteration107_meeting_participants.py` — 7/7 pass. Covers empty→heartbeat→multi-user→everyone-leaves→is_over transition + outsider 404s + missing-meeting 404. Regression: iter104 (6) + iter105 (13) + iter107 (7) = 26/26 green after the retest run.
+
 ### Iteration 106 — Chat: embedded Jitsi video modal (2026-02-27) [ENHANCEMENT]
 User request: "want an in-app embedded Jitsi player (iframe modal) instead of a new-tab redirect."
 

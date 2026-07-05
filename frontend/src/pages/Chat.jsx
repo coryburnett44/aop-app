@@ -116,6 +116,9 @@ export default function Chat() {
         } else if (msg.type === "conversation:deleted") {
             setConversations((prev) => prev.filter((c) => c.id !== msg.conversation_id));
             if (active?.id === msg.conversation_id) navigate("/chat");
+        } else if (msg.type === "meeting:update") {
+            // Live-refresh any meeting card whose id matches summary.meeting_id.
+            window.dispatchEvent(new CustomEvent("chat:meeting_update", { detail: { summary: msg.summary } }));
         }
     }
 
@@ -775,21 +778,37 @@ function NewChatDialog({ onCreated }) {
 // Global controller so any component can trigger the same modal from a
 // simple hook — avoids threading state through props for every join button.
 let _openMeetingModalFn = null;
-function openMeetingModal(meeting) {
-    if (_openMeetingModalFn) _openMeetingModalFn(meeting);
+function openMeetingModal(meeting, messageId) {
+    if (_openMeetingModalFn) _openMeetingModalFn({ meeting, messageId });
 }
 
 function VideoMeetingModal() {
-    const [meeting, setMeeting] = useState(null);
+    const [state, setState] = useState(null); // { meeting, messageId }
     useEffect(() => {
-        _openMeetingModalFn = (m) => setMeeting(m);
+        _openMeetingModalFn = (s) => setState(s);
         return () => { _openMeetingModalFn = null; };
     }, []);
-    // Constrain the Jitsi URL with query params that skip Jitsi's own
-    // pre-join screen and disable the mobile-app deep-link banner.
+
+    // While the modal is open, ping the backend every 15s so other members'
+    // cards know we're still in the meeting. On close, one final `left=true`
+    // heartbeat tells the world we've left immediately (no 30s delay).
+    useEffect(() => {
+        if (!state?.messageId) return;
+        const mid = state.messageId;
+        // Emit one immediate heartbeat then cadence at 15s.
+        const beat = () => api.post(`/meetings/${mid}/heartbeat`).catch(() => {});
+        beat();
+        const t = setInterval(beat, 15000);
+        return () => {
+            clearInterval(t);
+            api.post(`/meetings/${mid}/heartbeat?left=true`).catch(() => {});
+        };
+    }, [state?.messageId]);
+
+    const meeting = state?.meeting || null;
     const src = meeting?.url ? `${meeting.url}#config.prejoinPageEnabled=false&config.disableDeepLinking=true` : "";
     return (
-        <Dialog open={!!meeting} onOpenChange={(o) => !o && setMeeting(null)}>
+        <Dialog open={!!meeting} onOpenChange={(o) => !o && setState(null)}>
             <DialogContent
                 className="p-0 gap-0 max-w-[100vw] w-[100vw] h-[100vh] sm:max-w-5xl sm:w-[95vw] sm:h-[85vh] sm:rounded-2xl flex flex-col overflow-hidden"
                 data-testid="video-meeting-modal"
@@ -813,7 +832,7 @@ function VideoMeetingModal() {
                         variant="outline"
                         size="sm"
                         className="rounded-full"
-                        onClick={() => setMeeting(null)}
+                        onClick={() => setState(null)}
                         data-testid="video-meeting-leave-btn"
                     >
                         <X className="h-3.5 w-3.5 mr-1" /> Leave
@@ -839,6 +858,42 @@ function VideoMeetingCard({ message, mine }) {
     const meeting = message.meeting || {};
     const starterName = meeting.started_by_name || message.sender_name || "Someone";
     const startedAt = message.created_at ? format(parseISO(message.created_at), "MMM d, h:mm a") : "";
+
+    // Poll `/meetings/{id}/participants` every 15s to render the "N in
+    // meeting" indicator. Stops polling once the meeting reports is_over so
+    // stale cards don't hammer the API forever.
+    const [summary, setSummary] = useState(null);
+    const stopped = summary?.is_over === true;
+    useEffect(() => {
+        if (stopped) return;
+        let alive = true;
+        async function tick() {
+            try {
+                const { data } = await api.get(`/meetings/${message.id}/participants`);
+                if (alive) setSummary(data);
+            } catch { /* silent — 404s can happen if the message is deleted */ }
+        }
+        tick();
+        const t = setInterval(tick, 15000);
+        // React to real-time push events from other members' heartbeats.
+        function onPush(e) {
+            const s = e.detail?.summary;
+            if (s?.meeting_id === message.id) setSummary(s);
+        }
+        window.addEventListener("chat:meeting_update", onPush);
+        return () => { alive = false; clearInterval(t); window.removeEventListener("chat:meeting_update", onPush); };
+    }, [message.id, stopped]);
+
+    const activeCount = summary?.count || 0;
+    const active = summary?.active || [];
+    const visibleAvatars = active.slice(0, 4);
+    const overflow = Math.max(0, activeCount - visibleAvatars.length);
+
+    let statusLabel;
+    if (summary?.is_over) statusLabel = "Meeting ended";
+    else if (activeCount === 0) statusLabel = summary?.any_ever_joined ? "No one in the meeting" : "Waiting for members to join";
+    else statusLabel = `${activeCount} in meeting`;
+
     return (
         <div className="my-3 flex justify-center" data-testid={`video-meeting-card-${message.id}`}>
             <div className="w-full max-w-md rounded-2xl border-2 p-4 shadow-sm bg-gradient-to-br from-indigo-50 to-white" style={{ borderColor: NAVY }}>
@@ -851,15 +906,48 @@ function VideoMeetingCard({ message, mine }) {
                         <div className="text-xs text-slate-500 truncate">{mine ? "You" : starterName} · {startedAt}</div>
                     </div>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => openMeetingModal(meeting)}
-                    className="flex items-center justify-center gap-2 w-full rounded-full py-2.5 text-sm font-bold text-white transition-colors hover:opacity-90"
-                    style={{ backgroundColor: RED }}
-                    data-testid={`join-meeting-${message.id}`}
-                >
-                    <Video className="h-4 w-4" /> Join meeting
-                </button>
+
+                {/* Live participant indicator */}
+                <div className="flex items-center gap-2 mb-3 min-h-[26px]" data-testid={`video-meeting-participants-${message.id}`}>
+                    {activeCount > 0 && (
+                        <>
+                            <div className="flex -space-x-2">
+                                {visibleAvatars.map((p) => (
+                                    <Avatar key={p.user_id} className="h-6 w-6 border-2 border-white" title={p.user_name}>
+                                        {p.avatar_url && <AvatarImage src={p.avatar_url} />}
+                                        <AvatarFallback className="bg-primary/15 text-primary text-[9px] font-bold">
+                                            {(p.user_name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase()}
+                                        </AvatarFallback>
+                                    </Avatar>
+                                ))}
+                                {overflow > 0 && (
+                                    <div className="h-6 w-6 rounded-full grid place-items-center bg-slate-200 border-2 border-white text-[9px] font-bold text-slate-600">+{overflow}</div>
+                                )}
+                            </div>
+                            <span className="relative inline-flex h-2 w-2 shrink-0" data-testid={`video-meeting-live-dot-${message.id}`}>
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: RED }} />
+                                <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: RED }} />
+                            </span>
+                        </>
+                    )}
+                    <span className={`text-xs font-semibold ${summary?.is_over ? "text-slate-400" : "text-slate-600"}`}>{statusLabel}</span>
+                </div>
+
+                {summary?.is_over ? (
+                    <div className="w-full rounded-full py-2.5 text-sm font-bold text-slate-400 text-center bg-slate-100" data-testid={`meeting-ended-${message.id}`}>
+                        Meeting ended
+                    </div>
+                ) : (
+                    <button
+                        type="button"
+                        onClick={() => openMeetingModal(meeting, message.id)}
+                        className="flex items-center justify-center gap-2 w-full rounded-full py-2.5 text-sm font-bold text-white transition-colors hover:opacity-90"
+                        style={{ backgroundColor: RED }}
+                        data-testid={`join-meeting-${message.id}`}
+                    >
+                        <Video className="h-4 w-4" /> {activeCount > 0 ? "Join meeting" : "Start / join"}
+                    </button>
+                )}
                 <div className="text-[10px] uppercase tracking-wider text-slate-400 text-center mt-2">Powered by Jitsi · opens in-app</div>
             </div>
         </div>
@@ -876,7 +964,7 @@ function StartVideoMeetingButton({ conversation }) {
             const { data } = await api.post(`/conversations/${conversation.id}/video-meeting`);
             toast.success("Video meeting started — link posted in the chat");
             // Land the initiator directly into the embedded modal.
-            if (data?.meeting) openMeetingModal(data.meeting);
+            if (data?.meeting) openMeetingModal(data.meeting, data.id);
         } catch (e) {
             toast.error(e.response?.data?.detail || "Couldn't start meeting");
         } finally {
