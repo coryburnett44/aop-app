@@ -381,24 +381,20 @@ def register(
 
         # ---- Fundraising (completed donations) ----
         donors_by_user: dict = {}
-        donors_by_chapter_users: dict = {}
+        donations_amount_by_chapter: dict = {}
         async for t in db.transactions.find(
             {"status": "completed", "type": "donation",
              "created_at": {"$gte": year_start, "$lte": year_end}},
             {"_id": 0, "user_id": 1, "amount": 1},
         ):
             uid = t.get("user_id")
-            if not uid:
-                continue
             amt = float(t.get("amount") or 0)
-            donors_by_user[uid] = donors_by_user.get(uid, 0.0) + amt
-
-        # Distinct donor count per chapter (each unique user counts once).
-        for uid in donors_by_user:
-            u = users_map.get(uid) or {}
-            cid = u.get("chapter_id")
-            if cid:
-                donors_by_chapter_users.setdefault(cid, set()).add(uid)
+            if uid:
+                donors_by_user[uid] = donors_by_user.get(uid, 0.0) + amt
+                u = users_map.get(uid) or {}
+                cid = u.get("chapter_id")
+                if cid:
+                    donations_amount_by_chapter[cid] = donations_amount_by_chapter.get(cid, 0.0) + amt
 
         # ---- Recruits per user ----
         recruits_by_user: dict = {}
@@ -560,18 +556,18 @@ def register(
         for cid, cname in chapters_map.items():
             recs = recruits_by_chapter.get(cid, 0)
             hrs = hours_by_chapter.get(cid, 0.0)
-            donors = len(donors_by_chapter_users.get(cid, set()))
+            donation_amount = donations_amount_by_chapter.get(cid, 0.0)
             checkins = checkins_by_chapter.get(cid, 0)
             member_count = chapter_member_counts.get(cid, 0)
             # Denominator = members BEFORE the year's recruits were added.
             base_members = max(1, member_count - recs)
-            score = (recs + hrs + donors + checkins) / base_members
+            score = (recs + hrs + donation_amount + checkins) / base_members
             chapter_of_the_year.append({
                 "chapter_id": cid,
                 "chapter_name": cname,
                 "recruits": recs,
                 "hours": round(hrs, 2),
-                "donors": donors,
+                "donation_amount": round(donation_amount, 2),
                 "checkins": checkins,
                 "base_members": base_members,
                 "score": round(score, 2),

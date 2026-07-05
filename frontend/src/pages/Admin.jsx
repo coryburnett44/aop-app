@@ -2507,7 +2507,7 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                         <div className="flex items-center justify-between mb-3">
                             <div>
                                 <div className="font-heading font-semibold text-lg">Chapter of the Year</div>
-                                <div className="text-xs text-muted-foreground">Score = (recruits + hours + donors + checkins) ÷ (members before recruits).</div>
+                                <div className="text-xs text-muted-foreground">Score = (recruits + hours + donation $ + checkins) ÷ (members before recruits).</div>
                             </div>
                         </div>
                         {data.chapter_of_the_year?.length ? (
@@ -2519,7 +2519,7 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                                             <th>Score</th>
                                             <th>Recruits</th>
                                             <th>Hours</th>
-                                            <th>Donors</th>
+                                            <th>Donations</th>
                                             <th>Check-ins</th>
                                             <th>Base members</th>
                                         </tr>
@@ -2531,7 +2531,7 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                                                 <td>{c.score}</td>
                                                 <td>{c.recruits}</td>
                                                 <td>{c.hours}</td>
-                                                <td>{c.donors}</td>
+                                                <td>${Number(c.donation_amount || 0).toLocaleString()}</td>
                                                 <td>{c.checkins}</td>
                                                 <td>{c.base_members}</td>
                                             </tr>
