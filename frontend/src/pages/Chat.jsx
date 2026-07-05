@@ -34,7 +34,7 @@ function ttlLabel(v) {
     return TTL_OPTIONS.find((o) => o.value === v)?.label || "Off";
 }
 
-function chatWsUrl() {
+export function chatWsUrl() {
     const base = process.env.REACT_APP_BACKEND_URL || "";
     return base.replace(/^http/, "ws") + "/api/ws/chat";
 }

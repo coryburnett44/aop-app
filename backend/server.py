@@ -3351,6 +3351,8 @@ routes_chat.register(
     put_object=put_object,
     image_ext=IMAGE_EXT,
     mime_by_ext=MIME_BY_EXT,
+    send_bulk_email=send_bulk_email,
+    frontend_url=(os.environ.get("FRONTEND_URL", "") or "").rstrip("/"),
     logger=logger,
 )
 routes_donations.register(

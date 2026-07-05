@@ -38,6 +38,7 @@ import SetPassword from "./pages/SetPassword";
 import Unsubscribed from "./pages/Unsubscribed";
 import { SiteSettingsProvider } from "./context/SiteSettingsContext";
 import PageActivityTracker from "./components/PageActivityTracker";
+import GlobalChatNotifier from "./components/GlobalChatNotifier";
 
 function App() {
     return (
@@ -45,6 +46,7 @@ function App() {
             <SiteSettingsProvider>
                 <BrowserRouter>
                 <PageActivityTracker />
+                <GlobalChatNotifier />
                 <div className="min-h-screen flex flex-col">
                     <Navbar />
                     <main className="flex-1">

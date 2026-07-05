@@ -15,6 +15,20 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 109 — Immediate video-meeting notifications (email + toast + chime + bell) (2026-02-27) [FEATURE]
+User request: "When a member opens a video chat, can members receive notification by email immediately + ping?" (Clarified: Email + Toast + Chime + Bell.)
+
+- **Backend (`routes/chat.py::start_video_meeting`)**:
+  - Sends an immediate transactional email (via `send_bulk_email`, tag=`video_meeting`) to every OTHER conversation member (skips starter, skips opt-outs). Subject: "📹 {starter} started a video meeting in {conv_name}". Body includes a "Join the meeting" CTA linking to the Jitsi URL.
+  - Broadcasts a dedicated `meeting:notify` WebSocket event `{ type, conversation_id, conversation_name, meeting_url, started_by_id, started_by_name, message_id }` — sent to every non-starter member on any page (not just `/chat`).
+- **Frontend (`components/GlobalChatNotifier.jsx`)** — mounted once at the app root in `App.js` for authenticated users:
+  - Opens a persistent WebSocket to `chatWsUrl()` and auto-reconnects with a 3s backoff on close.
+  - On `meeting:notify`: (1) shows a sonner `toast.custom` card with `data-testid="meeting-notify-toast"` including "Open chat" + "Join" buttons, (2) plays a short embedded WAV chime (autoplay-blocked-safe), (3) dispatches an `aop:meeting_ping` window CustomEvent so any bell/badge listener can increment, (4) fires a browser `Notification` when permission was previously granted.
+  - Requests `Notification.requestPermission()` once per session on mount.
+- **Tests**: `tests/test_iteration109_video_meeting_notify.py` — 3/3 pass (start-meeting fans out email, `last_message_preview` reflects the meeting, and opt-out members are silently skipped without breaking the endpoint).
+- **Frontend UI verified**: end-to-end screenshot flow confirmed that a jordan session logged into `/` sees the toast fire when maya starts a meeting (`meeting-notify-toast`, `meeting-notify-open-chat`, `meeting-notify-join` all present).
+
+
 ### Iteration 108 — Email composer: CTA buttons, linked images, dividers, merge tags (2026-02-27) [FEATURE]
 User request: "In the admin email, allow admins to add buttons with embedded links. Allow adding photos / images with embedded links. Allow other cool things to make it easier and simpler to send emails."
 

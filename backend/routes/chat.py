@@ -113,6 +113,8 @@ def register(
     put_object,
     image_ext,
     mime_by_ext,
+    send_bulk_email,
+    frontend_url,
     logger,
 ):
     """Wire chat REST + WebSocket endpoints onto the supplied `api` router /
@@ -541,12 +543,111 @@ def register(
             {"$set": {"last_message_at": now_iso, "last_message_preview": preview[:140], f"read_state.{user['id']}": now_iso}},
         )
         payload = message_out(doc, user["id"])
-        await chat_hub.push(c.get("member_ids", []), {"type": "message:new", "message": payload})
+        member_ids = c.get("member_ids", []) or []
+        await chat_hub.push(member_ids, {"type": "message:new", "message": payload})
+
+        # Immediate video-meeting fan-out: bypasses the 15-min digest debounce
+        # so members are notified the moment the meeting starts. Sends a
+        # dedicated `meeting:notify` WebSocket event and a transactional email
+        # (both — the app handles anti-spam by only firing per meeting start).
+        conv_name = c.get("name") or await _pretty_conv_name_for(c, user["id"])
+        starter_name = user.get("name", "Someone")
+        notify_payload = {
+            "type": "meeting:notify",
+            "conversation_id": cid,
+            "conversation_name": conv_name,
+            "message_id": doc["id"],
+            "started_by_name": starter_name,
+            "started_by_id": user["id"],
+            "meeting_url": meeting_url,
+        }
+        # Push to everyone except the starter so they don't ping themselves.
+        recipients_push = [uid for uid in member_ids if uid != user["id"]]
         try:
-            await queue_chat_notifications(c, doc, user)
+            await chat_hub.push(recipients_push, notify_payload)
         except Exception as e:
-            logger.warning(f"queue_chat_notifications (video) failed: {e}")
+            logger.warning(f"meeting:notify push failed: {e}")
+
+        # Transactional email — sent one at a time so each recipient gets a
+        # per-recipient unsubscribe header (compliant + also personalizable).
+        try:
+            recipients = [u async for u in db.users.find(
+                {
+                    "id": {"$in": recipients_push},
+                    "email": {"$exists": True, "$ne": ""},
+                    "email_opt_out": {"$ne": True},
+                },
+                {"_id": 0, "id": 1, "email": 1, "name": 1, "email_prefs": 1},
+            )]
+            fe = frontend_url or ""
+            chat_link = f"{fe}/chat/{cid}" if fe else meeting_url
+            for r in recipients:
+                # Respect chat_notifications opt-out if the user has toggled it.
+                if (r.get("email_prefs") or {}).get("chat_notifications") is False:
+                    continue
+                await _send_video_meeting_email(
+                    to_email=r["email"],
+                    to_name=r.get("name", ""),
+                    recipient_id=r["id"],
+                    starter_name=starter_name,
+                    conv_name=conv_name,
+                    meeting_url=meeting_url,
+                    chat_url=chat_link,
+                )
+        except Exception as e:
+            logger.warning(f"video meeting email fan-out failed: {e}")
+
         return payload
+
+    async def _pretty_conv_name_for(c: dict, viewer_id: str) -> str:
+        # For DMs, show the other participant's name; for groups use the
+        # explicit name (fallback to "Video meeting").
+        if c.get("name"):
+            return c["name"]
+        if c.get("type") == "dm":
+            other_ids = [uid for uid in (c.get("member_ids") or []) if uid != viewer_id]
+            if other_ids:
+                brief = await _user_brief(other_ids[0])
+                return f"chat with {brief.get('name', 'a member')}"
+        return "your chat"
+
+    async def _send_video_meeting_email(*, to_email: str, to_name: str, recipient_id: str,
+                                        starter_name: str, conv_name: str, meeting_url: str, chat_url: str) -> None:
+        """Compose + send the transactional invite. Uses the same
+        `send_bulk_email` helper the rest of the app relies on so the AOP
+        branding, unsubscribe footer, and CAN-SPAM headers stay consistent."""
+        first_name = (to_name or "").split(" ")[0] or "there"
+        subject = f"📹 {starter_name} started a video meeting in {conv_name}"
+        button_html = (
+            f'<div style="text-align:center;margin:24px 0">'
+            f'<a href="{meeting_url}" target="_blank" rel="noopener" '
+            f'style="display:inline-block;background:#C8102E;color:#ffffff;text-decoration:none;'
+            f'font-weight:700;padding:14px 32px;border-radius:999px;font-size:15px;line-height:1;'
+            f'font-family:Inter,Helvetica,Arial,sans-serif">Join meeting</a></div>'
+        )
+        html_body = (
+            f'<p>Hi {first_name},</p>'
+            f'<p><strong>{starter_name}</strong> just started a video meeting in <strong>{conv_name}</strong>. '
+            f'Tap the button below to join instantly — no downloads, works on any browser.</p>'
+            f'{button_html}'
+            f'<p style="font-size:13px;color:#64748b">Or paste this link into your browser: '
+            f'<a href="{meeting_url}" style="color:#0A2463">{meeting_url}</a></p>'
+            f'<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px auto;max-width:80%">'
+            f'<p style="font-size:12px;color:#94a3b8;text-align:center">Missed it? '
+            f'<a href="{chat_url}" style="color:#0A2463">Open the chat</a> to see who else joined.</p>'
+        )
+        try:
+            await send_bulk_email(
+                to_email=to_email,
+                subject=subject,
+                html_body=html_body,
+                recipient_id=recipient_id,
+                tags=[
+                    {"name": "type", "value": "chat_video_meeting"},
+                ],
+            )
+        except Exception as e:
+            logger.warning(f"video meeting email to {to_email} failed: {e}")
 
     async def _meeting_participants_summary(meeting_id: str) -> dict:
         """Compute {active, count, is_over} for a meeting. Active window is
