@@ -15,6 +15,19 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 108 — Email composer: CTA buttons, linked images, dividers, merge tags (2026-02-27) [FEATURE]
+User request: "In the admin email, allow admins to add buttons with embedded links. Allow adding photos / images with embedded links. Allow other cool things to make it easier and simpler to send emails."
+
+- **CTA button** — new `components/EmailButton.jsx` custom TipTap node (`atom: true`) that:
+  - Renders in-editor as a red pill with white text, click-to-select, and a floating toolbar (Label / URL / L·C·R align / × remove).
+  - `renderHTML` emits an email-safe `<a data-email-button="1" style="…inline styles…">` inside a `<div style="text-align:…">` — bypasses the standard Link mark so styles aren't stripped.
+  - Parses round-trip from either the editor or a re-loaded draft.
+- **Linked images** — `components/ResizableImage.jsx` gained a `link` attribute + a Link² button in the floating image toolbar. When set, `renderHTML` wraps the `<img>` in an `<a href target=_blank rel=noopener style="text-decoration:none;display:inline-block">`. Parsing looks for a wrapping `<a[href]>` on load so links persist.
+- **Divider** — `components/EmailHorizontalRule.js` overrides StarterKit's plain `<hr>` with a styled email-safe variant (`border-top:1px solid #e2e8f0;margin:20px auto;max-width:80%`).
+- **Merge tags menu** — new toolbar dropdown (tag icon + "MERGE" label) that inserts `{{first_name}}`, `{{last_name}}`, `{{name}}`, `{{email}}`, or `{{line_name}}` at cursor. Backend `render_variables` already substitutes these at preview + send time — the UI just makes them discoverable.
+- **Toolbar additions**: mouse-pointer icon (Insert CTA button) + horizontal-minus icon (Insert divider) between the image and undo/redo buttons.
+- **Tests**: `tests/test_iteration108_email_composer.py` — 5/5 pass. Covers button style survival, HR survival, linked-image survival, merge-tag substitution, and HTML-escaping safety through the `/email/preview` pipeline.
+
 ### Iteration 107 — Video meeting live participant indicator (2026-02-27) [ENHANCEMENT]
 User request: "show an indicator who's in the meeting. But when the meeting is over, stop the 15 second updates."
 

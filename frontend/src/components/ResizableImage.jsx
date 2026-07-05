@@ -1,7 +1,7 @@
 import Image from "@tiptap/extension-image";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
 import { useRef, useState } from "react";
-import { AlignLeft, AlignCenter, AlignRight, Trash2 } from "lucide-react";
+import { AlignLeft, AlignCenter, AlignRight, Trash2, Link2 } from "lucide-react";
 
 /**
  * ResizableImage — TipTap image node with:
@@ -20,7 +20,7 @@ import { AlignLeft, AlignCenter, AlignRight, Trash2 } from "lucide-react";
 const ALIGN_TO_FLEX = { left: "flex-start", center: "center", right: "flex-end" };
 
 function ResizableImageView({ node, updateAttributes, selected, deleteNode, editor }) {
-    const { src, alt, width, align } = node.attrs;
+    const { src, alt, width, align, link } = node.attrs;
     const imgRef = useRef(null);
     const [hovered, setHovered] = useState(false);
     const isEditable = editor?.isEditable !== false;
@@ -47,6 +47,11 @@ function ResizableImageView({ node, updateAttributes, selected, deleteNode, edit
 
     const setSize = (w) => updateAttributes({ width: w });
     const setAlign = (a) => updateAttributes({ align: a });
+    function editLink() {
+        const next = window.prompt("Link URL for this image (leave empty to remove)", link || "https://");
+        if (next === null) return;
+        updateAttributes({ link: next.trim() || null });
+    }
 
     const wrapperStyle = {
         display: "flex",
@@ -139,6 +144,8 @@ function ResizableImageView({ node, updateAttributes, selected, deleteNode, edit
                             <ToolbarBtn active={width === 600} onClick={() => setSize(600)} testid="ri-size-l" label="Large">L</ToolbarBtn>
                             <ToolbarBtn active={!width} onClick={() => setSize(null)} testid="ri-size-full" label="Full width">Full</ToolbarBtn>
                             <span style={{ width: 1, height: 14, background: "#475569", margin: "0 4px" }} />
+                            <ToolbarBtn active={!!link} onClick={editLink} testid="ri-link" label={link ? `Linked to ${link}` : "Add link"}><Link2 className="h-3.5 w-3.5" /></ToolbarBtn>
+                            <span style={{ width: 1, height: 14, background: "#475569", margin: "0 4px" }} />
                             <ToolbarBtn onClick={() => deleteNode()} danger testid="ri-remove" label="Remove image"><Trash2 className="h-3.5 w-3.5" /></ToolbarBtn>
                         </div>
                         {width && (
@@ -224,6 +231,18 @@ const ResizableImage = Image.extend({
                 },
                 renderHTML: (attrs) => ({ "data-align": attrs.align || "left" }),
             },
+            // Optional href — when set, the rendered image is wrapped in <a>
+            // so email clients treat the whole picture as a click target. The
+            // editor keeps the raw <img> node so we don't have to fight the
+            // separate Link mark; the wrap only happens at render time.
+            link: {
+                default: null,
+                parseHTML: (el) => {
+                    const anchor = el.closest?.("a[href]");
+                    return anchor?.getAttribute("href") || null;
+                },
+                renderHTML: () => ({}),  // handled by renderHTML() wrapper
+            },
         };
     },
 
@@ -234,6 +253,7 @@ const ResizableImage = Image.extend({
                 getAttrs: (el) => {
                     const img = el.querySelector("img");
                     if (!img) return false;
+                    const anchor = el.querySelector("a[href]");
                     const w = parseInt(img.getAttribute("width") || (img.style?.width || "").replace("px", ""), 10);
                     return {
                         src: img.getAttribute("src"),
@@ -241,6 +261,7 @@ const ResizableImage = Image.extend({
                         title: img.getAttribute("title"),
                         width: Number.isFinite(w) && w > 0 ? w : null,
                         align: el.getAttribute("data-image-align") || "left",
+                        link: anchor?.getAttribute("href") || null,
                     };
                 },
             },
@@ -251,6 +272,7 @@ const ResizableImage = Image.extend({
     renderHTML({ HTMLAttributes, node }) {
         const w = node.attrs.width;
         const align = node.attrs.align || "left";
+        const link = node.attrs.link;
         const imgStyle = [
             "max-width:100%",
             "height:auto",
@@ -261,9 +283,17 @@ const ResizableImage = Image.extend({
 
         const imgAttrs = { ...HTMLAttributes };
         delete imgAttrs.class;
+        delete imgAttrs.link;
         if (w) imgAttrs.width = w;
         imgAttrs.style = imgStyle;
         imgAttrs["data-align"] = align;
+
+        const imgTag = ["img", imgAttrs];
+        // Wrap in <a> when a link is set — the anchor inherits `text-decoration:none`
+        // so email clients don't add an underline around the picture.
+        const inner = link
+            ? ["a", { href: link, target: "_blank", rel: "noopener", style: "text-decoration:none;display:inline-block" }, imgTag]
+            : imgTag;
 
         return [
             "div",
@@ -271,7 +301,7 @@ const ResizableImage = Image.extend({
                 "data-image-align": align,
                 style: `text-align:${align};margin:8px 0`,
             },
-            ["img", imgAttrs],
+            inner,
         ];
     },
 

@@ -1,11 +1,13 @@
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import ResizableImage from "./ResizableImage";
+import EmailButton from "./EmailButton";
+import EmailHorizontalRule from "./EmailHorizontalRule";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
 import { useRef, useState, useEffect } from "react";
-import { Bold, Italic, Underline, List, ListOrdered, Link2, Image as ImageIcon, Heading2, Quote, AlignLeft, AlignCenter, AlignRight, Undo, Redo } from "lucide-react";
+import { Bold, Italic, Underline, List, ListOrdered, Link2, Image as ImageIcon, Heading2, Quote, AlignLeft, AlignCenter, AlignRight, Undo, Redo, MousePointerClick, Tag, Minus } from "lucide-react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 
@@ -15,12 +17,16 @@ import { toast } from "sonner";
  */
 export default function RichEditor({ value, onChange, placeholder = "Write your message…", minHeight = 240 }) {
     const [uploading, setUploading] = useState(false);
+    const [mergeOpen, setMergeOpen] = useState(false);
     const fileInputRef = useRef(null);
 
     const editor = useEditor({
         extensions: [
-            StarterKit.configure({ heading: { levels: [2, 3] } }),
+            // StarterKit's default HR is replaced with our email-safe variant.
+            StarterKit.configure({ heading: { levels: [2, 3] }, horizontalRule: false }),
+            EmailHorizontalRule,
             ResizableImage.configure({ inline: false, allowBase64: false }),
+            EmailButton,
             Link.configure({ openOnClick: false, HTMLAttributes: { class: "underline text-primary" } }),
             Placeholder.configure({ placeholder }),
             TextAlign.configure({ types: ["heading", "paragraph"] }),
@@ -101,6 +107,30 @@ export default function RichEditor({ value, onChange, placeholder = "Write your 
         editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
     }
 
+    // Insert an email-safe CTA button via our custom node — survives round-
+    // tripping and inline styles are baked in at renderHTML time.
+    function insertButton() {
+        const label = window.prompt("Button label", "Learn more");
+        if (!label) return;
+        const url = window.prompt("Button link URL", "https://");
+        if (!url) return;
+        editor.chain().focus().insertContent({
+            type: "emailButton",
+            attrs: { label: label.trim(), href: url.trim(), align: "center" },
+        }).run();
+    }
+
+    function insertMergeTag(tag) {
+        // Backend already substitutes {{first_name}}, {{last_name}}, {{name}},
+        // {{email}}, {{line_name}} at send time (see routes/email.py::357).
+        editor.chain().focus().insertContent(`{{${tag}}}`).run();
+        setMergeOpen(false);
+    }
+
+    function insertDivider() {
+        editor.chain().focus().setHorizontalRule().run();
+    }
+
     if (!editor) return null;
     const btn = (active, onClick, icon, testid, label) => (
         <button
@@ -136,6 +166,47 @@ export default function RichEditor({ value, onChange, placeholder = "Write your 
                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => {
                     const f = e.target.files?.[0]; if (f) uploadAndInsert(f); e.target.value = "";
                 }} />
+                <div className="w-px h-5 bg-slate-200 mx-0.5" />
+                {btn(false, insertButton, <MousePointerClick className="h-4 w-4" />, "fmt-button", "Insert CTA button with link")}
+                {btn(false, insertDivider, <Minus className="h-4 w-4" />, "fmt-divider", "Insert divider")}
+                {/* Merge tags dropdown — inserts a {{token}} the backend substitutes at send time. */}
+                <div className="relative">
+                    <button
+                        type="button"
+                        onClick={() => setMergeOpen((v) => !v)}
+                        onBlur={(e) => { if (!e.currentTarget.parentElement.contains(e.relatedTarget)) setMergeOpen(false); }}
+                        title="Insert personalization tag"
+                        aria-label="Insert personalization tag"
+                        data-testid="fmt-merge"
+                        className={`p-1.5 rounded-md hover:bg-slate-200 transition-colors ${mergeOpen ? "bg-slate-200 text-primary" : "text-slate-600"} inline-flex items-center gap-1`}
+                    >
+                        <Tag className="h-4 w-4" />
+                        <span className="text-[10px] uppercase tracking-wider font-bold">Merge</span>
+                    </button>
+                    {mergeOpen && (
+                        <div className="absolute z-20 top-full left-0 mt-1 min-w-[200px] bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-sm" data-testid="fmt-merge-menu">
+                            {[
+                                { key: "first_name", label: "First name", example: "Sarah" },
+                                { key: "last_name", label: "Last name", example: "Chen" },
+                                { key: "name", label: "Full name", example: "Sarah Chen" },
+                                { key: "email", label: "Email", example: "sarah@example.com" },
+                                { key: "line_name", label: "Line name", example: "Alpha Line" },
+                            ].map((t) => (
+                                <button
+                                    key={t.key}
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => insertMergeTag(t.key)}
+                                    className="w-full text-left px-3 py-1.5 hover:bg-slate-50 flex items-center justify-between gap-3"
+                                    data-testid={`fmt-merge-${t.key}`}
+                                >
+                                    <span className="font-medium text-slate-700">{t.label}</span>
+                                    <code className="text-[10px] text-slate-400">{`{{${t.key}}}`}</code>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
                 <div className="w-px h-5 bg-slate-200 mx-0.5" />
                 {btn(false, () => editor.chain().focus().undo().run(), <Undo className="h-4 w-4" />, "fmt-undo", "Undo")}
                 {btn(false, () => editor.chain().focus().redo().run(), <Redo className="h-4 w-4" />, "fmt-redo", "Redo")}
