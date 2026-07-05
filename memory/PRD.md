@@ -15,6 +15,31 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 111 — News multi-image + templates, News search, Governor auto-approve removal, Awards eligibility (2026-02-27) [FEATURE]
+User request bundle: (a) News editor to support multiple images + layout templates (2/3 columns, image-beside-text, gallery, hero); (b) member-facing News search; (c) revoke auto-approve authority from Governor Manager admins; (d) show Full Access admins which members are eligible for each programme award (Service Ribbon, Fundraiser, Community Service, Dr. Ken Thompson, Recruitment, Member's, Chapter of the Year) using calendar-year criteria.
+
+- **News multi-image + templates**:
+  - `NewsIn` / `NewsUpdateIn` gained `images: List[str]` (max 5) and `template` Literal (`classic`, `two_col`, `three_col`, `image_left`, `image_right`, `gallery`, `hero`). `news_out` returns both.
+  - `pages/NewsDetail.jsx` renders 6 distinct layouts via a `TemplateBody` component that splits body paragraphs across columns / interleaves images between chunks; single-column classic keeps its original behaviour.
+  - Admin `NewsDialog` gained a **layout template** dropdown, an **Add photos (0/5)** multi-file uploader with per-image reorder (← →) and remove controls, and a live preview grid.
+- **News search**: `GET /api/news?q=…` runs a case-insensitive escaped-regex `$or` across title / summary / body / tags. `pages/News.jsx` shows a rounded search input with 250 ms debounce and an explicit `news-empty` state for zero results.
+- **Governor Manager can no longer auto-approve hours**:
+  - `admin_log_hours`, `admin_log_hours_bulk`, and `admin_log_hours_csv` now flip the inserted docs to `status="pending"` (no `approved_at`/`approved_by`) when `is_chapter_scoped(admin)` — only Full Access admins produce auto-approved entries.
+  - `PUT /hours/{id}/review` and `PUT /hours/{id}` both reject `status="approved"` for chapter-scoped admins with a clear 403 error message. Rejecting or leaving pending remains allowed.
+- **Awards eligibility (Full Access only)**:
+  - New `GET /api/awards/eligibility?year=YYYY` in `routes/awards.py`. Enforced via `admin_role_of(admin) == "full"` (403 for Governor Manager, Membership Manager, or any custom-scoped admin). Computes:
+    - **Service Ribbon** — 1st complete active year, then every 5th year. Streak start uses the most recent `status="active"` entry in the new `status_history` audit list (falls back to `created_at`).
+    - **Fundraiser Ribbon** — top 5 by summed completed-donation `amount` in the year.
+    - **Community Service Ribbon** — members with ≥ 100 approved volunteer hours in the year.
+    - **Dr. Ken Thompson Distinguished CS** — top member per chapter by weighted approved hours: `0.90 × AOP + 0.05 × Trendsetters + 0.05 × Other`.
+    - **Recruitment Ribbon** — top 5 recruiters by count in the year.
+    - **Member's Ribbon** — union of top-3 in each of hours / recruits / fundraising, ranked by how many categories the member appears in.
+    - **Chapter of the Year** — score = `(recruits + hours + donors + checkins) / max(1, current_member_count - year_recruits)`.
+  - `routes/members.py::set_member_status` and `routes/members_admin.py::admin_update_member` now append a `{status, at, by, by_name}` entry to `users.status_history` whenever an admin changes `status_override` — powers the Service Ribbon streak logic.
+- **Admin Awards tab**:
+  - New **AwardEligibilityPanel** below the awards grid, visible only when `user.admin_role === "full"`. Includes a year picker (current + 1 through current − 5), refresh button, six per-award cards, and a Chapter of the Year composite table. Every candidate row has a one-click **Grant** button that matches the appropriate award by name substring and calls `POST /awards/{id}/grant` with an auto-generated reason.
+- **Tests**: `tests/test_iteration111_news_hours_awards.py` → 17/17 pass. Covers news template/images round-trip, search filter behaviour, Governor Manager pending + 403 paths, Full admin auto-approve regression, eligibility endpoint access control, and all seven eligibility keys.
+
 ### Iteration 110 — Hours: add "Trendsetters Spirits Event" event type (2026-02-27) [ENHANCEMENT]
 User request: "For the Hours, under the 'Event Type', add 'Trendsetters Spirits Event'."
 
