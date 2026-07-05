@@ -2154,7 +2154,7 @@ function HoursAdmin() {
                             <div className="flex-1 min-w-0">
                                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                                     <div className="font-heading font-bold text-base">{h.user_name}</div>
-                                    <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-accent/40">{h.event_type === "aop_related" ? "AOP-related" : "Other"}</span>
+                                    <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 bg-accent/40">{h.event_type === "aop_related" ? "AOP-related" : h.event_type === "trendsetters_spirits" ? "Trendsetters Spirits" : "Other"}</span>
                                     <span className={`text-[10px] uppercase tracking-wider font-bold rounded-full px-2 py-0.5 ${h.status === "approved" ? "bg-green-100 text-green-700" : h.status === "rejected" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{h.status}</span>
                                 </div>
                                 <div className="text-xs text-muted-foreground">{h.date && formatCalendarDay(h.date, "EEE, MMM d, yyyy")}</div>

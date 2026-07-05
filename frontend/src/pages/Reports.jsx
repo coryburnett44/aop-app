@@ -898,7 +898,7 @@ function HoursReport() {
                         { value: "", label: "Any" }, { value: "approved", label: "Approved" }, { value: "pending", label: "Pending" }, { value: "rejected", label: "Rejected" },
                     ]} testid="hours-filter-status" />
                     <FilterSelect label="Event type" value={eventType} onChange={setEventType} options={[
-                        { value: "", label: "Any" }, { value: "aop_related", label: "AOP event" }, { value: "other", label: "Other" },
+                        { value: "", label: "Any" }, { value: "aop_related", label: "AOP event" }, { value: "trendsetters_spirits", label: "Trendsetters Spirits" }, { value: "other", label: "Other" },
                     ]} testid="hours-filter-type" />
                 </div>
                 {view === "entries" && (

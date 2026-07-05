@@ -15,6 +15,16 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 110 — Hours: add "Trendsetters Spirits Event" event type (2026-02-27) [ENHANCEMENT]
+User request: "For the Hours, under the 'Event Type', add 'Trendsetters Spirits Event'."
+
+- **Backend (`models.py`)**: Extended the 5 `Literal` unions on hours-related Pydantic models (`HoursLogIn`, `AdminHoursLogIn`, `AdminHoursBulkLogIn`, `AdminHoursReviewIn`, `AdminHoursEditIn`) to include `"trendsetters_spirits"`.
+- **Backend (`routes/hours.py`)**: CSV bulk-import validator now accepts `trendsetters_spirits` in addition to `aop_related` / `other`.
+- **Frontend (`pages/Hours.jsx`)**: Added the new option to both Select dropdowns (member log form + admin edit) and taught the badge renderer to display "Trendsetters Spirits" (with `bg-secondary/20` accent) instead of falling through to "Other".
+- **Frontend (`pages/Reports.jsx`)**: Added "Trendsetters Spirits" to the event-type filter chip row on the Reports → Hours tab.
+- **Frontend (`pages/Admin.jsx`)**: Admin review-queue badge shows "Trendsetters Spirits" for entries with the new type.
+- **Verified**: e2e API POST + UI screenshot confirmed the option appears in the "Log volunteer hours" modal and entries render with the new badge.
+
 ### Iteration 109 — Immediate video-meeting notifications (email + toast + chime + bell) (2026-02-27) [FEATURE]
 User request: "When a member opens a video chat, can members receive notification by email immediately + ping?" (Clarified: Email + Toast + Chime + Bell.)
 

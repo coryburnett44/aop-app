@@ -376,7 +376,7 @@ def register(
                 add_error(idx, ident_label, target.get("name", ""), str(exc), raw_hours, raw_date, raw_activity)
                 continue
             event_type = (opt(row, "event_type") or "aop_related").lower()
-            if event_type not in ("aop_related", "other"):
+            if event_type not in ("aop_related", "trendsetters_spirits", "other"):
                 event_type = "aop_related"
             activity_text = raw_activity or "Logged by admin (CSV import)"
             docs.append({

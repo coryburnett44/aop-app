@@ -241,6 +241,7 @@ function LogHoursDialog() {
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="aop_related">AOP-related event</SelectItem>
+                                <SelectItem value="trendsetters_spirits">Trendsetters Spirits Event</SelectItem>
                                 <SelectItem value="other">Other organization / personal</SelectItem>
                             </SelectContent>
                         </Select>
@@ -673,8 +674,8 @@ function HoursCard({ h, children }) {
                 <div className="text-sm leading-relaxed">{h.activity || h.description}</div>
                 <div className="text-xs text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span><Calendar className="h-3 w-3 inline mr-1" />{h.date && formatCalendarDay(h.date, "MMM d, yyyy")}</span>
-                    <span className={`uppercase tracking-wider font-semibold rounded-full px-2 py-0.5 ${h.event_type === "aop_related" ? "bg-primary/15 text-primary" : "bg-muted"}`}>
-                        {h.event_type === "aop_related" ? "AOP event" : "Other"}
+                    <span className={`uppercase tracking-wider font-semibold rounded-full px-2 py-0.5 ${h.event_type === "aop_related" ? "bg-primary/15 text-primary" : h.event_type === "trendsetters_spirits" ? "bg-secondary/20 text-secondary-foreground" : "bg-muted"}`}>
+                        {h.event_type === "aop_related" ? "AOP event" : h.event_type === "trendsetters_spirits" ? "Trendsetters Spirits" : "Other"}
                     </span>
                     {h.agency_name && <span className="inline-flex items-center gap-1"><Building2 className="h-3 w-3" />{h.agency_name}</span>}
                     {h.host_name && <span className="inline-flex items-center gap-1"><UserIcon className="h-3 w-3" />Host: {h.host_name}</span>}
@@ -1000,6 +1001,7 @@ export function FullEditHoursDialog({ h, onSaved, trigger }) {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="aop_related">AOP event</SelectItem>
+                                    <SelectItem value="trendsetters_spirits">Trendsetters Spirits</SelectItem>
                                     <SelectItem value="other">Other</SelectItem>
                                 </SelectContent>
                             </Select>

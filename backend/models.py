@@ -171,7 +171,7 @@ class HoursLogIn(BaseModel):
     hours: float = Field(gt=0, le=1000)
     activity: str = Field(min_length=2)
     date: datetime
-    event_type: Literal["aop_related", "other"] = "other"
+    event_type: Literal["aop_related", "trendsetters_spirits", "other"] = "other"
     agency_name: str = Field(min_length=1)
     host_name: str = Field(min_length=1)
     host_email: EmailStr
@@ -188,7 +188,7 @@ class AdminHoursLogIn(BaseModel):
     hours: float = Field(gt=0, le=1000)
     date: datetime
     activity: Optional[str] = ""
-    event_type: Literal["aop_related", "other"] = "aop_related"
+    event_type: Literal["aop_related", "trendsetters_spirits", "other"] = "aop_related"
     agency_name: Optional[str] = ""
     host_name: Optional[str] = ""
     host_email: Optional[str] = ""
@@ -205,7 +205,7 @@ class AdminHoursBulkLogIn(BaseModel):
     hours: float = Field(gt=0, le=1000)
     date: datetime
     activity: Optional[str] = ""
-    event_type: Literal["aop_related", "other"] = "aop_related"
+    event_type: Literal["aop_related", "trendsetters_spirits", "other"] = "aop_related"
     agency_name: Optional[str] = ""
     host_name: Optional[str] = ""
     host_email: Optional[str] = ""
@@ -515,7 +515,7 @@ class HoursReviewIn(BaseModel):
     hours: Optional[float] = Field(None, gt=0, le=1000)
     activity: Optional[str] = None
     agency_name: Optional[str] = None
-    event_type: Optional[Literal["aop_related", "other"]] = None
+    event_type: Optional[Literal["aop_related", "trendsetters_spirits", "other"]] = None
 
 
 class AdminHoursEditIn(BaseModel):
@@ -527,7 +527,7 @@ class AdminHoursEditIn(BaseModel):
     hours: Optional[float] = Field(None, gt=0, le=1000)
     activity: Optional[str] = None
     description: Optional[str] = None
-    event_type: Optional[Literal["aop_related", "other"]] = None
+    event_type: Optional[Literal["aop_related", "trendsetters_spirits", "other"]] = None
     agency_name: Optional[str] = None
     host_name: Optional[str] = None
     host_email: Optional[str] = None
