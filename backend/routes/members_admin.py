@@ -523,6 +523,17 @@ def register(
                 updates["deceased_at"] = iso(now_utc())
             if body.member_status != "deceased" and existing.get("deceased_at") and not body.deceased_at:
                 updates["deceased_at"] = None
+            # Iter 111: Append to the member's status_history so we can compute
+            # continuous-active streaks for Service Ribbon eligibility.
+            if body.member_status != existing.get("status_override"):
+                history = list(existing.get("status_history") or [])
+                history.append({
+                    "status": body.member_status,
+                    "at": iso(now_utc()),
+                    "by": admin.get("id"),
+                    "by_name": admin.get("name", "Admin"),
+                })
+                updates["status_history"] = history
         if "username" in updates and updates["username"]:
             clash = await db.users.find_one({"username": updates["username"], "id": {"$ne": user_id}})
             if clash:

@@ -414,6 +414,11 @@ class NewsIn(BaseModel):
     body: str
     cover_image: str = ""
     tags: List[str] = []
+    images: List[str] = Field(default_factory=list, max_length=5)
+    template: Literal[
+        "classic", "two_col", "three_col",
+        "image_left", "image_right", "gallery", "hero"
+    ] = "classic"
 
 
 class NewsUpdateIn(BaseModel):
@@ -422,6 +427,11 @@ class NewsUpdateIn(BaseModel):
     body: Optional[str] = None
     cover_image: Optional[str] = None
     tags: Optional[List[str]] = None
+    images: Optional[List[str]] = Field(default=None, max_length=5)
+    template: Optional[Literal[
+        "classic", "two_col", "three_col",
+        "image_left", "image_right", "gallery", "hero"
+    ]] = None
 
 
 PAGE_BLOCK_TYPES = ("heading", "subheading", "paragraph", "image", "button", "divider", "html", "spacer", "columns", "video")

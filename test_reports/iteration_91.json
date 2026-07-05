@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 111 backend + frontend verification. 17/17 pytest cases passed covering (a) News multi-image + 7 layout templates + ?q= search, (b) Governor Manager cannot auto-approve hours (posts pending, 403 on /review approve and /hours/{id} approve, can still reject; Full admin still auto-approves with trendsetters_spirits regression covered), (c) /api/awards/eligibility Full admin returns all 7 keys, Governor + Membership Manager get 403, out-of-range year returns 400. Frontend: news empty-state renders 'No articles match', news editor shows 7 template options and 'Add photos (0/5)' button, Awards admin panel renders all 7 eligibility cards for Full admin, Awards tab hidden entirely from Governor (as designed).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration111_news_hours_awards.py",
+    "/app/test_reports/pytest/iter111.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor: The news search input and the admin 'New article' trigger button lack explicit data-testid attributes (e.g. news-search, news-new-btn, admin-tab-news). Tests fall back to placeholder/text selectors. Not required by the current review spec, but adding them would harden future e2e tests.",
+    "The Service Ribbon streak_start_year() only reads status_history for status='active' — if a member is currently marked inactive_override, they are dropped, which matches the spec but means a member reactivated then re-inactivated within the same year is silently ignored. Consider documenting this edge case.",
+    "Chapter of the Year denominator is max(1, member_count - recruits). If all current members are counted (including those onboarded via non-recruitment paths, e.g. bulk-imported), the 'base_members' may under-count when recruits > member_count for the year (small chapters). No crash, but the score can spike unrealistically."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration111_news_hours_awards.py"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (all target selectors verified)"},
+  "test_credentials": "Used admin@clubhaven.app / Admin123!, governor.tx@clubhaven.app / Governor123!, mm.tx@clubhaven.app / MemMgr123! per /app/memory/test_credentials.md.",
+  "seed_data_creation": "Test creates a temporary news article (title='TEST_iter111 two-col article') and pending hours entries — all cleaned up in teardown tests. No lingering test data expected.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All iteration 111 acceptance criteria verified end-to-end. If regression is needed later, just run: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) pytest /app/backend/tests/test_iteration111_news_hours_awards.py -v. Frontend eligibility panel currently populates only Ken Thompson + Chapter of Year with real data; other cards render empty tables (expected — seed data has few approved hours in year 2026)."
+}

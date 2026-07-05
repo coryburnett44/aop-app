@@ -114,9 +114,11 @@ def register(
 
     @api.post("/hours/admin")
     async def admin_log_hours(body: AdminHoursLogIn, admin: dict = Depends(admin_tab_dep("hours"))):
-        """Admin logs hours on behalf of a member. Auto-approved (the admin's
-        act of logging IS the approval). Only `user_id`, `hours`, and `date`
-        are functionally required — everything else is optional."""
+        """Admin logs hours on behalf of a member. Auto-approved for Full Access
+        admins (their act of logging IS the approval). Chapter-scoped admins
+        such as Governor Managers post entries as `pending` — a Full Access
+        admin must still approve. Only `user_id`, `hours`, and `date` are
+        functionally required — everything else is optional."""
         target = await db.users.find_one({"id": body.user_id}, {"_id": 0, "id": 1, "name": 1, "chapter_id": 1})
         if not target:
             raise HTTPException(status_code=404, detail="Member not found")
@@ -126,6 +128,7 @@ def register(
             if body.user_id not in (allowed_ids or []):
                 raise HTTPException(status_code=403, detail="You can only log hours for members in your chapter.")
         activity_text = body.activity or body.description or "Logged by admin"
+        can_auto_approve = not is_chapter_scoped(admin)
         doc = {
             "id": str(uuid.uuid4()),
             "user_id": target["id"],
@@ -140,13 +143,14 @@ def register(
             "host_phone": body.host_phone or "",
             "date": iso(body.date),
             "event_id": body.event_id,
-            "status": "approved",
-            "approved_at": iso(now_utc()),
-            "approved_by": admin["id"],
-            "approved_by_name": admin.get("name", "Admin"),
+            "status": "approved" if can_auto_approve else "pending",
             "logged_by_admin": True,
             "created_at": iso(now_utc()),
         }
+        if can_auto_approve:
+            doc["approved_at"] = iso(now_utc())
+            doc["approved_by"] = admin["id"]
+            doc["approved_by_name"] = admin.get("name", "Admin")
         await db.volunteer_hours.insert_one(doc)
         return hours_out(doc)
 
@@ -174,6 +178,7 @@ def register(
             scoped_ids = set(await chapter_scope_user_ids(admin) or [])
 
         activity_text = body.activity or body.description or "Logged by admin"
+        can_auto_approve = not is_chapter_scoped(admin)
         ts = iso(now_utc())
         docs: list[dict] = []
         results: list[dict] = []
@@ -199,13 +204,14 @@ def register(
                 "host_phone": body.host_phone or "",
                 "date": iso(body.date),
                 "event_id": body.event_id,
-                "status": "approved",
-                "approved_at": ts,
-                "approved_by": admin["id"],
-                "approved_by_name": admin.get("name", "Admin"),
+                "status": "approved" if can_auto_approve else "pending",
                 "logged_by_admin": True,
                 "created_at": ts,
             }
+            if can_auto_approve:
+                doc["approved_at"] = ts
+                doc["approved_by"] = admin["id"]
+                doc["approved_by_name"] = admin.get("name", "Admin")
             docs.append(doc)
             results.append({"user_id": uid, "ok": True, "name": target.get("name", "")})
 
@@ -323,6 +329,7 @@ def register(
             scoped_ids = set(await chapter_scope_user_ids(admin) or [])
 
         ts = iso(now_utc())
+        can_auto_approve = not is_chapter_scoped(admin)
         docs: list[dict] = []
         errors: list[dict] = []
         preview: list[dict] = []
@@ -379,7 +386,7 @@ def register(
             if event_type not in ("aop_related", "trendsetters_spirits", "other"):
                 event_type = "aop_related"
             activity_text = raw_activity or "Logged by admin (CSV import)"
-            docs.append({
+            row_doc = {
                 "id": str(uuid.uuid4()),
                 "user_id": target["id"],
                 "user_name": target.get("name", ""),
@@ -393,15 +400,17 @@ def register(
                 "host_phone": opt(row, "host_phone"),
                 "date": iso(parsed_dt),
                 "event_id": None,
-                "status": "approved",
-                "approved_at": ts,
-                "approved_by": admin["id"],
-                "approved_by_name": admin.get("name", "Admin"),
+                "status": "approved" if can_auto_approve else "pending",
                 "logged_by_admin": True,
                 "imported_from_csv": file.filename,
                 "csv_row": idx,
                 "created_at": ts,
-            })
+            }
+            if can_auto_approve:
+                row_doc["approved_at"] = ts
+                row_doc["approved_by"] = admin["id"]
+                row_doc["approved_by_name"] = admin.get("name", "Admin")
+            docs.append(row_doc)
             preview.append({
                 "row": idx,
                 "status": "ready",
@@ -456,6 +465,14 @@ def register(
         existing = await db.volunteer_hours.find_one({"id": hours_id})
         if not existing:
             raise HTTPException(status_code=404, detail="Hours entry not found")
+        # Iter 111: Governor Managers can no longer auto-approve hours. They
+        # may still reject or leave pending, but flipping to approved is
+        # reserved for Full Access admins.
+        if is_chapter_scoped(admin) and body.status == "approved":
+            raise HTTPException(
+                status_code=403,
+                detail="Governor Managers cannot approve hours — a Full Access admin must review this entry.",
+            )
         update_doc: dict = {
             "status": body.status,
             "note": body.note or existing.get("note", ""),
@@ -505,6 +522,13 @@ def register(
 
         # Status change → stamp review audit fields (same as /review).
         if "status" in patch and patch["status"] and patch["status"] != existing.get("status"):
+            # Iter 111: Governor Managers cannot flip to approved via the
+            # generic edit endpoint either.
+            if is_chapter_scoped(admin) and patch["status"] == "approved":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Governor Managers cannot approve hours — a Full Access admin must review this entry.",
+                )
             update_doc["status"] = patch["status"]
             update_doc["reviewed_by"] = admin["id"]
             update_doc["reviewed_by_name"] = admin.get("name", "Admin")

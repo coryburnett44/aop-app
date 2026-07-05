@@ -3380,6 +3380,7 @@ routes_awards.register(
     db=db,
     admin_tab_dep=admin_tab_dep,
     get_current_user=get_current_user,
+    admin_role_of=admin_role_of,
     iso=iso,
     now_utc=now_utc,
 )

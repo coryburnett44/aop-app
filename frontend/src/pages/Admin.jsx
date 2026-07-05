@@ -691,11 +691,18 @@ function NewsDialog({ article, onSaved, trigger }) {
         body: article?.body || "",
         cover_image: article?.cover_image || "",
         tags: (article?.tags || []).join(", "),
+        images: article?.images || [],
+        template: article?.template || "classic",
     });
     const [emailBusy, setEmailBusy] = useState(false);
+    const [imgBusy, setImgBusy] = useState(false);
 
     async function save() {
-        const payload = { ...form, tags: form.tags.split(",").map((s) => s.trim()).filter(Boolean) };
+        const payload = {
+            ...form,
+            tags: form.tags.split(",").map((s) => s.trim()).filter(Boolean),
+            images: (form.images || []).filter(Boolean).slice(0, 5),
+        };
         try {
             if (article) await api.put(`/news/${article.id}`, payload);
             else await api.post("/news", payload);
@@ -720,14 +727,68 @@ function NewsDialog({ article, onSaved, trigger }) {
         setEmailBusy(false);
     }
 
+    async function addImages(files) {
+        if (!files?.length) return;
+        const remaining = 5 - (form.images?.length || 0);
+        if (remaining <= 0) { toast.error("Max 5 additional images per article"); return; }
+        setImgBusy(true);
+        const uploads = Array.from(files).slice(0, remaining);
+        const results = [];
+        for (const f of uploads) {
+            const fd = new FormData();
+            fd.append("file", f);
+            try {
+                const { data } = await api.post("/news/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                results.push(data.url);
+            } catch (err) {
+                toast.error(formatApiError(err.response?.data?.detail) || `Upload failed: ${f.name}`);
+            }
+        }
+        if (results.length) {
+            setForm((p) => ({ ...p, images: [...(p.images || []), ...results].slice(0, 5) }));
+            toast.success(`${results.length} image${results.length > 1 ? "s" : ""} added`);
+        }
+        setImgBusy(false);
+    }
+
+    function removeImage(idx) {
+        setForm((p) => ({ ...p, images: (p.images || []).filter((_, i) => i !== idx) }));
+    }
+
+    function moveImage(idx, dir) {
+        setForm((p) => {
+            const arr = [...(p.images || [])];
+            const target = idx + dir;
+            if (target < 0 || target >= arr.length) return p;
+            [arr[idx], arr[target]] = [arr[target], arr[idx]];
+            return { ...p, images: arr };
+        });
+    }
+
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>{trigger}</DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle className="font-heading text-2xl">{article ? "Edit article" : "New article"}</DialogTitle></DialogHeader>
                 <div className="space-y-4 mt-2">
                     <div><Label>Title</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="rounded-xl mt-1.5" data-testid="news-title-input" /></div>
                     <div><Label>Summary</Label><Input value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div>
+                        <Label>Layout template</Label>
+                        <Select value={form.template} onValueChange={(v) => setForm({ ...form, template: v })}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="news-template-select"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="classic">Classic — single column</SelectItem>
+                                <SelectItem value="two_col">Two columns</SelectItem>
+                                <SelectItem value="three_col">Three columns</SelectItem>
+                                <SelectItem value="image_left">Image left, text right</SelectItem>
+                                <SelectItem value="image_right">Text left, image right</SelectItem>
+                                <SelectItem value="gallery">Gallery — text with images interleaved</SelectItem>
+                                <SelectItem value="hero">Hero cover + text below</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground mt-1.5">Body paragraphs (separated by blank lines) will be split across columns when a multi-column template is chosen.</p>
+                    </div>
                     <div className="bg-secondary/20 rounded-2xl p-4 border border-secondary/40">
                         <div className="flex items-center justify-between mb-2">
                             <Label className="inline-flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-primary" /> Body (AI email-draft available)</Label>
@@ -757,6 +818,41 @@ function NewsDialog({ article, onSaved, trigger }) {
                             )}
                         </div>
                         <div><Label>Tags (comma separated)</Label><Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    </div>
+
+                    <div>
+                        <div className="flex items-center justify-between">
+                            <Label>Additional photos ({form.images?.length || 0}/5)</Label>
+                            <label
+                                className={`rounded-full text-xs font-semibold px-3 py-1.5 border cursor-pointer inline-flex items-center gap-1.5 ${(form.images?.length || 0) >= 5 || imgBusy ? "border-slate-200 text-slate-400 cursor-not-allowed" : "border-primary text-primary hover:bg-primary/5"}`}
+                                data-testid="news-add-images-btn"
+                            >
+                                <Upload className="h-3.5 w-3.5" />
+                                {imgBusy ? "Uploading…" : "Add photos"}
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    className="hidden"
+                                    disabled={(form.images?.length || 0) >= 5 || imgBusy}
+                                    onChange={(e) => addImages(e.target.files)}
+                                />
+                            </label>
+                        </div>
+                        {form.images?.length > 0 && (
+                            <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-3" data-testid="news-images-preview">
+                                {form.images.map((src, idx) => (
+                                    <div key={`${src}-${idx}`} className="relative group rounded-xl overflow-hidden border border-border bg-slate-50">
+                                        <img src={mediaUrl(src)} alt={`Photo ${idx + 1}`} className="w-full h-28 object-cover" />
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+                                            <Button type="button" size="icon" variant="secondary" className="h-7 w-7 rounded-full" onClick={() => moveImage(idx, -1)} disabled={idx === 0} data-testid={`news-image-left-${idx}`}>←</Button>
+                                            <Button type="button" size="icon" variant="secondary" className="h-7 w-7 rounded-full" onClick={() => moveImage(idx, 1)} disabled={idx === form.images.length - 1} data-testid={`news-image-right-${idx}`}>→</Button>
+                                            <Button type="button" size="icon" variant="destructive" className="h-7 w-7 rounded-full" onClick={() => removeImage(idx)} data-testid={`news-image-remove-${idx}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
                 <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="news-save-btn">Save</Button></DialogFooter>
@@ -2222,6 +2318,8 @@ function HoursAdmin() {
 function AwardsAdmin() {
     const [awards, setAwards] = useState([]);
     const [members, setMembers] = useState([]);
+    const { user: me } = useAuth();
+    const isFullAdmin = (me?.admin_role || "full") === "full";
 
     const load = async () => {
         const [a, m] = await Promise.all([api.get("/awards"), api.get("/members")]);
@@ -2257,9 +2355,247 @@ function AwardsAdmin() {
                     </div>
                 ))}
             </div>
+            {isFullAdmin && <AwardEligibilityPanel awards={awards} onGranted={load} />}
         </div>
     );
 }
+function AwardEligibilityPanel({ awards, onGranted }) {
+    const now = new Date();
+    const [year, setYear] = useState(now.getFullYear());
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+
+    async function refresh(y = year) {
+        setLoading(true); setError("");
+        try {
+            const { data } = await api.get("/awards/eligibility", { params: { year: y } });
+            setData(data);
+        } catch (e) {
+            setError(formatApiError(e.response?.data?.detail) || "Failed to compute eligibility");
+        }
+        setLoading(false);
+    }
+    useEffect(() => { refresh(year); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [year]);
+
+    async function grant(awardName, userId, reason) {
+        // Find best matching award by name (case-insensitive contains).
+        const target = awards.find((a) => (a.name || "").toLowerCase().includes(awardName.toLowerCase()));
+        if (!target) { toast.error(`No award named like "${awardName}" — create one first.`); return; }
+        try {
+            await api.post(`/awards/${target.id}/grant`, { user_id: userId, reason });
+            toast.success(`Granted "${target.name}"`);
+            onGranted?.();
+        } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Grant failed"); }
+    }
+
+    const yearOptions = [];
+    for (let y = now.getFullYear() + 1; y >= now.getFullYear() - 5; y--) yearOptions.push(y);
+
+    return (
+        <div className="mt-10 border-t pt-8" data-testid="awards-eligibility-panel">
+            <div className="flex items-end justify-between flex-wrap gap-3 mb-4">
+                <div>
+                    <h3 className="font-heading text-2xl font-bold tracking-tight">Awards eligibility</h3>
+                    <p className="text-sm text-muted-foreground">Members who meet the criteria for each programme award in this calendar year (Jan 1 – Dec 31).</p>
+                </div>
+                <div className="flex items-center gap-3">
+                    <Label className="text-xs uppercase tracking-wider">Year</Label>
+                    <Select value={String(year)} onValueChange={(v) => setYear(parseInt(v, 10))}>
+                        <SelectTrigger className="rounded-full w-28" data-testid="eligibility-year-select"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            {yearOptions.map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                        </SelectContent>
+                    </Select>
+                    <Button type="button" variant="outline" className="rounded-full" onClick={() => refresh(year)} data-testid="eligibility-refresh">
+                        {loading ? "Loading…" : "Refresh"}
+                    </Button>
+                </div>
+            </div>
+            {error && <div className="text-sm text-destructive mb-3">{error}</div>}
+            {!data && !loading && <div className="text-sm text-muted-foreground">No data.</div>}
+            {data && (
+                <div className="grid xl:grid-cols-2 gap-4">
+                    <EligibilityCard
+                        title="Service Ribbon"
+                        subtitle="1st complete year, then every 5th year of continuous active membership."
+                        rows={data.service_ribbon}
+                        empty="No members hit a service milestone this year."
+                        columns={[
+                            { key: "name", label: "Member" },
+                            { key: "milestone", label: "Milestone" },
+                            { key: "chapter_name", label: "Chapter" },
+                        ]}
+                        onGrant={(r) => grant("Service Ribbon", r.user_id, `${r.milestone} of active membership (${data.year})`)}
+                        awardName="Service Ribbon"
+                        testId="eligibility-service"
+                    />
+                    <EligibilityCard
+                        title="Fundraiser Ribbon"
+                        subtitle="Top donor of the calendar year."
+                        rows={data.fundraiser_ribbon}
+                        empty="No donations recorded this year."
+                        columns={[
+                            { key: "rank", label: "#" },
+                            { key: "name", label: "Member" },
+                            { key: "amount", label: "Raised", format: (v) => `$${Number(v).toLocaleString()}` },
+                            { key: "chapter_name", label: "Chapter" },
+                        ]}
+                        onGrant={(r) => grant("Fundraiser Ribbon", r.user_id, `Top fundraiser $${Number(r.amount).toLocaleString()} (${data.year})`)}
+                        awardName="Fundraiser Ribbon"
+                        testId="eligibility-fundraiser"
+                    />
+                    <EligibilityCard
+                        title="Community Service Ribbon"
+                        subtitle="Members with 100+ approved volunteer hours."
+                        rows={data.community_service_ribbon}
+                        empty="No member hit 100 hours yet."
+                        columns={[
+                            { key: "name", label: "Member" },
+                            { key: "hours", label: "Hours" },
+                            { key: "chapter_name", label: "Chapter" },
+                        ]}
+                        onGrant={(r) => grant("Community Service", r.user_id, `${r.hours}h volunteered (${data.year})`)}
+                        awardName="Community Service Ribbon"
+                        testId="eligibility-community"
+                    />
+                    <EligibilityCard
+                        title="Dr. Ken Thompson Distinguished CS Award"
+                        subtitle="Top per chapter — weighted 90% AOP + 5% Trendsetters + 5% Other."
+                        rows={data.ken_thompson}
+                        empty="No qualifying hours logged this year."
+                        columns={[
+                            { key: "chapter_name", label: "Chapter" },
+                            { key: "name", label: "Member" },
+                            { key: "weighted_score", label: "Score" },
+                            { key: "aop_hours", label: "AOP" },
+                        ]}
+                        onGrant={(r) => grant("Ken Thompson", r.user_id, `Top chapter member (score ${r.weighted_score}) (${data.year})`)}
+                        awardName="Dr. Ken Thompson"
+                        testId="eligibility-ken-thompson"
+                    />
+                    <EligibilityCard
+                        title="Recruitment Ribbon"
+                        subtitle="Top recruiters of the calendar year."
+                        rows={data.recruitment_ribbon}
+                        empty="No recruits recorded this year."
+                        columns={[
+                            { key: "rank", label: "#" },
+                            { key: "name", label: "Member" },
+                            { key: "recruits", label: "Recruits" },
+                            { key: "chapter_name", label: "Chapter" },
+                        ]}
+                        onGrant={(r) => grant("Recruitment Ribbon", r.user_id, `${r.recruits} recruits (${data.year})`)}
+                        awardName="Recruitment Ribbon"
+                        testId="eligibility-recruitment"
+                    />
+                    <EligibilityCard
+                        title="Member's Ribbon"
+                        subtitle="Top 3 in hours, top 3 in recruits, top 3 in fundraising."
+                        rows={data.members_ribbon}
+                        empty="No qualifying activity this year."
+                        columns={[
+                            { key: "name", label: "Member" },
+                            { key: "categories", label: "Categories", format: (v) => (v || []).join(" · ") },
+                            { key: "chapter_name", label: "Chapter" },
+                        ]}
+                        onGrant={(r) => grant("Member", r.user_id, `Top-3 recognition: ${(r.categories || []).join(", ")} (${data.year})`)}
+                        awardName="Member's Ribbon"
+                        testId="eligibility-members"
+                    />
+                    <div className="xl:col-span-2 bg-card border border-border rounded-2xl p-5" data-testid="eligibility-chapter">
+                        <div className="flex items-center justify-between mb-3">
+                            <div>
+                                <div className="font-heading font-semibold text-lg">Chapter of the Year</div>
+                                <div className="text-xs text-muted-foreground">Score = (recruits + hours + donors + checkins) ÷ (members before recruits).</div>
+                            </div>
+                        </div>
+                        {data.chapter_of_the_year?.length ? (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b">
+                                            <th className="py-2">Chapter</th>
+                                            <th>Score</th>
+                                            <th>Recruits</th>
+                                            <th>Hours</th>
+                                            <th>Donors</th>
+                                            <th>Check-ins</th>
+                                            <th>Base members</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {data.chapter_of_the_year.map((c, i) => (
+                                            <tr key={c.chapter_id} className={`border-b border-border/60 ${i === 0 ? "bg-primary/5 font-semibold" : ""}`}>
+                                                <td className="py-2">{c.chapter_name}</td>
+                                                <td>{c.score}</td>
+                                                <td>{c.recruits}</td>
+                                                <td>{c.hours}</td>
+                                                <td>{c.donors}</td>
+                                                <td>{c.checkins}</td>
+                                                <td>{c.base_members}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : <div className="text-sm text-muted-foreground">No chapter activity yet this year.</div>}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function EligibilityCard({ title, subtitle, rows, empty, columns, onGrant, awardName, testId }) {
+    return (
+        <div className="bg-card border border-border rounded-2xl p-5" data-testid={testId}>
+            <div className="mb-3">
+                <div className="font-heading font-semibold text-lg">{title}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{subtitle}</div>
+            </div>
+            {!rows?.length ? (
+                <div className="text-sm text-muted-foreground italic">{empty}</div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b">
+                                {columns.map((c) => <th key={c.key} className="py-2 pr-2">{c.label}</th>)}
+                                <th className="py-2"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map((r, i) => (
+                                <tr key={`${r.user_id || r.chapter_id}-${i}`} className="border-b border-border/60">
+                                    {columns.map((c) => (
+                                        <td key={c.key} className="py-2 pr-2 align-top">
+                                            {c.format ? c.format(r[c.key]) : (r[c.key] ?? "—")}
+                                        </td>
+                                    ))}
+                                    <td className="py-2 text-right">
+                                        {r.user_id && (
+                                            <Button size="sm" variant="outline" className="rounded-full" onClick={() => onGrant(r)} data-testid={`${testId}-grant-${r.user_id}`}>
+                                                Grant
+                                            </Button>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {rows.length > 0 && (
+                        <div className="text-xs text-muted-foreground mt-2">
+                            Grants apply the &quot;{awardName}&quot; award — make sure it exists above.
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+
 
 function AwardDialog({ award, onSaved, trigger }) {
     const [open, setOpen] = useState(false);

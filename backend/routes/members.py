@@ -89,7 +89,10 @@ def register(api, *, db, admin_tab_dep, public_user, iso, now_utc):
         return out[:limit]
 
     @api.put("/members/{user_id}/status")
-    async def set_member_status(user_id: str, body: StatusOverrideIn, _: dict = Depends(admin_tab_dep("members"))):
+    async def set_member_status(user_id: str, body: StatusOverrideIn, admin: dict = Depends(admin_tab_dep("members"))):
+        existing = await db.users.find_one({"id": user_id}, {"_id": 0, "status_override": 1, "status_history": 1})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Member not found")
         updates: dict = {}
         if body.status is not None:
             updates["status_override"] = body.status
@@ -99,6 +102,17 @@ def register(api, *, db, admin_tab_dep, public_user, iso, now_utc):
             updates["deceased_at"] = iso(now_utc())
         elif body.status and body.status != "deceased":
             updates["deceased_at"] = None
+        # Iter 111: track status changes so Service Ribbon eligibility can
+        # tell when a member returned to active status.
+        if body.status is not None and body.status != existing.get("status_override"):
+            history = list(existing.get("status_history") or [])
+            history.append({
+                "status": body.status,
+                "at": iso(now_utc()),
+                "by": admin.get("id"),
+                "by_name": admin.get("name", "Admin"),
+            })
+            updates["status_history"] = history
         if updates:
             await db.users.update_one({"id": user_id}, {"$set": updates})
         u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})

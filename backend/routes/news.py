@@ -1,5 +1,12 @@
-"""News CRUD routes. Registered via register(api, deps) from server.py."""
+"""News CRUD routes. Registered via register(api, deps) from server.py.
+
+Iter 111: multi-image support (`images` list up to 5), layout `template` picker,
+and public search via `?q=` on title / summary / body.
+"""
+import re
 import uuid
+from typing import Optional
+
 from fastapi import Depends, HTTPException
 
 from models import NewsIn, NewsUpdateIn
@@ -12,6 +19,8 @@ def news_out(n: dict) -> dict:
         "summary": n.get("summary", ""),
         "body": n.get("body", ""),
         "cover_image": n.get("cover_image", ""),
+        "images": n.get("images", []) or [],
+        "template": n.get("template", "classic"),
         "tags": n.get("tags", []),
         "author_name": n.get("author_name", ""),
         "created_at": n.get("created_at"),
@@ -20,9 +29,24 @@ def news_out(n: dict) -> dict:
 
 def register(api, *, db, admin_tab_dep, iso, now_utc):
     @api.get("/news")
-    async def list_news():
-        cursor = db.news.find({}, {"_id": 0}).sort("created_at", -1).limit(100)
-        items = await cursor.to_list(100)
+    async def list_news(q: Optional[str] = None):
+        """List news articles, newest first. Optional `q` filters on
+        title / summary / body via case-insensitive regex. We escape the
+        user input to prevent regex injection but still allow substring
+        matches (which is what the member-facing search bar sends)."""
+        query: dict = {}
+        if q and q.strip():
+            safe = re.escape(q.strip())
+            query = {
+                "$or": [
+                    {"title": {"$regex": safe, "$options": "i"}},
+                    {"summary": {"$regex": safe, "$options": "i"}},
+                    {"body": {"$regex": safe, "$options": "i"}},
+                    {"tags": {"$regex": safe, "$options": "i"}},
+                ],
+            }
+        cursor = db.news.find(query, {"_id": 0}).sort("created_at", -1).limit(200)
+        items = await cursor.to_list(200)
         return [news_out(n) for n in items]
 
     @api.get("/news/{news_id}")

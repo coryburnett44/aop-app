@@ -16,7 +16,7 @@ Owns:
 The `award_out` serializer is owned here. Helpers (`db`, `get_current_user`,
 `admin_tab_dep`, `iso`, `now_utc`) are injected by `register(...)`.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from fastapi import Depends, HTTPException
@@ -42,6 +42,7 @@ def register(
     db,
     admin_tab_dep,
     get_current_user,
+    admin_role_of,
     iso,
     now_utc,
 ):
@@ -297,3 +298,294 @@ def register(
             g["award_count"] = counts.get(g["award_id"], 1)
         grants.sort(key=lambda x: x.get("granted_at", ""), reverse=True)
         return grants
+
+
+    # ---------- Eligibility computation (Iter 111) ----------
+    @api.get("/awards/eligibility")
+    async def awards_eligibility(year: int, admin: dict = Depends(admin_tab_dep("awards"))):
+        """Full Access admins only. Returns candidate members for each of the
+        seven programme awards for the given calendar year (Jan 1 → Dec 31).
+
+        Awards computed:
+          - service_ribbon        (1st complete active year, then every 5 years)
+          - fundraiser_ribbon     (top donor of the year)
+          - community_service     (>= 100 approved volunteer hours in year)
+          - ken_thompson          (top weighted-hours member per chapter)
+          - recruitment_ribbon    (top recruiter of the year)
+          - members_ribbon        (top 3 across hours + recruits + fundraising)
+          - chapter_of_the_year   (chapter with highest composite score)
+        """
+        if admin_role_of(admin) != "full":
+            raise HTTPException(status_code=403, detail="Awards eligibility is only visible to Full Access admins.")
+        try:
+            year_i = int(year)
+        except Exception:
+            raise HTTPException(status_code=400, detail="year must be an integer")
+        if year_i < 2000 or year_i > 2100:
+            raise HTTPException(status_code=400, detail="year out of range")
+
+        year_start = f"{year_i}-01-01"
+        year_end = f"{year_i}-12-31T23:59:59"
+
+        # ---- Load supporting data in parallel ----
+        users_map: dict = {}
+        chapters_map: dict = {}
+        async for u in db.users.find(
+            {"role": {"$ne": "system"}},
+            {
+                "_id": 0, "id": 1, "name": 1, "chapter_id": 1, "created_at": 1,
+                "status_override": 1, "status_history": 1, "auto_inactivated_at": 1,
+                "member_status": 1,
+            },
+        ):
+            users_map[u["id"]] = u
+        async for c in db.chapters.find({}, {"_id": 0, "id": 1, "name": 1}):
+            chapters_map[c["id"]] = c.get("name", "")
+
+        def user_row(uid: str, **extra) -> dict:
+            u = users_map.get(uid) or {}
+            return {
+                "user_id": uid,
+                "name": u.get("name", "Unknown"),
+                "chapter_id": u.get("chapter_id"),
+                "chapter_name": chapters_map.get(u.get("chapter_id") or "", ""),
+                **extra,
+            }
+
+        # ---- Approved hours in the target year ----
+        hours_by_user: dict = {}
+        hours_by_chapter: dict = {}
+        aop_by_user: dict = {}
+        trend_by_user: dict = {}
+        other_by_user: dict = {}
+        async for h in db.volunteer_hours.find(
+            {"status": "approved", "date": {"$gte": year_start, "$lte": year_end}},
+            {"_id": 0, "user_id": 1, "hours": 1, "event_type": 1},
+        ):
+            uid = h.get("user_id")
+            if not uid:
+                continue
+            hrs = float(h.get("hours") or 0)
+            hours_by_user[uid] = hours_by_user.get(uid, 0.0) + hrs
+            u = users_map.get(uid) or {}
+            cid = u.get("chapter_id")
+            if cid:
+                hours_by_chapter[cid] = hours_by_chapter.get(cid, 0.0) + hrs
+            et = (h.get("event_type") or "aop_related").lower()
+            if et == "aop_related":
+                aop_by_user[uid] = aop_by_user.get(uid, 0.0) + hrs
+            elif et == "trendsetters_spirits":
+                trend_by_user[uid] = trend_by_user.get(uid, 0.0) + hrs
+            else:
+                other_by_user[uid] = other_by_user.get(uid, 0.0) + hrs
+
+        # ---- Fundraising (completed donations) ----
+        donors_by_user: dict = {}
+        donors_by_chapter_users: dict = {}
+        async for t in db.transactions.find(
+            {"status": "completed", "type": "donation",
+             "created_at": {"$gte": year_start, "$lte": year_end}},
+            {"_id": 0, "user_id": 1, "amount": 1},
+        ):
+            uid = t.get("user_id")
+            if not uid:
+                continue
+            amt = float(t.get("amount") or 0)
+            donors_by_user[uid] = donors_by_user.get(uid, 0.0) + amt
+
+        # Distinct donor count per chapter (each unique user counts once).
+        for uid in donors_by_user:
+            u = users_map.get(uid) or {}
+            cid = u.get("chapter_id")
+            if cid:
+                donors_by_chapter_users.setdefault(cid, set()).add(uid)
+
+        # ---- Recruits per user ----
+        recruits_by_user: dict = {}
+        recruits_by_chapter: dict = {}
+        async for r in db.recruitments.find(
+            {"date_recruited": {"$gte": year_start, "$lte": year_end}},
+            {"_id": 0, "recruiter_id": 1},
+        ):
+            uid = r.get("recruiter_id")
+            if not uid:
+                continue
+            recruits_by_user[uid] = recruits_by_user.get(uid, 0) + 1
+            u = users_map.get(uid) or {}
+            cid = u.get("chapter_id")
+            if cid:
+                recruits_by_chapter[cid] = recruits_by_chapter.get(cid, 0) + 1
+
+        # ---- Checkins per chapter ----
+        checkins_by_chapter: dict = {}
+        async for c in db.checkins.find(
+            {"checked_in_at": {"$gte": year_start, "$lte": year_end}},
+            {"_id": 0, "user_id": 1},
+        ):
+            uid = c.get("user_id")
+            u = users_map.get(uid or "") or {}
+            cid = u.get("chapter_id")
+            if cid:
+                checkins_by_chapter[cid] = checkins_by_chapter.get(cid, 0) + 1
+
+        # ---- Chapter member counts (at start of year — approximation via
+        # current membership minus recruits added during the year) ----
+        chapter_member_counts: dict = {}
+        for u in users_map.values():
+            cid = u.get("chapter_id")
+            if not cid:
+                continue
+            chapter_member_counts[cid] = chapter_member_counts.get(cid, 0) + 1
+
+        # ---- Service Ribbon ----
+        def _year_of(iso_str: str) -> int:
+            try:
+                return int((iso_str or "")[:4])
+            except Exception:
+                return 0
+
+        def streak_start_year(u: dict) -> int:
+            """Year of the member's most recent active-membership start.
+            Priority: latest reactivation entry in status_history → falls
+            back to created_at."""
+            history = u.get("status_history") or []
+            # Look for the most recent transition to "active".
+            last_active = None
+            for h in history:
+                if (h.get("status") or "").lower() == "active":
+                    at = h.get("at") or ""
+                    if not last_active or at > last_active:
+                        last_active = at
+            if last_active:
+                return _year_of(last_active)
+            return _year_of(u.get("created_at") or "")
+
+        service_ribbon: list = []
+        for uid, u in users_map.items():
+            # Skip members currently marked inactive/deceased — they didn't
+            # complete an active year.
+            override = (u.get("status_override") or "").lower()
+            if override in ("inactive", "expired", "deceased"):
+                continue
+            start_y = streak_start_year(u)
+            if not start_y or start_y > year_i:
+                continue
+            years_complete = year_i - start_y
+            if years_complete <= 0:
+                continue
+            eligible = years_complete == 1 or (years_complete >= 5 and years_complete % 5 == 0)
+            if not eligible:
+                continue
+            service_ribbon.append(user_row(
+                uid,
+                years_complete=years_complete,
+                milestone="1st year" if years_complete == 1 else f"{years_complete}th year",
+                streak_start_year=start_y,
+            ))
+        service_ribbon.sort(key=lambda r: (-r["years_complete"], r["name"]))
+
+        # ---- Fundraiser Ribbon (top donor) ----
+        fundraiser_candidates = sorted(
+            [(uid, amt) for uid, amt in donors_by_user.items() if amt > 0],
+            key=lambda x: -x[1],
+        )
+        fundraiser_ribbon = [
+            user_row(uid, amount=round(amt, 2), rank=i + 1)
+            for i, (uid, amt) in enumerate(fundraiser_candidates[:5])
+        ]
+
+        # ---- Community Service Ribbon (>= 100 hrs) ----
+        community_service = [
+            user_row(uid, hours=round(hrs, 2))
+            for uid, hrs in hours_by_user.items() if hrs >= 100.0
+        ]
+        community_service.sort(key=lambda r: -r["hours"])
+
+        # ---- Dr. Ken Thompson — top per chapter by weighted AOP-event hours.
+        # Weighted score = 0.90 * AOP + 0.05 * Trendsetters + 0.05 * Other.
+        ken_thompson: list = []
+        best_per_chapter: dict = {}
+        for uid, u in users_map.items():
+            cid = u.get("chapter_id")
+            if not cid:
+                continue
+            aop = aop_by_user.get(uid, 0.0)
+            trend = trend_by_user.get(uid, 0.0)
+            other = other_by_user.get(uid, 0.0)
+            if aop + trend + other <= 0:
+                continue
+            score = 0.90 * aop + 0.05 * trend + 0.05 * other
+            cur = best_per_chapter.get(cid)
+            if not cur or score > cur[0]:
+                best_per_chapter[cid] = (score, uid, aop, trend, other)
+        for cid, (score, uid, aop, trend, other) in best_per_chapter.items():
+            ken_thompson.append(user_row(
+                uid,
+                weighted_score=round(score, 2),
+                aop_hours=round(aop, 2),
+                trendsetters_hours=round(trend, 2),
+                other_hours=round(other, 2),
+            ))
+        ken_thompson.sort(key=lambda r: (r["chapter_name"], -r["weighted_score"]))
+
+        # ---- Recruitment Ribbon ----
+        recruit_candidates = sorted(
+            [(uid, n) for uid, n in recruits_by_user.items() if n > 0],
+            key=lambda x: -x[1],
+        )
+        recruitment_ribbon = [
+            user_row(uid, recruits=n, rank=i + 1)
+            for i, (uid, n) in enumerate(recruit_candidates[:5])
+        ]
+
+        # ---- Member's Ribbon (top 3 in each of hours/recruits/fundraising) ----
+        top_hours = sorted(hours_by_user.items(), key=lambda x: -x[1])[:3]
+        top_recruits = sorted(recruits_by_user.items(), key=lambda x: -x[1])[:3]
+        top_fund = sorted(donors_by_user.items(), key=lambda x: -x[1])[:3]
+        member_bucket: dict = {}
+        for uid, hrs in top_hours:
+            member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Hours ({round(hrs, 2)})")
+        for uid, n in top_recruits:
+            member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Recruits ({n})")
+        for uid, amt in top_fund:
+            member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Fundraising (${round(amt, 2)})")
+        members_ribbon = [
+            user_row(uid, categories=data["categories"], category_count=len(data["categories"]))
+            for uid, data in member_bucket.items()
+        ]
+        members_ribbon.sort(key=lambda r: (-r["category_count"], r["name"]))
+
+        # ---- Chapter of the Year ----
+        chapter_of_the_year: list = []
+        for cid, cname in chapters_map.items():
+            recs = recruits_by_chapter.get(cid, 0)
+            hrs = hours_by_chapter.get(cid, 0.0)
+            donors = len(donors_by_chapter_users.get(cid, set()))
+            checkins = checkins_by_chapter.get(cid, 0)
+            member_count = chapter_member_counts.get(cid, 0)
+            # Denominator = members BEFORE the year's recruits were added.
+            base_members = max(1, member_count - recs)
+            score = (recs + hrs + donors + checkins) / base_members
+            chapter_of_the_year.append({
+                "chapter_id": cid,
+                "chapter_name": cname,
+                "recruits": recs,
+                "hours": round(hrs, 2),
+                "donors": donors,
+                "checkins": checkins,
+                "base_members": base_members,
+                "score": round(score, 2),
+            })
+        chapter_of_the_year.sort(key=lambda r: -r["score"])
+
+        return {
+            "year": year_i,
+            "computed_at": iso(now_utc()),
+            "service_ribbon": service_ribbon,
+            "fundraiser_ribbon": fundraiser_ribbon,
+            "community_service_ribbon": community_service,
+            "ken_thompson": ken_thompson,
+            "recruitment_ribbon": recruitment_ribbon,
+            "members_ribbon": members_ribbon,
+            "chapter_of_the_year": chapter_of_the_year,
+        }
