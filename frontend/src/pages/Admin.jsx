@@ -2503,15 +2503,17 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                 <div className="grid xl:grid-cols-2 gap-4">
                     <EligibilityCard
                         title="Service Ribbon"
-                        subtitle="1st complete year, then every 5th year of continuous active membership."
+                        subtitle="1st complete year, then every 5th year of continuous active membership. Eligible only once the anniversary date has been reached."
                         rows={data.service_ribbon}
                         empty="No members hit a service milestone this year."
                         columns={[
                             { key: "name", label: "Member" },
                             { key: "milestone", label: "Milestone" },
+                            { key: "join_date", label: "Date joined", format: (v) => v ? format(parseISO(v), "MMM d, yyyy") : "—" },
+                            { key: "anniversary_date", label: "Anniversary", format: (v) => v ? format(parseISO(v), "MMM d, yyyy") : "—" },
                             { key: "chapter_name", label: "Chapter" },
                         ]}
-                        onGrant={(r) => grant("Service Ribbon", r.user_id, `${r.milestone} of active membership (${data.year})`)}
+                        onGrant={(r) => grant("Service Ribbon", r.user_id, `${r.milestone} of active membership — anniversary ${r.anniversary_date}`)}
                         awardName="Service Ribbon"
                         testId="eligibility-service"
                     />

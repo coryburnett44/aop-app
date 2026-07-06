@@ -504,18 +504,23 @@ def register(
             chapter_member_counts[cid] = chapter_member_counts.get(cid, 0) + 1
 
         # ---- Service Ribbon ----
-        def _year_of(iso_str: str) -> int:
+        def _parse_date(iso_str: str):
+            """Return a `date` for an ISO/date-like string, or None on failure."""
+            if not iso_str:
+                return None
             try:
-                return int((iso_str or "")[:4])
+                # Strip time / timezone if present.
+                head = str(iso_str)[:10]
+                y, m, d = head.split("-")
+                return datetime(int(y), int(m), int(d), tzinfo=timezone.utc).date()
             except Exception:
-                return 0
+                return None
 
-        def streak_start_year(u: dict) -> int:
-            """Year of the member's most recent active-membership start.
+        def streak_start_date(u: dict):
+            """Full date of the member's most recent active-membership start.
             Priority: latest reactivation entry in status_history → falls
             back to join_date (from the admin Member Card) → created_at."""
             history = u.get("status_history") or []
-            # Look for the most recent transition to "active".
             last_active = None
             for h in history:
                 if (h.get("status") or "").lower() == "active":
@@ -523,30 +528,51 @@ def register(
                     if not last_active or at > last_active:
                         last_active = at
             if last_active:
-                return _year_of(last_active)
-            return _year_of(u.get("join_date") or u.get("created_at") or "")
+                return _parse_date(last_active)
+            return _parse_date(u.get("join_date") or u.get("created_at") or "")
+
+        # Anniversary must have occurred on or before the earlier of (today,
+        # year_end). This makes "eligible in calendar year Y" mean "the Nth
+        # anniversary has been reached inside year Y" — a member who joined
+        # 8 July 2025 does NOT qualify in 2026 until 8 July 2026 arrives.
+        from datetime import date as _dt_date
+        today = now_utc().date()
+        year_end_date = _dt_date(year_i, 12, 31)
+        eff_asof = min(today, year_end_date)
+
+        def _years_complete_asof(start: _dt_date, asof: _dt_date) -> int:
+            years = asof.year - start.year
+            # Not yet reached this year's anniversary?
+            if (asof.month, asof.day) < (start.month, start.day):
+                years -= 1
+            return max(0, years)
 
         service_ribbon: list = []
         for uid, u in users_map.items():
-            # Skip members currently marked inactive/deceased — they didn't
-            # complete an active year.
             override = (u.get("status_override") or "").lower()
             if override in ("inactive", "expired", "deceased"):
                 continue
-            start_y = streak_start_year(u)
-            if not start_y or start_y > year_i:
+            start_d = streak_start_date(u)
+            if not start_d or start_d > eff_asof:
                 continue
-            years_complete = year_i - start_y
+            years_complete = _years_complete_asof(start_d, eff_asof)
             if years_complete <= 0:
                 continue
             eligible = years_complete == 1 or (years_complete >= 5 and years_complete % 5 == 0)
             if not eligible:
                 continue
+            # The anniversary date that triggered eligibility (for display).
+            try:
+                anniversary = start_d.replace(year=start_d.year + years_complete)
+            except ValueError:
+                # Feb 29 → non-leap year → fall back to Feb 28.
+                anniversary = start_d.replace(year=start_d.year + years_complete, day=28)
             service_ribbon.append(user_row(
                 uid,
                 years_complete=years_complete,
                 milestone="1st year" if years_complete == 1 else f"{years_complete}th year",
-                streak_start_year=start_y,
+                join_date=start_d.isoformat(),
+                anniversary_date=anniversary.isoformat(),
             ))
         service_ribbon.sort(key=lambda r: (-r["years_complete"], r["name"]))
 
