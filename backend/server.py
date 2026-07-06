@@ -3068,14 +3068,52 @@ async def reconcile_awards():
     """Ensure the canonical AOP-specific Ribbons/Awards exist with up-to-date
     descriptions. Admin-added custom awards (and their grants) are PRESERVED —
     we never delete non-canonical awards anymore (Iter 35 fix: previous behavior
-    wiped admin-added awards + their grants on every production deploy)."""
+    wiped admin-added awards + their grants on every production deploy).
+
+    Iter 114 fix: the match is now fuzzy on apostrophes + suffix drift so a
+    user-renamed "Founder's Lifetime Achievement Award" is found and updated
+    instead of duplicated as a fresh "…Ribbon". We match the existing record
+    if any of the following normalise to the same string:
+       - lowercase
+       - straight vs curly apostrophes (' vs ’)
+       - trailing " Ribbon" vs " Award"
+    Descriptions are still refreshed, but the record's *name* is preserved
+    exactly as the admin set it (we never rename an existing award through
+    reconciliation)."""
+    def _norm(s: str) -> str:
+        s = (s or "").lower().strip().replace("’", "'")
+        for suffix in (" ribbon", " award"):
+            if s.endswith(suffix):
+                s = s[: -len(suffix)]
+                break
+        return s
+
+    # One pass to build a name → doc index so we don't re-query per spec.
+    existing_by_norm: dict = {}
+    async for a in db.awards.find({}, {"_id": 0, "id": 1, "name": 1}):
+        existing_by_norm.setdefault(_norm(a.get("name", "")), []).append(a)
+
     for spec in AOP_AWARDS:
-        existing = await db.awards.find_one({"name": spec["name"]})
-        if existing:
-            await db.awards.update_one({"id": existing["id"]}, {"$set": spec})
+        candidates = existing_by_norm.get(_norm(spec["name"]), [])
+        if candidates:
+            # Update the FIRST match with the fresh description/icon/color, and
+            # if extra duplicates snuck in from a prior deploy, collapse them.
+            keeper = candidates[0]
+            # Preserve the admin-set name — only refresh cosmetics/description.
+            refresh = {k: v for k, v in spec.items() if k not in ("name",)}
+            await db.awards.update_one({"id": keeper["id"]}, {"$set": refresh})
+            for dup in candidates[1:]:
+                # Reassign any grants pointing at the duplicate to the keeper,
+                # then remove the duplicate. Prevents grants being orphaned.
+                await db.award_grants.update_many(
+                    {"award_id": dup["id"]}, {"$set": {"award_id": keeper["id"]}},
+                )
+                await db.awards.delete_one({"id": dup["id"]})
+                logger.info(f"reconcile_awards: collapsed duplicate award '{dup.get('name')}' into keeper '{keeper.get('name')}'")
         else:
             doc = {**spec, "id": str(uuid.uuid4()), "created_at": iso(now_utc())}
             await db.awards.insert_one(doc)
+            logger.info(f"reconcile_awards: created missing award '{spec['name']}'")
 
 
 # ---------- 10-Year Anniversary umbrella event + 5 sub-events ----------
@@ -3084,14 +3122,33 @@ ANNIVERSARY_PARENT_TITLE = "Alpha Omega Phi 10-Year Anniversary"
 # Day 1 (29 Jul): Transportation Buses to Sip and Paint, Sip and Paint
 # Day 2 (30 Jul): Banquet
 # Day 3 (31 Jul): Transportation Buses to Top Golf, Top Golf
-ANNIVERSARY_START = datetime(2027, 7, 29, 0, 0, 0, tzinfo=timezone.utc)
-ANNIVERSARY_END = datetime(2027, 7, 31, 23, 59, 59, tzinfo=timezone.utc)
+#
+# Iter 114: `hour` fields below are EASTERN TIME (America/New_York), NOT UTC.
+# The previous seeder treated them as UTC → in late-July EDT (UTC-4) every
+# time displayed 4 hours later than intended (Top Golf hour=13 UTC → 9 AM
+# Eastern). Sub-event `hour` values are converted to UTC via zoneinfo at
+# insert time.
+try:
+    from zoneinfo import ZoneInfo  # stdlib on Python 3.9+
+    _EASTERN = ZoneInfo("America/New_York")
+except Exception:
+    _EASTERN = timezone(timedelta(hours=-5))  # crude fallback (no DST) — should never hit in prod
+
+def _et_to_utc(y: int, m: int, d: int, hour: int) -> datetime:
+    """Return a UTC datetime for the given Eastern-time wall-clock time."""
+    local = datetime(y, m, d, hour, 0, 0, tzinfo=_EASTERN)
+    return local.astimezone(timezone.utc)
+
+ANNIVERSARY_START = _et_to_utc(2027, 7, 29, 0)                  # midnight ET on Day 1
+ANNIVERSARY_END = _et_to_utc(2027, 7, 31, 23).replace(minute=59, second=59)
 ANNIVERSARY_SUB_EVENTS = [
+    # `hour` is Eastern Time. Per user request: Top Golf starts at 6 PM ET
+    # (18) — do NOT change these back to 13 or the times will drift again.
     {"title": "Transportation to Sip & Paint", "category": "transportation", "allows_ticket_types": True, "day_offset": 0, "hour": 16},
     {"title": "Sip & Paint",                   "category": "social",         "allows_ticket_types": True, "day_offset": 0, "hour": 18},
     {"title": "Sneaker Ball Banquet",          "category": "formal",         "allows_ticket_types": True, "day_offset": 1, "hour": 18},
-    {"title": "Transportation to Top Golf",    "category": "transportation", "allows_ticket_types": True, "day_offset": 2, "hour": 11},
-    {"title": "Top Golf",                      "category": "social",         "allows_ticket_types": True, "day_offset": 2, "hour": 13},
+    {"title": "Transportation to Top Golf",    "category": "transportation", "allows_ticket_types": True, "day_offset": 2, "hour": 16},
+    {"title": "Top Golf",                      "category": "social",         "allows_ticket_types": True, "day_offset": 2, "hour": 18},
 ]
 # Legacy titles that the seeder needs to clean up if they still exist from earlier names.
 ANNIVERSARY_LEGACY_TITLES = {
@@ -3107,13 +3164,17 @@ async def seed_anniversary_subevents():
     - Parent event blocks all three days (start 29 Jul, end 31 Jul).
     - Sub-events are placed on their assigned days (29 / 30 / 31 July).
     - Any anniversary-titled event that is NOT in the canonical list is removed.
-    - Existing parent/sub events are updated (idempotent re-run on every startup)."""
+
+    Iter 114 fix: on UPDATE, we NO LONGER overwrite `start_at`/`end_at`. Every
+    backend restart used to reset admin-adjusted event/sub-event times back to
+    the hardcoded UTC hours, which is why Top Golf kept reverting to 9 AM
+    Eastern (13:00 UTC). Times are only written on the initial INSERT."""
     parent = await db.events.find_one({"title": ANNIVERSARY_PARENT_TITLE})
-    parent_updates = {
+    # Fields safe to refresh on every run — description, location, category —
+    # WITHOUT touching admin-adjusted times.
+    parent_cosmetics = {
         "description": "Three-day 10-year anniversary celebration for Alpha Omega Phi Military Fraternity & Sorority, Inc. — Sip & Paint, Banquet, Top Golf and transportation, 29-31 July 2027.",
         "location": "Multiple venues",
-        "start_at": iso(ANNIVERSARY_START),
-        "end_at": iso(ANNIVERSARY_END),
         "category": "anniversary",
         "parent_event_id": None,
         "allows_ticket_types": False,
@@ -3122,7 +3183,9 @@ async def seed_anniversary_subevents():
         parent_doc = {
             "id": str(uuid.uuid4()),
             "title": ANNIVERSARY_PARENT_TITLE,
-            **parent_updates,
+            **parent_cosmetics,
+            "start_at": iso(ANNIVERSARY_START),
+            "end_at": iso(ANNIVERSARY_END),
             "capacity": 0,
             "cover_image": "",
             "price": 0.0,
@@ -3134,43 +3197,43 @@ async def seed_anniversary_subevents():
         parent = parent_doc
         logger.info("Seeded 10-Year Anniversary parent event (29-31 Jul 2027)")
     else:
-        await db.events.update_one({"id": parent["id"]}, {"$set": parent_updates})
+        # Preserve admin-set start_at/end_at — only refresh cosmetic fields.
+        await db.events.update_one({"id": parent["id"]}, {"$set": parent_cosmetics})
 
-    # Reconcile sub-events: insert missing, update existing — but skip any
-    # sub-event title that an admin has explicitly deleted (tombstoned in
-    # `deleted_default_subevents`). This is the same pattern used by
-    # `deleted_default_albums` for photo albums; without it, a deleted
+    # Reconcile sub-events: insert missing, update cosmetics on existing — but
+    # skip any sub-event title that an admin has explicitly deleted
+    # (tombstoned in `deleted_default_subevents`). This is the same pattern
+    # used by `deleted_default_albums` for photo albums; without it, a deleted
     # sub-event re-appears on every backend restart and admins lose work.
     tombstoned = set()
     async for t in db.deleted_default_subevents.find({"parent_title": ANNIVERSARY_PARENT_TITLE}, {"_id": 0, "title": 1}):
         tombstoned.add(t.get("title"))
     for spec in ANNIVERSARY_SUB_EVENTS:
         if spec["title"] in tombstoned:
-            # Admin removed this sub-event deliberately. Do not recreate, do
-            # not even update if it somehow still exists (a re-insertion via
-            # admin UI counts as a fresh canonical seed → caller can clear
-            # the tombstone first via /events/admin/restore-subevent if we
-            # ever expose that). Leaving it alone is the safer default.
             continue
-        sub_start = ANNIVERSARY_START.replace(hour=spec["hour"]) + timedelta(days=spec["day_offset"])
+        # Compute canonical start/end (Eastern Time → UTC) for the INSERT path.
+        base_date = datetime(2027, 7, 29 + spec["day_offset"])
+        sub_start = _et_to_utc(base_date.year, base_date.month, base_date.day, spec["hour"])
         sub_end = sub_start + timedelta(hours=3)
-        sub_updates = {
+        sub_cosmetics = {
             "title": spec["title"],
             "description": f"Part of the {ANNIVERSARY_PARENT_TITLE} — 29-31 July 2027.",
-            "location": "TBD",
-            "start_at": iso(sub_start),
-            "end_at": iso(sub_end),
             "category": spec["category"],
             "parent_event_id": parent["id"],
             "allows_ticket_types": spec["allows_ticket_types"],
         }
         existing = await db.events.find_one({"title": spec["title"], "parent_event_id": parent["id"]})
         if existing:
-            await db.events.update_one({"id": existing["id"]}, {"$set": sub_updates})
+            # Preserve admin-adjusted start_at / end_at / location. Only refresh
+            # cosmetics. (Previous behavior overwrote start_at on every restart.)
+            await db.events.update_one({"id": existing["id"]}, {"$set": sub_cosmetics})
         else:
             doc = {
                 "id": str(uuid.uuid4()),
-                **sub_updates,
+                **sub_cosmetics,
+                "location": "TBD",
+                "start_at": iso(sub_start),
+                "end_at": iso(sub_end),
                 "capacity": 0,
                 "cover_image": "",
                 "price": 0.0,
@@ -3179,7 +3242,7 @@ async def seed_anniversary_subevents():
                 "created_at": iso(now_utc()),
             }
             await db.events.insert_one(doc)
-            logger.info(f"Seeded sub-event: {spec['title']} ({sub_start.date()})")
+            logger.info(f"Seeded sub-event: {spec['title']} ({sub_start.date()} @ {spec['hour']:02d}:00 ET)")
 
     # NOTE: This function used to also DELETE any "stale anniversary event" and
     # WIPE all non-anniversary events from the events collection on every startup.
