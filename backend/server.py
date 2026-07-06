@@ -3447,6 +3447,7 @@ routes_payments.register(
     require_admin=require_admin,
     is_chapter_scoped=is_chapter_scoped,
     chapter_scope_user_ids=chapter_scope_user_ids,
+    admin_role_of=admin_role_of,
     iso=iso,
     now_utc=now_utc,
 )

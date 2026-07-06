@@ -11,6 +11,7 @@ import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
 import { FullEditHoursDialog } from "./Hours";
 import { toast } from "sonner";
+import { useAuth } from "../context/AuthContext";
 
 function csvify(rows, headers) {
     const escape = (v) => {
@@ -1069,9 +1070,110 @@ function HoursReport() {
         </div>
     );
 }
+function DonationEditDialog({ tx, causes, onSaved, trigger }) {
+    const [open, setOpen] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [form, setForm] = useState({
+        date: tx.created_at ? tx.created_at.slice(0, 10) : "",
+        amount: String(tx.amount ?? ""),
+        cause_id: tx.cause_id || "",
+        anonymous: !!tx.anonymous,
+        note: tx.description || "",
+    });
+
+    // Reset the form each time the dialog is (re)opened so a fresh edit
+    // starts from the current transaction values (in case another admin
+    // just amended it).
+    useEffect(() => {
+        if (open) {
+            setForm({
+                date: tx.created_at ? tx.created_at.slice(0, 10) : "",
+                amount: String(tx.amount ?? ""),
+                cause_id: tx.cause_id || "",
+                anonymous: !!tx.anonymous,
+                note: tx.description || "",
+            });
+        }
+    }, [open, tx.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    async function save() {
+        const payload = {};
+        const amt = parseFloat(form.amount);
+        if (isNaN(amt) || amt <= 0) { toast.error("Amount must be a positive number"); return; }
+        payload.amount = amt;
+        if (!form.date) { toast.error("Date is required"); return; }
+        payload.date = form.date;
+        // Pass "" to explicitly clear the cause link.
+        payload.cause_id = form.cause_id === "__none__" ? "" : form.cause_id;
+        payload.anonymous = !!form.anonymous;
+        payload.note = form.note;
+        setSaving(true);
+        try {
+            await api.put(`/transactions/${tx.id}`, payload);
+            toast.success("Donation updated");
+            setOpen(false);
+            onSaved?.();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Update failed");
+        }
+        setSaving(false);
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <div onClick={(e) => { e.stopPropagation(); }}>{trigger && <span onClick={() => setOpen(true)}>{trigger}</span>}</div>
+            <DialogContent className="max-w-lg" data-testid="donation-edit-dialog">
+                <DialogHeader><DialogTitle className="font-heading text-xl">Edit donation</DialogTitle></DialogHeader>
+                <div className="space-y-3 mt-2">
+                    <div className="text-sm text-muted-foreground">
+                        <div><strong>Donor:</strong> {tx.user_name || (tx.anonymous ? "Anonymous" : "—")}</div>
+                    </div>
+                    <div>
+                        <Label>Date</Label>
+                        <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="rounded-xl mt-1.5" data-testid="donation-edit-date" />
+                    </div>
+                    <div>
+                        <Label>Amount (USD)</Label>
+                        <Input type="number" step="0.01" min="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="rounded-xl mt-1.5" data-testid="donation-edit-amount" />
+                    </div>
+                    <div>
+                        <Label>Cause</Label>
+                        <Select value={form.cause_id || "__none__"} onValueChange={(v) => setForm({ ...form, cause_id: v })}>
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="donation-edit-cause"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="__none__">(No cause / general fund)</SelectItem>
+                                {causes.map((c) => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div>
+                        <Label className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked={form.anonymous} onChange={(e) => setForm({ ...form, anonymous: e.target.checked })} data-testid="donation-edit-anonymous" />
+                            <span>Show as anonymous on leaderboard</span>
+                        </Label>
+                    </div>
+                    <div>
+                        <Label>Note / description (optional)</Label>
+                        <Input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="rounded-xl mt-1.5" data-testid="donation-edit-note" />
+                    </div>
+                </div>
+                <div className="flex justify-end gap-2 mt-4">
+                    <Button variant="outline" onClick={() => setOpen(false)} className="rounded-full">Cancel</Button>
+                    <Button onClick={save} disabled={saving} className="rounded-full bg-primary hover:bg-primary/90" data-testid="donation-edit-save">
+                        {saving ? "Saving…" : "Save changes"}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+
 
 function DonationsReport() {
     const now = new Date();
+    const { user: me } = useAuth();
+    const canMutateDonations = ["full", "operations_manager"].includes(me?.admin_role || "full");
     const [view, setView] = useState("entries"); // entries | by_member | by_chapter | by_period
     const [chapters, setChapters] = useState([]);
     const [causes, setCauses] = useState([]);
@@ -1222,7 +1324,14 @@ function DonationsReport() {
                     {view === "entries" && (
                         <>
                             <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-                                <tr><th className="text-left px-4 py-2.5">Date</th><th className="text-left px-4 py-2.5">Donor</th><th className="text-right px-4 py-2.5">Amount</th><th className="text-left px-4 py-2.5">Cause</th><th className="text-left px-4 py-2.5">Status</th></tr>
+                                <tr>
+                                    <th className="text-left px-4 py-2.5">Date</th>
+                                    <th className="text-left px-4 py-2.5">Donor</th>
+                                    <th className="text-right px-4 py-2.5">Amount</th>
+                                    <th className="text-left px-4 py-2.5">Cause</th>
+                                    <th className="text-left px-4 py-2.5">Status</th>
+                                    {canMutateDonations && <th className="text-right px-4 py-2.5">Actions</th>}
+                                </tr>
                             </thead>
                             <tbody>
                                 {rows.map((t) => (
@@ -1232,6 +1341,39 @@ function DonationsReport() {
                                         <td className="px-4 py-2.5 text-right font-bold">{fmtMoney(t.amount)}</td>
                                         <td className="px-4 py-2.5 text-muted-foreground">{causeDisplay(t, causes)}</td>
                                         <td className="px-4 py-2.5 text-xs uppercase tracking-wider font-semibold">{t.status}</td>
+                                        {canMutateDonations && (
+                                            <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                                <DonationEditDialog
+                                                    tx={t}
+                                                    causes={causes}
+                                                    onSaved={run}
+                                                    trigger={
+                                                        <Button size="icon" variant="ghost" className="rounded-full h-8 w-8" data-testid={`donations-edit-${t.id}`} title="Edit donation">
+                                                            <Pencil className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    }
+                                                />
+                                                <Button
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    className="rounded-full h-8 w-8"
+                                                    title="Delete donation"
+                                                    data-testid={`donations-delete-${t.id}`}
+                                                    onClick={async () => {
+                                                        if (!confirm(`Delete ${fmtMoney(t.amount)} donation from ${t.user_name || "this donor"}? This cannot be undone.`)) return;
+                                                        try {
+                                                            await api.delete(`/transactions/${t.id}`);
+                                                            toast.success("Donation removed");
+                                                            run();
+                                                        } catch (e) {
+                                                            toast.error(e.response?.data?.detail || "Delete failed");
+                                                        }
+                                                    }}
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                                </Button>
+                                            </td>
+                                        )}
                                     </tr>
                                 ))}
                             </tbody>

@@ -20,6 +20,7 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from models import TransactionIn
+from routes.donations import recompute_cause_totals
 
 
 # ---------- Zeffy receipt format detection ----------
@@ -108,7 +109,7 @@ def _is_inactive_for_dues(user: dict) -> bool:
     return False
 
 
-def register(api, *, db, get_current_user, require_admin, is_chapter_scoped, chapter_scope_user_ids, iso, now_utc):
+def register(api, *, db, get_current_user, require_admin, is_chapter_scoped, chapter_scope_user_ids, admin_role_of, iso, now_utc):
     """Wire payments/transactions routes onto the given api router."""
 
     # ---------- Manual admin transaction logging ----------
@@ -290,11 +291,142 @@ def register(api, *, db, get_current_user, require_admin, is_chapter_scoped, cha
         items = await cursor.to_list(500)
         return [tx_out(t) for t in items]
 
+    # Roles allowed to edit/delete donation transactions. Governor Managers,
+    # Membership Managers, etc. are read-only for donations.
+    _DONATION_MUTATE_ROLES = {"full", "operations_manager"}
+
+    def _require_donation_mutator(admin: dict):
+        role = admin_role_of(admin) or "full"
+        if role not in _DONATION_MUTATE_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Only Full Access or Operations Manager admins can edit or delete donation submissions.",
+            )
+
+    class DonationEditIn(BaseModel):
+        amount: Optional[float] = Field(default=None, gt=0, le=1_000_000)
+        # `date` accepts an ISO date/datetime string OR a full datetime. Stored
+        # as `created_at` so reports/leaderboards (which filter by created_at)
+        # see the change immediately.
+        date: Optional[str] = None
+        cause_id: Optional[str] = None  # empty string means "clear cause link"
+        anonymous: Optional[bool] = None
+        note: Optional[str] = None
+
+    @api.put("/transactions/{tx_id}")
+    async def admin_edit_transaction(tx_id: str, body: DonationEditIn, admin: dict = Depends(require_admin)):
+        """Full Access + Operations Manager admins can amend a donation
+        submission's amount / date / cause. Other admin roles get 403.
+
+        Any change to amount or cause_id triggers `recompute_cause_totals`
+        on both the old and new cause so raised_amount stays accurate."""
+        _require_donation_mutator(admin)
+        existing = await db.transactions.find_one({"id": tx_id}, {"_id": 0})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        if existing.get("type") != "donation":
+            raise HTTPException(
+                status_code=400,
+                detail="This endpoint edits donation transactions only. Use dues/renewal endpoints for other types.",
+            )
+
+        updates: dict = {}
+        old_cause_id = existing.get("cause_id")
+        new_cause_id = old_cause_id
+
+        if body.amount is not None:
+            updates["amount"] = float(body.amount)
+
+        if body.date is not None:
+            raw = body.date.strip()
+            if not raw:
+                raise HTTPException(status_code=400, detail="date cannot be empty")
+            # Accept "YYYY-MM-DD" or full ISO.
+            try:
+                if len(raw) == 10:
+                    dt = datetime.strptime(raw, "%Y-%m-%d")
+                else:
+                    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"could not parse date '{raw}' — expected YYYY-MM-DD or ISO 8601")
+            updates["created_at"] = iso(dt)
+
+        if body.cause_id is not None:
+            if body.cause_id.strip() == "":
+                updates["cause_id"] = None
+                updates["cause_label"] = ""
+                new_cause_id = None
+            else:
+                cause = await db.causes.find_one({"id": body.cause_id}, {"_id": 0, "id": 1, "title": 1})
+                if not cause:
+                    raise HTTPException(status_code=404, detail=f"cause '{body.cause_id}' not found")
+                updates["cause_id"] = cause["id"]
+                updates["cause_label"] = cause.get("title", "")
+                new_cause_id = cause["id"]
+
+        if body.anonymous is not None:
+            updates["anonymous"] = bool(body.anonymous)
+            # Keep display name consistent with anonymous flag.
+            if body.anonymous:
+                updates["user_name"] = "Anonymous"
+            else:
+                # Restore name from the user record.
+                u = await db.users.find_one({"id": existing["user_id"]}, {"_id": 0, "name": 1, "email": 1})
+                if u:
+                    updates["user_name"] = u.get("name") or u.get("email", "")
+
+        if body.note is not None:
+            updates["description"] = body.note.strip()
+
+        if not updates:
+            return tx_out(existing)
+
+        # Audit trail: append a history entry so we can trace who changed what.
+        history = list(existing.get("edit_history") or [])
+        history.append({
+            "at": iso(now_utc()),
+            "by": admin.get("id"),
+            "by_name": admin.get("name", "Admin"),
+            "changes": {
+                k: {"from": existing.get(k), "to": v} for k, v in updates.items()
+                if k != "edit_history"
+            },
+        })
+        updates["edit_history"] = history
+        updates["edited_at"] = iso(now_utc())
+        updates["edited_by"] = admin.get("id")
+        updates["edited_by_name"] = admin.get("name", "Admin")
+
+        await db.transactions.update_one({"id": tx_id}, {"$set": updates})
+
+        # Recompute totals for any cause whose donations changed.
+        touched: set = set()
+        if new_cause_id and (new_cause_id != old_cause_id or "amount" in updates):
+            touched.add(new_cause_id)
+        if old_cause_id and old_cause_id != new_cause_id:
+            touched.add(old_cause_id)
+        elif old_cause_id and "amount" in updates:
+            touched.add(old_cause_id)
+        for cid in touched:
+            await recompute_cause_totals(cid)
+
+        updated = await db.transactions.find_one({"id": tx_id}, {"_id": 0})
+        return tx_out(updated)
+
     @api.delete("/transactions/{tx_id}")
-    async def admin_delete_transaction(tx_id: str, _: dict = Depends(require_admin)):
+    async def admin_delete_transaction(tx_id: str, admin: dict = Depends(require_admin)):
+        existing = await db.transactions.find_one({"id": tx_id}, {"_id": 0, "type": 1, "cause_id": 1})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Not found")
+        # Iter 114: donation removals restricted to Full + Operations. Other tx
+        # types (renewals, credits, etc.) keep the previous open policy.
+        if existing.get("type") == "donation":
+            _require_donation_mutator(admin)
         res = await db.transactions.delete_one({"id": tx_id})
         if res.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
+        if existing.get("type") == "donation" and existing.get("cause_id"):
+            await recompute_cause_totals(existing["cause_id"])
         return {"ok": True}
 
     @api.get("/me/transactions")
