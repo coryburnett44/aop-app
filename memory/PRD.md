@@ -15,6 +15,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 112 — Awards eligibility fixes + catalog ordering + Directory join year (2026-02-27) [FIX+ENHANCEMENT]
+User reports: eligibility "Grant" buttons were resolving to the wrong award (Community Service → Ken Thompson; Member's → Life Membership), year selector only went 5 years back, Service Ribbon ignored the admin-set Year Joined, join year missing from Directory, and awards catalog needed a canonical order (or admin drag-rank).
+
+- **Grant-target matcher fix (`pages/Admin.jsx::grant`)**: replaced case-insensitive `includes()` (substring) with exact-name-first + prefix fallback. Passed the fully qualified award names to `grant()` for Community Service Ribbon, Dr. Ken Thompson Distinguished Community Service Ribbon, and Member's Ribbon so "Community Service" no longer bleeds into "…Dr. Ken Thompson Distinguished Community Service Ribbon" and "Member" no longer resolves to "Life Membership Ribbon".
+- **Year selector back to 2017 (`AwardEligibilityPanel`)**: dropdown now enumerates `currentYear+1` down to `2017` (previously stopped at `currentYear − 5`).
+- **Service Ribbon uses `join_date` (`routes/awards.py::streak_start_year`)**: streak start now priority-chains `status_history` reactivation date → `join_date` (from the admin Member Card) → `created_at`. So members whose account was created after their actual induction still get the correct 1st/5th/10th year streak.
+- **Directory shows Year Joined (`pages/Directory.jsx`)**: added a `Joined YYYY` line to each member grid card and the profile-dialog "Joined MMM d, yyyy" now reads `join_date || created_at`.
+- **Awards catalog ordering**:
+  - Backend `routes/awards.py`: new `sort_order` field on awards. `award_out` returns it. `list_awards` sorts by explicit `sort_order` (falling back to a canonical AOP order via `_default_sort_for` — fuzzy match tolerates "Ribbon"/"Award" suffix drift and curly apostrophes). Full Access admins have a new `PUT /api/awards/reorder` endpoint that persists a client-supplied order (403 for Governor Manager).
+  - Frontend `AwardsAdmin`: cards now show a `#N` rank prefix and ↑/↓ buttons (Full Access only) that call `/awards/reorder`. A **Reset to AOP default order** button pushes the canonical order specified by the user (Life Membership → Federation Ribbon). Public `/awards` catalog respects the same order automatically.
+- Verified end-to-end via curl + screenshots: catalog now lists Life Membership Ribbon → Federation Ribbon in the requested order; Governor Manager receives 403 on reorder; Directory cards + member-profile dialog both display the Year Joined.
+
 ### Iteration 111 — News multi-image + templates, News search, Governor auto-approve removal, Awards eligibility (2026-02-27) [FEATURE]
 User request bundle: (a) News editor to support multiple images + layout templates (2/3 columns, image-beside-text, gallery, hero); (b) member-facing News search; (c) revoke auto-approve authority from Governor Manager admins; (d) show Full Access admins which members are eligible for each programme award (Service Ribbon, Fundraiser, Community Service, Dr. Ken Thompson, Recruitment, Member's, Chapter of the Year) using calendar-year criteria.
 

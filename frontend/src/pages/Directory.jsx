@@ -198,6 +198,9 @@ export default function Directory() {
                                     {m.phone && <div className="flex items-start gap-2"><Phone className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />{m.phone}</div>}
                                     {fullAddress && <div className="flex items-start gap-2"><MapPin className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" /><span>{fullAddress}</span></div>}
                                     <div className="flex items-start gap-2"><Shield className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />{chapterName(m.chapter_id)}</div>
+                                    {(m.join_date || m.created_at) && (
+                                        <div className="flex items-start gap-2"><Calendar className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />Joined {format(parseISO(m.join_date || m.created_at), "yyyy")}</div>
+                                    )}
                                 </div>
                                 <div className="mt-3 flex flex-wrap gap-1.5">
                                     {m.role === "admin" && (
@@ -258,7 +261,7 @@ function MemberDetail({ member, chapters }) {
                 {fullAddress && <Row icon={<MapPin className="h-4 w-4" />}>{fullAddress}</Row>}
                 {chapter && <Row icon={<Shield className="h-4 w-4" />}>{chapter.name}{chapter.region ? ` · ${chapter.region}` : ""}{chapter.state ? ` (${chapter.state})` : ""}</Row>}
                 {d.branch_of_service && <Row icon={<Shield className="h-4 w-4" />}>{d.branch_of_service}</Row>}
-                {d.created_at && <Row icon={<Calendar className="h-4 w-4" />}>Joined {format(parseISO(d.created_at), "MMM d, yyyy")}</Row>}
+                {(d.join_date || d.created_at) && <Row icon={<Calendar className="h-4 w-4" />}>Joined {format(parseISO(d.join_date || d.created_at), "MMM d, yyyy")}</Row>}
             </div>
 
             <SocialIcons member={d} size="h-9 w-9" stop={false} />

@@ -2318,6 +2318,7 @@ function HoursAdmin() {
 function AwardsAdmin() {
     const [awards, setAwards] = useState([]);
     const [members, setMembers] = useState([]);
+    const [savingOrder, setSavingOrder] = useState(false);
     const { user: me } = useAuth();
     const isFullAdmin = (me?.admin_role || "full") === "full";
 
@@ -2330,26 +2331,103 @@ function AwardsAdmin() {
 
     async function del(id) { if (!confirm("Delete this award?")) return; await api.delete(`/awards/${id}`); load(); }
 
+    async function persistOrder(next) {
+        setAwards(next);
+        setSavingOrder(true);
+        try {
+            await api.put("/awards/reorder", { ordered_ids: next.map((a) => a.id) });
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "Reorder failed");
+            load();
+        }
+        setSavingOrder(false);
+    }
+
+    function move(idx, dir) {
+        const next = [...awards];
+        const t = idx + dir;
+        if (t < 0 || t >= next.length) return;
+        [next[idx], next[t]] = [next[t], next[idx]];
+        persistOrder(next);
+    }
+
+    async function resetToDefault() {
+        if (!confirm("Reset the awards catalog to the default AOP order? Any custom ordering will be lost.")) return;
+        // Send an empty list so the backend falls back to defaults; simpler: clear
+        // sort_order on every award via reorder with an alphabetically-sorted
+        // reset would be wrong. Instead persist the canonical order by name.
+        const canonical = [
+            "Life Membership Ribbon",
+            "Founder's Lifetime Achievement Award",
+            "Pauline Tate Dedication Ribbon",
+            "Member's Ribbon",
+            "Recruitment Ribbon",
+            "Dr. Ken Thompson Distinguished Community Service Ribbon",
+            "Master Instructor Ribbon",
+            "Instructor Ribbon",
+            "National Leadership Ribbon",
+            "State Leadership Ribbon",
+            "Community Service Ribbon",
+            "Fundraiser Ribbon",
+            "Joint Planning Ribbon",
+            "Organization Planning Ribbon",
+            "Service Ribbon",
+            "Alpha Omega Phi Ribbon",
+            "Federation Ribbon",
+        ];
+        const byName = new Map(awards.map((a) => [a.name.toLowerCase().replace(/’/g, "'").trim(), a]));
+        const ordered = [];
+        for (const n of canonical) {
+            const key = n.toLowerCase().replace(/’/g, "'").trim();
+            if (byName.has(key)) { ordered.push(byName.get(key)); byName.delete(key); }
+        }
+        // Append any custom awards (not in the canonical list) at the end.
+        for (const a of byName.values()) ordered.push(a);
+        await persistOrder(ordered);
+        toast.success("Awards catalog reset to default AOP order");
+    }
+
     return (
         <div>
-            <div className="flex justify-end mb-4">
-                <AwardDialog onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-award-btn"><Plus className="h-4 w-4 mr-1" />New award</Button>} />
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <div className="text-xs text-muted-foreground">
+                    {isFullAdmin ? "Use ↑ / ↓ to change the order shown to members on the /awards catalog." : "Contact a Full Access admin to change the catalog order."}
+                </div>
+                <div className="flex items-center gap-2">
+                    {isFullAdmin && (
+                        <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={resetToDefault} data-testid="awards-reset-order">
+                            Reset to AOP default order
+                        </Button>
+                    )}
+                    <AwardDialog onSaved={load} trigger={<Button className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="new-award-btn"><Plus className="h-4 w-4 mr-1" />New award</Button>} />
+                </div>
             </div>
+            {savingOrder && <div className="text-xs text-muted-foreground mb-2">Saving order…</div>}
             <div className="grid md:grid-cols-2 gap-4">
-                {awards.map((a) => (
+                {awards.map((a, idx) => (
                     <div key={a.id} className="bg-card border border-border rounded-2xl p-5" data-testid={`admin-award-${a.id}`}>
-                        <div className="flex items-start justify-between">
-                            <div>
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
                                 <div className="font-heading font-semibold text-lg flex items-center gap-2">
-                                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: a.color }} /> {a.name}
+                                    <span className="text-xs text-muted-foreground font-normal shrink-0">#{idx + 1}</span>
+                                    <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
+                                    <span className="truncate">{a.name}</span>
                                 </div>
                                 <div className="text-sm text-muted-foreground mt-1">{a.description}</div>
                                 <div className="text-xs text-muted-foreground mt-2">Granted {a.granted_count}× · icon: {a.icon}</div>
                             </div>
-                            <div className="flex gap-1">
-                                <GrantAwardDialog award={a} members={members} onSaved={load} />
-                                <AwardDialog award={a} onSaved={load} trigger={<Button variant="outline" size="sm" className="rounded-full">Edit</Button>} />
-                                <Button variant="ghost" size="icon" onClick={() => del(a.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            <div className="flex flex-col gap-1 items-end shrink-0">
+                                {isFullAdmin && (
+                                    <div className="flex gap-1">
+                                        <Button type="button" variant="ghost" size="icon" onClick={() => move(idx, -1)} disabled={idx === 0 || savingOrder} data-testid={`award-up-${a.id}`}>↑</Button>
+                                        <Button type="button" variant="ghost" size="icon" onClick={() => move(idx, 1)} disabled={idx === awards.length - 1 || savingOrder} data-testid={`award-down-${a.id}`}>↓</Button>
+                                    </div>
+                                )}
+                                <div className="flex gap-1">
+                                    <GrantAwardDialog award={a} members={members} onSaved={load} />
+                                    <AwardDialog award={a} onSaved={load} trigger={<Button variant="outline" size="sm" className="rounded-full">Edit</Button>} />
+                                    <Button variant="ghost" size="icon" onClick={() => del(a.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2379,9 +2457,16 @@ function AwardEligibilityPanel({ awards, onGranted }) {
     useEffect(() => { refresh(year); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [year]);
 
     async function grant(awardName, userId, reason) {
-        // Find best matching award by name (case-insensitive contains).
-        const target = awards.find((a) => (a.name || "").toLowerCase().includes(awardName.toLowerCase()));
-        if (!target) { toast.error(`No award named like "${awardName}" — create one first.`); return; }
+        // Match by exact name first (case-insensitive), then by prefix — this
+        // prevents "Community Service Ribbon" from grabbing "Dr. Ken Thompson
+        // Distinguished Community Service Ribbon" and prevents "Member's
+        // Ribbon" from grabbing "Life Membership Ribbon".
+        const wanted = awardName.toLowerCase().trim();
+        let target = awards.find((a) => (a.name || "").toLowerCase().trim() === wanted);
+        if (!target) {
+            target = awards.find((a) => (a.name || "").toLowerCase().trim().startsWith(wanted));
+        }
+        if (!target) { toast.error(`No award named "${awardName}" — create one first.`); return; }
         try {
             await api.post(`/awards/${target.id}/grant`, { user_id: userId, reason });
             toast.success(`Granted "${target.name}"`);
@@ -2390,7 +2475,7 @@ function AwardEligibilityPanel({ awards, onGranted }) {
     }
 
     const yearOptions = [];
-    for (let y = now.getFullYear() + 1; y >= now.getFullYear() - 5; y--) yearOptions.push(y);
+    for (let y = now.getFullYear() + 1; y >= 2017; y--) yearOptions.push(y);
 
     return (
         <div className="mt-10 border-t pt-8" data-testid="awards-eligibility-panel">
@@ -2455,7 +2540,7 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                             { key: "hours", label: "Hours" },
                             { key: "chapter_name", label: "Chapter" },
                         ]}
-                        onGrant={(r) => grant("Community Service", r.user_id, `${r.hours}h volunteered (${data.year})`)}
+                        onGrant={(r) => grant("Community Service Ribbon", r.user_id, `${r.hours}h volunteered (${data.year})`)}
                         awardName="Community Service Ribbon"
                         testId="eligibility-community"
                     />
@@ -2470,8 +2555,8 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                             { key: "weighted_score", label: "Score" },
                             { key: "aop_hours", label: "AOP" },
                         ]}
-                        onGrant={(r) => grant("Ken Thompson", r.user_id, `Top chapter member (score ${r.weighted_score}) (${data.year})`)}
-                        awardName="Dr. Ken Thompson"
+                        onGrant={(r) => grant("Dr. Ken Thompson Distinguished Community Service Ribbon", r.user_id, `Top chapter member (score ${r.weighted_score}) (${data.year})`)}
+                        awardName="Dr. Ken Thompson Distinguished Community Service Ribbon"
                         testId="eligibility-ken-thompson"
                     />
                     <EligibilityCard
@@ -2499,7 +2584,7 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                             { key: "categories", label: "Categories", format: (v) => (v || []).join(" · ") },
                             { key: "chapter_name", label: "Chapter" },
                         ]}
-                        onGrant={(r) => grant("Member", r.user_id, `Top-3 recognition: ${(r.categories || []).join(", ")} (${data.year})`)}
+                        onGrant={(r) => grant("Member's Ribbon", r.user_id, `Top-3 recognition: ${(r.categories || []).join(", ")} (${data.year})`)}
                         awardName="Member's Ribbon"
                         testId="eligibility-members"
                     />

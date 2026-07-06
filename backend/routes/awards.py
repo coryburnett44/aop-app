@@ -21,7 +21,55 @@ import uuid
 
 from fastapi import Depends, HTTPException
 
-from models import AwardIn, AwardUpdateIn, AwardGrantIn
+from models import AwardIn, AwardUpdateIn, AwardGrantIn, AwardReorderIn
+
+
+# Canonical default order for the AOP awards catalog. Any award whose name
+# matches (case-insensitive, trimmed) receives the corresponding sort_order.
+# Awards not in this list sort after these, in creation order.
+DEFAULT_AWARD_ORDER = [
+    "Life Membership Ribbon",
+    "Founder's Lifetime Achievement Award",
+    "Pauline Tate Dedication Ribbon",
+    "Member's Ribbon",
+    "Recruitment Ribbon",
+    "Dr. Ken Thompson Distinguished Community Service Ribbon",
+    "Master Instructor Ribbon",
+    "Instructor Ribbon",
+    "National Leadership Ribbon",
+    "State Leadership Ribbon",
+    "Community Service Ribbon",
+    "Fundraiser Ribbon",
+    "Joint Planning Ribbon",
+    "Organization Planning Ribbon",
+    "Service Ribbon",
+    "Alpha Omega Phi Ribbon",
+    "Federation Ribbon",
+]
+
+
+def _default_sort_for(name: str) -> int:
+    """Returns the default sort_order for an award name, or a large sentinel
+    (10000+) if the name isn't in the canonical list.
+
+    Matching is fuzzy: case + curly-apostrophe insensitive, and tolerates
+    Ribbon/Award suffix drift (e.g. "Founder's Lifetime Achievement Ribbon"
+    still matches "Founder's Lifetime Achievement Award" in the canonical list).
+    """
+    def _norm(s: str) -> str:
+        s = (s or "").lower().strip().replace("’", "'")
+        # Collapse the interchangeable trailing suffix so we don't miss variants.
+        for suffix in (" ribbon", " award"):
+            if s.endswith(suffix):
+                s = s[: -len(suffix)]
+                break
+        return s
+
+    target = _norm(name)
+    for idx, n in enumerate(DEFAULT_AWARD_ORDER):
+        if _norm(n) == target:
+            return idx
+    return 10000
 
 
 def award_out(a: dict) -> dict:
@@ -31,6 +79,7 @@ def award_out(a: dict) -> dict:
         "description": a.get("description", ""),
         "icon": a.get("icon", "trophy"),
         "color": a.get("color", "#F9D466"),
+        "sort_order": a.get("sort_order", _default_sort_for(a.get("name", ""))),
         "granted_count": a.get("granted_count", 0),
         "granted_distinct_count": a.get("granted_distinct_count", a.get("granted_count", 0)),
     }
@@ -56,6 +105,14 @@ def register(
             # multiple times, so we track both totals + unique-recipient count).
             distinct = await db.award_grants.distinct("user_id", {"award_id": a["id"]})
             a["granted_distinct_count"] = len(distinct)
+        # Iter 112: catalog ordering. Prefer explicit `sort_order` when set,
+        # else fall back to the canonical AOP order, else creation order.
+        def _key(a: dict):
+            explicit = a.get("sort_order")
+            if explicit is None:
+                explicit = _default_sort_for(a.get("name", ""))
+            return (explicit, a.get("created_at") or "", a.get("name") or "")
+        items.sort(key=_key)
         return [award_out(a) for a in items]
 
     @api.get("/awards/{award_id}/grants")
@@ -104,8 +161,20 @@ def register(
         doc = body.model_dump()
         doc["id"] = str(uuid.uuid4())
         doc["created_at"] = iso(now_utc())
+        if doc.get("sort_order") is None:
+            doc["sort_order"] = _default_sort_for(doc.get("name", ""))
         await db.awards.insert_one(doc)
         return award_out(doc)
+
+    @api.put("/awards/reorder")
+    async def reorder_awards(body: AwardReorderIn, admin: dict = Depends(admin_tab_dep("awards"))):
+        """Full Access admins re-rank the awards catalog. Any award not in
+        `ordered_ids` retains its existing sort_order (or the default)."""
+        if admin_role_of(admin) != "full":
+            raise HTTPException(status_code=403, detail="Only Full Access admins can reorder the awards catalog.")
+        for idx, aid in enumerate(body.ordered_ids):
+            await db.awards.update_one({"id": aid}, {"$set": {"sort_order": idx}})
+        return {"ok": True, "count": len(body.ordered_ids)}
 
     @api.put("/awards/{award_id}")
     async def update_award(award_id: str, body: AwardUpdateIn, _: dict = Depends(admin_tab_dep("awards"))):
@@ -334,6 +403,7 @@ def register(
             {"role": {"$ne": "system"}},
             {
                 "_id": 0, "id": 1, "name": 1, "chapter_id": 1, "created_at": 1,
+                "join_date": 1,
                 "status_override": 1, "status_history": 1, "auto_inactivated_at": 1,
                 "member_status": 1,
             },
@@ -443,7 +513,7 @@ def register(
         def streak_start_year(u: dict) -> int:
             """Year of the member's most recent active-membership start.
             Priority: latest reactivation entry in status_history → falls
-            back to created_at."""
+            back to join_date (from the admin Member Card) → created_at."""
             history = u.get("status_history") or []
             # Look for the most recent transition to "active".
             last_active = None
@@ -454,7 +524,7 @@ def register(
                         last_active = at
             if last_active:
                 return _year_of(last_active)
-            return _year_of(u.get("created_at") or "")
+            return _year_of(u.get("join_date") or u.get("created_at") or "")
 
         service_ribbon: list = []
         for uid, u in users_map.items():

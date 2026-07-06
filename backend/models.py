@@ -507,6 +507,7 @@ class AwardIn(BaseModel):
     description: str = ""
     icon: str = "trophy"
     color: str = "#F9D466"
+    sort_order: Optional[int] = None
 
 
 class AwardUpdateIn(BaseModel):
@@ -514,6 +515,14 @@ class AwardUpdateIn(BaseModel):
     description: Optional[str] = None
     icon: Optional[str] = None
     color: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class AwardReorderIn(BaseModel):
+    """Full Access admin submits the desired ordering of the awards catalog.
+    `ordered_ids` must be a permutation of the current award IDs — extras are
+    ignored, missing ones keep their current sort_order."""
+    ordered_ids: List[str]
 
 
 class HoursReviewIn(BaseModel):
