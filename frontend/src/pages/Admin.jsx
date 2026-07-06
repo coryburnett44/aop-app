@@ -4491,9 +4491,16 @@ function DonationsCsvImportDialog({ onImported }) {
             const { data } = await api.post("/donations/admin/csv?dry_run=false", fd, {
                 headers: { "Content-Type": "multipart/form-data" },
             });
-            toast.success(`${data.created} donation${data.created === 1 ? "" : "s"} imported`);
-            setOpen(false);
-            reset();
+            const created = data?.created || 0;
+            const failed = data?.failed || 0;
+            if (failed > 0) {
+                toast.warning(`${created} imported, ${failed} skipped — check the preview for row errors before closing.`);
+                // Keep the dialog open so the admin can see the row-level errors.
+            } else {
+                toast.success(`${created} donation${created === 1 ? "" : "s"} imported`);
+                setOpen(false);
+                reset();
+            }
             onImported && onImported();
         } catch (e) {
             toast.error(formatApiError(e.response?.data?.detail) || "Import failed");

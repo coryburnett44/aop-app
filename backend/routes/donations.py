@@ -286,7 +286,15 @@ def register(api, *, db, iso, now_utc, get_current_user, admin_tab_dep, is_chapt
             if not amount_raw:
                 row_out["errors"].append("amount is required")
             try:
-                amount = float(amount_raw)
+                # Tolerate common Excel/US formatting: "$1,234.00", "1,234",
+                # "1234.50 ", "(50)" for negatives, trailing whitespace. Strip
+                # currency symbols, thousands separators, and surrounding
+                # parentheses before float parsing.
+                cleaned = (amount_raw or "").strip()
+                if cleaned.startswith("(") and cleaned.endswith(")"):
+                    cleaned = "-" + cleaned[1:-1]
+                cleaned = cleaned.replace("$", "").replace(",", "").replace(" ", "")
+                amount = float(cleaned) if cleaned else 0.0
                 if amount <= 0:
                     row_out["errors"].append("amount must be > 0")
             except (TypeError, ValueError):

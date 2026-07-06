@@ -44,7 +44,7 @@ export default function TopDonorsLeaderboard() {
                         <HeartHandshake className="h-7 w-7 sm:h-9 sm:w-9" style={{ color: GOLD }} />
                         Top Donors Leader Board
                     </h2>
-                    <p className="text-sm sm:text-base text-slate-600 mt-2">Completed donations for {data.period_label || "the current quarter"}.</p>
+                    <p className="text-sm sm:text-base text-slate-600 mt-2">Completed donations for {data.period_label || "the current quarter"}. <span className="text-xs text-slate-400">(Anonymous donations excluded.)</span></p>
                 </div>
 
                 {/* Period switcher — Q1-Q4 of the current year plus full-year totals. */}

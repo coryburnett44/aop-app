@@ -9,10 +9,17 @@ This helper adds two safe name-based fallbacks while keeping the existing
 email path the preferred match. Accepted CSV columns (any one is enough):
 
   * `member_email` (or `email`)       - exact, case-insensitive
-  * `full_name` (or `name`)           - exact, case-insensitive match on
-                                        `users.name`
-  * `first_name` + `last_name`        - exact, case-insensitive match on
+  * `full_name` (or `name`)           - case-insensitive match on
+                                        `users.name` (punctuation-tolerant)
+  * `first_name` + `last_name`        - case-insensitive match on
                                         `users.first_name` AND `users.last_name`
+                                        (punctuation-tolerant)
+
+Name matching normalises punctuation (periods, commas, apostrophes) and
+collapses whitespace so `"Brandy L. Brodie"` in the DB still matches
+`"Brandy Brodie"` in the CSV (and vice versa) — a lax variant is only
+attempted when the exact match fails, and ambiguous relaxed matches still
+raise the same disambiguation error.
 
 Resolution order per row: email → full_name → first_name+last_name. The first
 key supplied in the row decides which lookup is used; we do NOT silently fall
@@ -47,6 +54,7 @@ for member resolution.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
@@ -98,6 +106,24 @@ class MemberLookupIndex:
     # building, callers check `len(list) > 1` for the ambiguous case.
     by_full_name: dict[str, list[dict]] = field(default_factory=dict)
     by_first_last: dict[tuple[str, str], list[dict]] = field(default_factory=dict)
+    # Punctuation-relaxed variants — used only if the exact key misses. Same
+    # ambiguity semantics apply.
+    by_full_name_relaxed: dict[str, list[dict]] = field(default_factory=dict)
+    by_first_last_relaxed: dict[tuple[str, str], list[dict]] = field(default_factory=dict)
+
+
+_PUNCT_RE = re.compile(r"[.,'’\"()`~!?-]+")
+_WS_RE = re.compile(r"\s+")
+
+
+def _relax(name: str) -> str:
+    """Return a punctuation/whitespace-normalised copy of `name` for lax
+    matching. Removes periods, commas, apostrophes, hyphens, etc., collapses
+    runs of whitespace, and lowercases."""
+    if not name:
+        return ""
+    s = _PUNCT_RE.sub(" ", name.lower())
+    return _WS_RE.sub(" ", s).strip()
 
 
 def _normalize_row_keys(rows: list[dict]) -> list[dict]:
@@ -135,7 +161,6 @@ async def prefetch_member_lookup(db, rows: list[dict]) -> MemberLookupIndex:
     # reference. We use a case-insensitive regex anchored with ^...$ because
     # Mongo indexes on email/name are case-sensitive by default and we want
     # admins to be able to type "Jane Doe" or "jane doe" indistinguishably.
-    import re
     or_clauses: list[dict] = []
     if emails:
         or_clauses.extend(
@@ -143,7 +168,17 @@ async def prefetch_member_lookup(db, rows: list[dict]) -> MemberLookupIndex:
             for e in emails
         )
     for n in full_names:
+        # Exact anchored match — cheap. Relaxed matching happens client-side
+        # against the same result set below.
         or_clauses.append({"name": {"$regex": f"^{re.escape(n)}$", "$options": "i"}})
+        # Also fetch anyone whose stored name contains the same last token —
+        # this pulls "Brandy L. Brodie" when the CSV has "Brandy Brodie", so
+        # the relaxed post-filter can then confirm.
+        parts = n.split()
+        if parts:
+            last_tok = parts[-1]
+            or_clauses.append({"last_name": {"$regex": f"^{re.escape(last_tok)}$", "$options": "i"}})
+            or_clauses.append({"name": {"$regex": re.escape(last_tok), "$options": "i"}})
     for fn, ln in first_last_pairs:
         or_clauses.append({
             "$and": [
@@ -151,6 +186,8 @@ async def prefetch_member_lookup(db, rows: list[dict]) -> MemberLookupIndex:
                 {"last_name": {"$regex": f"^{re.escape(ln)}$", "$options": "i"}},
             ]
         })
+        # Widen: pull anyone with the same last_name for relaxed post-match.
+        or_clauses.append({"last_name": {"$regex": f"^{re.escape(ln)}$", "$options": "i"}})
 
     index = MemberLookupIndex()
     if not or_clauses:
@@ -179,6 +216,43 @@ async def prefetch_member_lookup(db, rows: list[dict]) -> MemberLookupIndex:
         ln = (u.get("last_name") or "").lower().strip()
         if fn and ln:
             index.by_first_last.setdefault((fn, ln), []).append(u)
+        # Relaxed variants — strip punctuation so "Brandy L. Brodie" also
+        # keys on "brandy l brodie" (and separately on the punctuation-free
+        # "brandy brodie" via a first-token+last-token composite below).
+        full_relaxed = _relax(u.get("name") or "")
+        if full_relaxed:
+            index.by_full_name_relaxed.setdefault(full_relaxed, []).append(u)
+            # Also index by first-token + last-token so "Brandy L Brodie"
+            # matches CSVs that just say "Brandy Brodie".
+            parts = full_relaxed.split()
+            if len(parts) >= 2:
+                index.by_full_name_relaxed.setdefault(f"{parts[0]} {parts[-1]}", []).append(u)
+        fn_relaxed = _relax(u.get("first_name") or "")
+        ln_relaxed = _relax(u.get("last_name") or "")
+        if fn_relaxed and ln_relaxed:
+            index.by_first_last_relaxed.setdefault((fn_relaxed, ln_relaxed), []).append(u)
+        # Also index by (first-word-of-first-name, last-name) for people
+        # whose first_name field holds a compound like "Brandy L".
+        if fn_relaxed:
+            first_tok = fn_relaxed.split()[0]
+            if first_tok and ln_relaxed:
+                index.by_first_last_relaxed.setdefault((first_tok, ln_relaxed), []).append(u)
+
+    # De-duplicate the relaxed lists (a user may key more than once).
+    def _dedupe(m: dict):
+        for k, lst in list(m.items()):
+            seen: set[str] = set()
+            unique: list[dict] = []
+            for u in lst:
+                if u.get("id") in seen:
+                    continue
+                seen.add(u.get("id"))
+                unique.append(u)
+            m[k] = unique
+    _dedupe(index.by_full_name)
+    _dedupe(index.by_first_last)
+    _dedupe(index.by_full_name_relaxed)
+    _dedupe(index.by_first_last_relaxed)
 
     return index
 
@@ -224,6 +298,10 @@ def resolve_member_for_row(row: dict, index: MemberLookupIndex) -> MemberLookupR
         hits = index.by_full_name.get(full.lower(), [])
         label = full
         if not hits:
+            # Punctuation/whitespace-relaxed fallback: catches "Brandy L. Brodie"
+            # ↔ "Brandy Brodie" and "O’Neill" ↔ "O Neill" style mismatches.
+            hits = index.by_full_name_relaxed.get(_relax(full), [])
+        if not hits:
             return MemberLookupResult(error=f"no member named '{full}'", matched_by="full_name", label=label)
         if len(hits) > 1:
             return MemberLookupResult(
@@ -239,6 +317,8 @@ def resolve_member_for_row(row: dict, index: MemberLookupIndex) -> MemberLookupR
     if fn and ln:
         hits = index.by_first_last.get((fn.lower(), ln.lower()), [])
         label = f"{fn} {ln}"
+        if not hits:
+            hits = index.by_first_last_relaxed.get((_relax(fn), _relax(ln)), [])
         if not hits:
             return MemberLookupResult(error=f"no member named '{fn} {ln}'", matched_by="first_last", label=label)
         if len(hits) > 1:
