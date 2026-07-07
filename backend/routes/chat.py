@@ -114,6 +114,7 @@ def register(
     image_ext,
     mime_by_ext,
     send_bulk_email,
+    send_sms,
     frontend_url,
     logger,
 ):
@@ -596,6 +597,31 @@ def register(
                 )
         except Exception as e:
             logger.warning(f"video meeting email fan-out failed: {e}")
+
+        # SMS fan-out (Brevo). Each recipient with a phone number AND the
+        # `chat_sms_notifications` preference not explicitly disabled gets a
+        # one-line text linking to the meeting. Best-effort — failures per
+        # recipient are logged, the endpoint always returns success.
+        try:
+            sms_recipients = [u async for u in db.users.find(
+                {
+                    "id": {"$in": recipients_push},
+                    "phone": {"$exists": True, "$ne": ""},
+                },
+                {"_id": 0, "id": 1, "name": 1, "phone": 1, "chat_sms_notifications": 1},
+            )]
+            sms_body = (
+                f"📹 {starter_name} started a video meeting in "
+                f"\"{conv_name}\". Join: {meeting_url}"
+            )[:1500]
+            for r in sms_recipients:
+                if r.get("chat_sms_notifications") is False:
+                    continue
+                ok = await send_sms(r["phone"], sms_body)
+                if not ok:
+                    logger.info(f"video-meeting SMS skipped for {r.get('name','?')} ({r.get('phone','?')}) — provider unavailable or invalid number")
+        except Exception as e:
+            logger.warning(f"video meeting SMS fan-out failed: {e}")
 
         return payload
 

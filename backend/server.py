@@ -2700,6 +2700,17 @@ if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
 else:
     logger.info("Twilio SMS disabled (TWILIO_ACCOUNT_SID/TOKEN not set)")
 
+# Brevo transactional SMS. Preferred provider — used when SMS_PROVIDER=brevo
+# (default). Sender must be ≤11 alphanumeric chars OR an E.164 phone number
+# registered in your Brevo dashboard. Defaults to "AOP".
+BREVO_SMS_API_KEY = os.environ.get("BREVO_SMS_API_KEY", "")
+BREVO_SMS_SENDER = os.environ.get("BREVO_SMS_SENDER", "AOP")
+SMS_PROVIDER = os.environ.get("SMS_PROVIDER", "brevo").lower()
+if BREVO_SMS_API_KEY:
+    logger.info(f"Brevo SMS enabled (sender='{BREVO_SMS_SENDER}', provider={SMS_PROVIDER})")
+else:
+    logger.info("Brevo SMS disabled (BREVO_SMS_API_KEY not set)")
+
 
 def _normalize_phone_e164(raw: str) -> Optional[str]:
     """Best-effort E.164 normalization for US-default numbers. Returns None if
@@ -2719,13 +2730,63 @@ def _normalize_phone_e164(raw: str) -> Optional[str]:
     return None
 
 
-async def send_sms(to_phone: str, body: str) -> bool:
-    """Send an SMS via Twilio. Returns True on success, False on any failure
-    (missing creds, invalid number, Twilio error). Never raises."""
-    if not _twilio_client or not TWILIO_FROM_NUMBER:
+async def _send_sms_brevo(e164: str, body: str) -> bool:
+    """Send a transactional SMS via Brevo's REST API. `e164` MUST include the
+    leading +. Returns True on 2xx, False otherwise. Never raises."""
+    if not BREVO_SMS_API_KEY:
         return False
+    # Brevo expects the recipient WITHOUT the leading + (their docs call the
+    # field `recipient` = "international phone number"; the leading + causes
+    # 400 "invalid destination country code").
+    recipient = e164.lstrip("+")
+    payload = {
+        "sender": BREVO_SMS_SENDER[:11] or "AOP",
+        "recipient": recipient,
+        "content": body[:1500],
+        "type": "transactional",
+    }
+    try:
+        import requests as _requests
+        def _do():
+            return _requests.post(
+                "https://api.brevo.com/v3/transactionalSMS/sms",
+                headers={
+                    "api-key": BREVO_SMS_API_KEY,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json=payload,
+                timeout=15,
+            )
+        resp = await asyncio.to_thread(_do)
+        if not resp.ok:
+            try:
+                err_body = resp.json()
+            except Exception:
+                err_body = resp.text
+            logger.warning(f"Brevo SMS failed to {e164} (HTTP {resp.status_code}): {err_body}")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"Brevo SMS send failed to {e164}: {e}")
+        return False
+
+
+async def send_sms(to_phone: str, body: str) -> bool:
+    """Send an SMS via the configured provider (Brevo preferred, Twilio as
+    fallback). Returns True on success, False on any failure. Never raises."""
     e164 = _normalize_phone_e164(to_phone)
     if not e164:
+        return False
+    # Preferred path — Brevo when we have a key AND provider isn't explicitly
+    # forced to twilio.
+    if BREVO_SMS_API_KEY and SMS_PROVIDER != "twilio":
+        ok = await _send_sms_brevo(e164, body)
+        if ok:
+            return True
+        # Fall through to Twilio if configured, so a transient Brevo error
+        # doesn't drop the message entirely.
+    if not _twilio_client or not TWILIO_FROM_NUMBER:
         return False
     try:
         def _send():
@@ -3440,6 +3501,7 @@ routes_chat.register(
     image_ext=IMAGE_EXT,
     mime_by_ext=MIME_BY_EXT,
     send_bulk_email=send_bulk_email,
+    send_sms=send_sms,
     frontend_url=(os.environ.get("FRONTEND_URL", "") or "").rstrip("/"),
     logger=logger,
 )
