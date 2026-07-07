@@ -502,6 +502,14 @@ User-reported production bugs in the Photos page; all four fixed and end-to-end 
 - **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
 - **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
 
+### Iteration 118 — SMS kill-switch + Dues-reminder SMS companion + Member's Ribbon per-category rows (2026-07-07)
+- **Fixed backend crash**: Removed orphaned dead code left in `routes/awards.py` (lines 695–704) that prevented the backend from starting after the previous session.
+- **Member's Ribbon eligibility (backend)**: `routes/awards.py` now returns `aop_hours`, `total_hours`, `recruits`, `donated_amount`, `checkins`, `top_in[]`, and `category_count` for **every** candidate member — no more "no context" rows. A member is a candidate if they broke into top-5 in ANY category.
+- **Member's Ribbon eligibility (frontend)**: `Admin.jsx` Awards Eligibility panel now renders all 5 categories as their own row per member (with dot marker + highlight for top-5 placements), exactly as user requested. `EligibilityCard.format` extended to receive the whole row so custom cells can render.
+- **Global SMS kill-switch**: New `GET/PUT /api/admin/sms-config` endpoints backed by `db.app_settings.sms_config`. `send_sms()` short-circuits BEFORE hitting Brevo/Twilio when `enabled: False`. New `SmsSettingsAdmin.jsx` panel in Admin → Pages tab shows current status, provider, and last-changed metadata with a one-click toggle + confirm.
+- **Dues-reminder SMS companion**: `_send_dues_reminders` in `routes/automated_emails.py` now also fires an SMS via the same Brevo path immediately after the email is queued, for members with a phone number and no `sms_opt_out`. Copy stays under 320 chars per stage (30d / 15d / 5d / grace) with STOP language. Respects the global kill-switch.
+- **Tests**: 5 new tests in `test_iteration118_sms_killswitch_and_ribbon.py` (all pass). Regression across iter101/114/116/117 (14 tests) — all green.
+
 ### Iteration 77 — Per-event ticket type filtering on all guest selectors (2026-02-24)
 - **Frontend `EventDetail.jsx`**: The member-side `GuestManager`, the admin-side `AdminRsvpForMemberDialog` member-ticket select, and its per-guest-ticket select all now read `event.enabled_ticket_types` and render only the options actually enabled for that event. Legacy events with an empty `enabled_ticket_types` fall back to the canonical four (VIP / All Access / General / Guest) so behaviour is unchanged for un-migrated rows.
 - Member-side member-ticket picker already followed this pattern (`MemberTicketPicker`) — admin-side selectors now match.

@@ -47,6 +47,7 @@ RESEND_API_KEY: str = ""
 RESEND_FROM: str = ""
 RESEND_REPLY_TO: str = ""
 send_bulk_email = None  # callable injected from server.py
+send_sms = None  # callable injected from server.py (Brevo/Twilio unified sender)
 
 
 # ---------- Constants ----------
@@ -366,6 +367,21 @@ def _dues_reminder_email_html(
 </div>"""
     return subject, body
 
+def _dues_reminder_sms_body(member_name: str, stage: str, expires_iso: str) -> str:
+    """Short SMS companion for dues reminders — kept under ~320 chars so it
+    lands as a single-segment message when possible."""
+    first_name = (member_name or "Member").split(" ")[0] or "Member"
+    exp_short = (expires_iso or "")[:10]
+    stage_line = {
+        "before_30": f"Hi {first_name}, AOP annual dues renew in ~30 days (on {exp_short}). Paying early keeps your access uninterrupted.",
+        "before_15": f"Hi {first_name}, AOP dues due in ~15 days ({exp_short}). Renew now to avoid interruption.",
+        "before_5":  f"Hi {first_name}, final reminder: AOP dues due in ~5 days ({exp_short}). Please renew today.",
+        "grace_1":   f"Hi {first_name}, your AOP dues lapsed on {exp_short}. You're in a short grace window — renew ASAP to keep membership active.",
+    }.get(stage, f"Hi {first_name}, this is a reminder about your AOP annual dues (expires {exp_short}).")
+    return f"{stage_line} Visit your profile to pay. Reply STOP to opt out."
+
+
+
 
 async def _send_admin_dues_summary(campaign: dict, pending_records: list[dict]) -> int:
     """Send the dues-reminder digest to eligible admins.
@@ -507,7 +523,7 @@ async def _send_dues_reminders(campaign: dict) -> int:
                 "email_opt_out": {"$ne": True},
                 "email_prefs.dues_reminders": {"$ne": False},
             },
-            {"_id": 0, "id": 1, "name": 1, "email": 1, "membership_expires_at": 1},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "membership_expires_at": 1, "phone": 1, "sms_opt_out": 1},
         )
         async for u in cursor:
             email = (u.get("email") or "").strip()
@@ -543,6 +559,20 @@ async def _send_dues_reminders(campaign: dict) -> int:
                     "stage": stage,
                     "sent_at": iso(now_utc()),
                 })
+                # Best-effort SMS companion — respects the global SMS kill-switch
+                # inside send_sms(). Only fires when the member has a phone,
+                # hasn't opted out of SMS, and send_sms was wired at register().
+                phone = (u.get("phone") or "").strip()
+                if send_sms and phone and not u.get("sms_opt_out"):
+                    try:
+                        sms_body = _dues_reminder_sms_body(
+                            u.get("name", "") or email, stage, expires,
+                        )
+                        sms_ok = await send_sms(phone, sms_body)
+                        if sms_ok:
+                            logger.info(f"Dues reminder SMS '{stage}' sent to {phone}")
+                    except Exception as sms_e:
+                        logger.warning(f"Dues reminder SMS {stage} failed for {phone}: {sms_e}")
                 sent_records.append({
                     "stage": stage,
                     "stage_label": stage_def["label"],
@@ -703,6 +733,7 @@ def register(
     resend_from: str,
     resend_reply_to: str,
     send_bulk_email,
+    send_sms=None,
 ):
     """Bind module-level state and register the admin endpoints."""
     # Bind module-level injected state so the helpers above can read fresh
@@ -717,6 +748,7 @@ def register(
     g["RESEND_FROM"] = resend_from
     g["RESEND_REPLY_TO"] = resend_reply_to
     g["send_bulk_email"] = send_bulk_email
+    g["send_sms"] = send_sms
 
     @api.get("/automated-emails")
     async def list_automated_emails(_: dict = Depends(admin_tab_dep("email"))):

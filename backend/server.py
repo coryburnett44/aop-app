@@ -2778,6 +2778,17 @@ async def send_sms(to_phone: str, body: str) -> bool:
     e164 = _normalize_phone_e164(to_phone)
     if not e164:
         return False
+    # Global admin-controlled kill switch — if an admin toggled outbound SMS
+    # off (e.g. during a credit outage), short-circuit BEFORE hitting either
+    # provider. Default (no doc) is enabled.
+    try:
+        cfg = await db.app_settings.find_one({"key": "sms_config"}, {"_id": 0, "enabled": 1})
+        if cfg is not None and cfg.get("enabled") is False:
+            logger.info(f"SMS skipped to {e164} — outbound SMS disabled by admin")
+            return False
+    except Exception as e:
+        # If the settings lookup itself fails, don't drop the message — proceed.
+        logger.warning(f"SMS kill-switch lookup failed, proceeding: {e}")
     # Preferred path — Brevo when we have a key AND provider isn't explicitly
     # forced to twilio.
     if BREVO_SMS_API_KEY and SMS_PROVIDER != "twilio":
@@ -2797,6 +2808,46 @@ async def send_sms(to_phone: str, body: str) -> bool:
         logger.warning(f"SMS send failed to {e164}: {e}")
         return False
 
+
+# ------------------------------------------------------------------
+# Admin: global SMS kill-switch. Stored in db.app_settings under key
+# "sms_config" with shape { key, enabled: bool, updated_at, updated_by }.
+# When `enabled` is False, ALL outbound SMS (chat video-meeting fan-out,
+# dues-reminder texts, etc.) is short-circuited — useful during a Brevo
+# credit outage so we don't spam logs with failures.
+# ------------------------------------------------------------------
+@api.get("/admin/sms-config")
+async def admin_get_sms_config(_: dict = Depends(require_admin)):
+    doc = await db.app_settings.find_one({"key": "sms_config"}, {"_id": 0})
+    enabled = True if not doc else bool(doc.get("enabled", True))
+    return {
+        "enabled": enabled,
+        "provider": SMS_PROVIDER if BREVO_SMS_API_KEY else ("twilio" if TWILIO_ACCOUNT_SID else "none"),
+        "brevo_configured": bool(BREVO_SMS_API_KEY),
+        "twilio_configured": bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER),
+        "updated_at": (doc or {}).get("updated_at"),
+        "updated_by": (doc or {}).get("updated_by"),
+    }
+
+
+class SmsConfigIn(BaseModel):
+    enabled: bool
+
+
+@api.put("/admin/sms-config")
+async def admin_set_sms_config(body: SmsConfigIn, admin: dict = Depends(require_admin)):
+    await db.app_settings.update_one(
+        {"key": "sms_config"},
+        {"$set": {
+            "key": "sms_config",
+            "enabled": bool(body.enabled),
+            "updated_at": iso(now_utc()),
+            "updated_by": admin.get("name", "") or admin.get("email", ""),
+        }},
+        upsert=True,
+    )
+    logger.info(f"SMS kill-switch set to {'ENABLED' if body.enabled else 'DISABLED'} by {admin.get('email')}")
+    return {"ok": True, "enabled": bool(body.enabled)}
 
 
 async def send_welcome_email(to_email: str, name: str, temp_password: str) -> bool:
@@ -3570,6 +3621,7 @@ routes_automated_emails.register(
     resend_from=RESEND_FROM,
     resend_reply_to=RESEND_REPLY_TO,
     send_bulk_email=send_bulk_email,
+    send_sms=send_sms,
 )
 
 # Admin member CRUD + bulk-import (iter 89.4 extraction). RESEND_API_KEY is

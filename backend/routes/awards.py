@@ -692,16 +692,6 @@ def register(
             r["categories"] = [c for c in r["categories"] if c]
         # Sort by how many categories the member is top-5 in (desc), then name.
         members_ribbon.sort(key=lambda r: (-r["category_count"], r["name"]))
-            if amt > 0:
-                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Donated (${round(amt, 2)})")
-        for uid, n in top_checkins:
-            if n > 0:
-                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Check-ins ({n})")
-        members_ribbon = [
-            user_row(uid, categories=data["categories"], category_count=len(data["categories"]))
-            for uid, data in member_bucket.items()
-        ]
-        members_ribbon.sort(key=lambda r: (-r["category_count"], r["name"]))
 
         # ---- Chapter of the Year ----
         chapter_of_the_year: list = []

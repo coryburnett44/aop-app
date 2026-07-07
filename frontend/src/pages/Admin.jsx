@@ -21,6 +21,7 @@ import { FullEditHoursDialog } from "./Hours";
 import RichEditor from "../components/RichEditor";
 import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
 import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
+import SmsSettingsAdmin from "../components/SmsSettingsAdmin";
 import ProfileLayoutAdmin from "../components/ProfileLayoutAdmin";
 import PageBuilder from "../components/cms/PageBuilder";
 import BulkImportMembersDialog from "../components/BulkImportMembersDialog";
@@ -874,6 +875,7 @@ function PagesAdmin() {
     return (
         <div className="space-y-8">
             <SiteSettingsAdmin />
+            <SmsSettingsAdmin />
             <ProfileLayoutAdmin />
             <div>
                 <div className="flex items-end justify-between mb-4">
@@ -2578,15 +2580,45 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                     />
                     <EligibilityCard
                         title="Member's Ribbon"
-                        subtitle="Top 5 in each of: most AOP-related hours, most overall hours, most recruits, most amount donated, most check-ins."
+                        subtitle="Top 5 in each of: most AOP-related hours, most overall hours, most recruits, most amount donated, most check-ins. All 5 categories shown per member; top-5 placements are marked."
                         rows={data.members_ribbon}
                         empty="No qualifying activity this year."
                         columns={[
                             { key: "name", label: "Member" },
-                            { key: "categories", label: "Categories", format: (v) => (v || []).join(" · ") },
+                            {
+                                key: "aop_hours",
+                                label: "Categories",
+                                format: (_v, r) => {
+                                    const topIn = new Set(r.top_in || []);
+                                    const rows = [
+                                        { label: "AOP hours",   value: r.aop_hours ?? 0,       top: topIn.has("AOP hours") },
+                                        { label: "Total hours", value: r.total_hours ?? 0,     top: topIn.has("Total hours") },
+                                        { label: "Recruits",    value: r.recruits ?? 0,        top: topIn.has("Recruits") },
+                                        { label: "Donations",   value: `$${(r.donated_amount ?? 0).toFixed(2)}`, top: topIn.has("Donations") },
+                                        { label: "Check-ins",   value: r.checkins ?? 0,        top: topIn.has("Check-ins") },
+                                    ];
+                                    return (
+                                        <div className="flex flex-col gap-1 min-w-[180px]" data-testid="members-ribbon-categories">
+                                            {rows.map((row) => (
+                                                <div
+                                                    key={row.label}
+                                                    className={`flex items-center justify-between gap-3 text-xs rounded-md px-2 py-1 ${row.top ? "bg-primary/10 text-foreground font-medium" : "text-muted-foreground"}`}
+                                                    data-testid={`members-ribbon-cat-${row.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                                                >
+                                                    <span className="flex items-center gap-1.5">
+                                                        {row.top && <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary" aria-hidden="true" />}
+                                                        {row.label}
+                                                    </span>
+                                                    <span className="tabular-nums">{row.value}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    );
+                                },
+                            },
                             { key: "chapter_name", label: "Chapter" },
                         ]}
-                        onGrant={(r) => grant("Member's Ribbon", r.user_id, `Top-3 recognition: ${(r.categories || []).join(", ")} (${data.year})`)}
+                        onGrant={(r) => grant("Member's Ribbon", r.user_id, `Top-5 recognition: ${(r.top_in || []).join(", ") || "activity across categories"} (${data.year})`)}
                         awardName="Member's Ribbon"
                         testId="eligibility-members"
                     />
@@ -2657,7 +2689,7 @@ function EligibilityCard({ title, subtitle, rows, empty, columns, onGrant, award
                                 <tr key={`${r.user_id || r.chapter_id}-${i}`} className="border-b border-border/60">
                                     {columns.map((c) => (
                                         <td key={c.key} className="py-2 pr-2 align-top">
-                                            {c.format ? c.format(r[c.key]) : (r[c.key] ?? "—")}
+                                            {c.format ? c.format(r[c.key], r) : (r[c.key] ?? "—")}
                                         </td>
                                     ))}
                                     <td className="py-2 text-right">
