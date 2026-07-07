@@ -2467,15 +2467,35 @@ async def seed_phase_b():
 # ============================================================
 import httpx
 import asyncio
-import resend as resend_sdk
+
+# Email provider — Brevo (formerly Sendinblue). We import our thin shim which
+# exposes the same `.Emails.send({...})` shape as the old `resend` SDK, so
+# every call site downstream (`resend_sdk.Emails.send(...)`) keeps working
+# unchanged. To roll back to Resend, set EMAIL_PROVIDER=resend and add
+# `import resend as resend_sdk` in place of the shim import below.
+_email_provider = os.environ.get("EMAIL_PROVIDER", "brevo").lower()
+if _email_provider == "resend":
+    import resend as resend_sdk  # noqa: E402  (legacy fallback)
+else:
+    import brevo_sdk as resend_sdk  # noqa: E402  (default — see brevo_sdk.py)
 
 PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox").lower()
 PAYPAL_BASE = "https://api-m.paypal.com" if PAYPAL_MODE == "live" else "https://api-m.sandbox.paypal.com"
 PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "")
 PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET", "")
 
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-RESEND_FROM = os.environ.get("RESEND_FROM", "Alpha Omega Phi <onboarding@resend.dev>")
+# Prefer Brevo credentials, fall back to legacy RESEND_* env vars so existing
+# infra keeps booting even if only the old vars are set. `resend_sdk.api_key`
+# resolves to the shim's singleton when we're using Brevo; the shim also
+# reads BREVO_API_KEY from the environment as a safety net.
+RESEND_API_KEY = (
+    os.environ.get("BREVO_API_KEY", "") if _email_provider == "brevo"
+    else os.environ.get("RESEND_API_KEY", "")
+)
+RESEND_FROM = (
+    os.environ.get("BREVO_FROM", "") if _email_provider == "brevo"
+    else os.environ.get("RESEND_FROM", "")
+) or os.environ.get("RESEND_FROM", "Alpha Omega Phi <onboarding@resend.dev>")
 RESEND_REPLY_TO = os.environ.get("RESEND_REPLY_TO", "info@aop-app.org")
 ORG_MAILING_ADDRESS = os.environ.get(
     "ORG_MAILING_ADDRESS",
@@ -2483,7 +2503,12 @@ ORG_MAILING_ADDRESS = os.environ.get(
 )
 UNSUBSCRIBE_SECRET = os.environ.get("UNSUBSCRIBE_SECRET") or os.environ.get("JWT_SECRET", "")
 if RESEND_API_KEY:
-    resend_sdk.api_key = RESEND_API_KEY
+    # For the Brevo shim this sets the singleton's api_key; for the legacy
+    # Resend SDK it sets the module-level api_key attribute.
+    if _email_provider == "brevo":
+        resend_sdk.Brevo.api_key = RESEND_API_KEY
+    else:
+        resend_sdk.api_key = RESEND_API_KEY
 
 
 # ---------- Deliverability helpers ----------

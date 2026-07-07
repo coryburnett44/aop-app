@@ -746,8 +746,8 @@ def register(
             html_body = (
                 f"""
                 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#222">
-                  <h1 style="color:#C8102E;margin:0 0 12px;font-size:24px">Resend deliverability check</h1>
-                  <p style="line-height:1.6">This is a test email sent by <strong>{admin_name}</strong> from the Alpha Omega Phi member portal to confirm that Resend is configured correctly and emails reach inboxes.</p>
+                  <h1 style="color:#C8102E;margin:0 0 12px;font-size:24px">Deliverability check</h1>
+                  <p style="line-height:1.6">This is a test email sent by <strong>{admin_name}</strong> from the Alpha Omega Phi member portal to confirm that outbound email is configured correctly and reaches inboxes.</p>
                   <p style="line-height:1.6">If you can read this in your inbox, the integration is working.</p>
                   <p style="font-size:12px;color:#888;margin-top:24px">Sender: <code>{_html.escape(resend_from)}</code></p>
                 </div>
@@ -769,7 +769,7 @@ def register(
             logger.info(f"Test email sent by {admin.get('email')} to {to_email} from {resend_from} (template={template_name or 'none'})")
             return {
                 "ok": True,
-                "detail": "Test email accepted by Resend.",
+                "detail": "Test email accepted by Brevo.",
                 "to": to_email,
                 "from": resend_from,
                 "subject": subject,
