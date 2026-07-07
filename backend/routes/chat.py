@@ -21,8 +21,9 @@ external callers (e.g. the chat email digest cron in server.py) can read
 `chat_hub.connections` to decide whether a recipient is online.
 """
 import asyncio
+import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Literal, Optional
 
 import jwt as _pyjwt
@@ -504,7 +505,13 @@ def register(
         """Generate a fresh Jitsi room URL and post it as a system-flavored
         message so every member sees an in-thread 'Join meeting' card.
         Anyone in the conversation may start a meeting — rooms are ephemeral
-        and only live on jitsi's server for as long as someone is present."""
+        and only live on jitsi's server for as long as someone is present.
+
+        Iter 117: The Jitsi domain is configurable via `JITSI_DOMAIN` (env
+        var, defaults to `meet.jit.si`). To avoid the "demo will end in 5
+        minutes" banner shown on free/unauthenticated meet.jit.si sessions,
+        point this at a self-hosted Jitsi server (e.g. `jitsi.aop-app.org`)
+        or an 8x8 JaaS tenant (`8x8.vc/<APP_ID>`)."""
         c = await db.conversations.find_one({"id": cid, "member_ids": user["id"]})
         if not c:
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -512,7 +519,53 @@ def register(
         # per-launch but still hard to guess (16 bytes of entropy).
         slug = ''.join(ch for ch in (c.get("name") or "aop-chat").lower() if ch.isalnum())[:20] or "aop-chat"
         room = f"aop-{slug}-{uuid.uuid4().hex[:12]}"
-        meeting_url = f"https://meet.jit.si/{room}"
+        # JITSI_DOMAIN accepts either a bare host ("jitsi.example.com") or a
+        # tenanted path ("8x8.vc/vpaas-magic-cookie-XYZ" for JaaS). We strip
+        # any accidental scheme + trailing slash so the concat below always
+        # yields a well-formed https URL.
+        jitsi_base = (os.environ.get("JITSI_DOMAIN", "meet.jit.si") or "meet.jit.si").strip()
+        for scheme in ("https://", "http://"):
+            if jitsi_base.startswith(scheme):
+                jitsi_base = jitsi_base[len(scheme):]
+        jitsi_base = jitsi_base.rstrip("/")
+        meeting_url = f"https://{jitsi_base}/{room}"
+        # Optional: if you're using 8x8 JaaS, attach a short-lived JWT so the
+        # meeting joins as an authenticated moderator (no demo banner, no
+        # 5-min cutoff). Requires JITSI_JAAS_APP_ID + JITSI_JAAS_KID +
+        # JITSI_JAAS_PRIVATE_KEY (PEM). We generate the JWT lazily so a plain
+        # self-hosted Jitsi setup doesn't need any of these.
+        jaas_app_id = os.environ.get("JITSI_JAAS_APP_ID", "").strip()
+        jaas_kid = os.environ.get("JITSI_JAAS_KID", "").strip()
+        jaas_pk = os.environ.get("JITSI_JAAS_PRIVATE_KEY", "")
+        if jaas_app_id and jaas_kid and jaas_pk:
+            try:
+                import jwt as _jwt   # PyJWT — already vendored as `_pyjwt`
+                now_ts = int(datetime.now(timezone.utc).timestamp())
+                token = _jwt.encode(
+                    {
+                        "aud": "jitsi",
+                        "iss": "chat",
+                        "sub": jaas_app_id,
+                        "room": "*",
+                        "iat": now_ts,
+                        "exp": now_ts + 3 * 3600,   # 3h token life
+                        "context": {
+                            "user": {
+                                "id": user["id"],
+                                "name": user.get("name", "Member"),
+                                "email": user.get("email", ""),
+                                "moderator": "true",
+                            },
+                            "features": {"livestreaming": "false", "recording": "false"},
+                        },
+                    },
+                    jaas_pk,
+                    algorithm="RS256",
+                    headers={"kid": jaas_kid, "typ": "JWT"},
+                )
+                meeting_url = f"{meeting_url}?jwt={token}"
+            except Exception as _jwt_err:
+                logger.warning(f"JaaS JWT signing failed, falling back to unauthenticated URL: {_jwt_err}")
         now_iso = _now_iso()
         doc = {
             "id": str(uuid.uuid4()),
