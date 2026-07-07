@@ -502,6 +502,12 @@ User-reported production bugs in the Photos page; all four fixed and end-to-end 
 - **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
 - **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
 
+### Iteration 119 — Member-side SMS opt-in/out preferences (2026-07-07)
+- **Backend**: New `GET/PUT /api/me/sms-preferences` symmetric to `/me/email-preferences`. Persists `sms_opt_out` (master + timestamp) and `sms_prefs.dues_reminders` (granular per-category). Re-enabling any sub-category auto-clears the master opt-out — same ergonomics as the email side.
+- **Dues-reminder SMS honors both flags**: `routes/automated_emails.py::_send_dues_reminders` projects `sms_opt_out` + `sms_prefs`, and skips the SMS companion when either the master flag OR `sms_prefs.dues_reminders` is off.
+- **Frontend**: New `SmsPreferences` panel in `Profile.jsx` under the Notifications tab. Copy calls out standard message/data rates and the STOP opt-out. Shows a "no phone number on file" banner when phone is empty (toggles disabled). Auto-clears the master opt-out when re-enabling a sub-category, matching backend semantics.
+- **Tests**: 3 new tests in `test_iteration119_member_sms_prefs.py` covering the toggle flow, auth gate, and the dues-reminder fan-out honoring per-category opt-out. All green (19/19 iter101/116/117/118/119).
+
 ### Iteration 118 — SMS kill-switch + Dues-reminder SMS companion + Member's Ribbon per-category rows (2026-07-07)
 - **Fixed backend crash**: Removed orphaned dead code left in `routes/awards.py` (lines 695–704) that prevented the backend from starting after the previous session.
 - **Member's Ribbon eligibility (backend)**: `routes/awards.py` now returns `aop_hours`, `total_hours`, `recruits`, `donated_amount`, `checkins`, `top_in[]`, and `category_count` for **every** candidate member — no more "no context" rows. A member is a candidate if they broke into top-5 in ANY category.

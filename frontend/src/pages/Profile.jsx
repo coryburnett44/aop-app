@@ -494,6 +494,7 @@ export default function Profile() {
                 <TabsContent value="notifications" className="mt-6 space-y-6">
                     <NotificationPrefs user={user} onSaved={(updated) => setUser(updated)} />
                     <EmailPreferences user={user} onSaved={(updated) => setUser(updated)} />
+                    <SmsPreferences user={user} onSaved={(updated) => setUser(updated)} />
                 </TabsContent>
 
                 <TabsContent value="activity" className="mt-6">
@@ -823,6 +824,100 @@ function EmailPreferences({ user, onSaved }) {
             <div className="pt-3 border-t border-border/40 flex items-center justify-end">
                 <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="email-prefs-save-btn">
                     {busy ? "Saving…" : "Save email preferences"}
+                </Button>
+            </div>
+        </div>
+    );
+}
+
+function SmsPreferences({ user, onSaved }) {
+    const [phone, setPhone] = useState(user?.phone || "");
+    const [optOut, setOptOut] = useState(!!user?.sms_opt_out);
+    const [duesReminders, setDuesReminders] = useState(user?.sms_prefs?.dues_reminders !== false);
+    const [loaded, setLoaded] = useState(false);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        api.get("/me/sms-preferences")
+            .then(({ data }) => {
+                setPhone(data.phone || "");
+                setOptOut(!!data.sms_opt_out);
+                setDuesReminders(data.sms_prefs?.dues_reminders !== false);
+                setLoaded(true);
+            })
+            .catch(() => setLoaded(true));
+    }, []);
+
+    async function save() {
+        setBusy(true);
+        try {
+            const { data } = await api.put("/me/sms-preferences", {
+                dues_reminders: duesReminders,
+                sms_opt_out: optOut,
+            });
+            setOptOut(!!data.sms_opt_out);
+            setDuesReminders(data.sms_prefs?.dues_reminders !== false);
+            onSaved?.({ ...user, sms_opt_out: !!data.sms_opt_out, sms_prefs: data.sms_prefs });
+            toast.success("Text message preferences saved");
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Could not save");
+        }
+        setBusy(false);
+    }
+
+    const hasPhone = !!(phone && phone.trim());
+
+    return (
+        <div className="bg-card rounded-2xl p-6 border border-border shadow-warm max-w-2xl space-y-6" data-testid="sms-preferences">
+            <div>
+                <h2 className="font-heading text-xl font-bold">Text message preferences</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                    Alpha Omega Phi sends occasional SMS messages — dues renewal reminders and
+                    a heads-up when a chapter video meeting starts. Standard message &amp; data
+                    rates apply. Reply <span className="font-bold">STOP</span> to any message
+                    to opt out immediately.
+                </p>
+            </div>
+
+            {loaded && !hasPhone && (
+                <div className="rounded-2xl border-2 border-slate-200 bg-slate-50 p-3 text-sm" data-testid="sms-prefs-no-phone-banner">
+                    <div className="font-bold text-slate-800 mb-0.5">No phone number on file.</div>
+                    <div className="text-slate-700/80 text-xs leading-relaxed">
+                        Add a phone number to your profile above to start receiving text messages. Until then these preferences won't have any effect.
+                    </div>
+                </div>
+            )}
+
+            {loaded && optOut && hasPhone && (
+                <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-3 text-sm" data-testid="sms-prefs-master-banner">
+                    <div className="font-bold text-amber-800 mb-0.5">⚠ You are currently unsubscribed from all Alpha Omega Phi text messages.</div>
+                    <div className="text-amber-900/80 text-xs leading-relaxed">
+                        Toggle any category back on below — we'll automatically clear the master opt-out.
+                    </div>
+                </div>
+            )}
+
+            <ToggleRow
+                title="Annual dues renewal reminders"
+                description="A short heads-up text 30, 15, and 5 days before your membership expires (plus a grace-period reminder). Sent as a companion to the email so you don't miss a renewal."
+                checked={duesReminders && !optOut}
+                onChange={(v) => { setDuesReminders(v); if (v) setOptOut(false); }}
+                disabled={!hasPhone}
+                testid="sms-prefs-dues-toggle"
+            />
+
+            <ToggleRow
+                title="Unsubscribe from all Alpha Omega Phi text messages"
+                description="Equivalent to replying STOP to any AOP text. Overrides the individual toggles above."
+                checked={optOut}
+                onChange={setOptOut}
+                disabled={!hasPhone}
+                testid="sms-prefs-optout-toggle"
+            />
+
+            <div className="pt-3 border-t border-border/40 flex items-center justify-end">
+                <Button onClick={save} disabled={busy || !hasPhone} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="sms-prefs-save-btn">
+                    {busy ? "Saving…" : "Save text message preferences"}
                 </Button>
             </div>
         </div>

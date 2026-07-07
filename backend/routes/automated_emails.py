@@ -523,7 +523,7 @@ async def _send_dues_reminders(campaign: dict) -> int:
                 "email_opt_out": {"$ne": True},
                 "email_prefs.dues_reminders": {"$ne": False},
             },
-            {"_id": 0, "id": 1, "name": 1, "email": 1, "membership_expires_at": 1, "phone": 1, "sms_opt_out": 1},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "membership_expires_at": 1, "phone": 1, "sms_opt_out": 1, "sms_prefs": 1},
         )
         async for u in cursor:
             email = (u.get("email") or "").strip()
@@ -560,10 +560,12 @@ async def _send_dues_reminders(campaign: dict) -> int:
                     "sent_at": iso(now_utc()),
                 })
                 # Best-effort SMS companion — respects the global SMS kill-switch
-                # inside send_sms(). Only fires when the member has a phone,
-                # hasn't opted out of SMS, and send_sms was wired at register().
+                # inside send_sms(), the member's own master `sms_opt_out`, and
+                # the granular `sms_prefs.dues_reminders` opt-out (default ON).
                 phone = (u.get("phone") or "").strip()
-                if send_sms and phone and not u.get("sms_opt_out"):
+                sms_prefs = u.get("sms_prefs") or {}
+                sms_dues_on = sms_prefs.get("dues_reminders", True)
+                if send_sms and phone and not u.get("sms_opt_out") and sms_dues_on:
                     try:
                         sms_body = _dues_reminder_sms_body(
                             u.get("name", "") or email, stage, expires,

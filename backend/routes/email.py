@@ -73,6 +73,19 @@ class EmailPreferencesIn(BaseModel):
     email_opt_out: Optional[bool] = None
 
 
+class SmsPreferencesIn(BaseModel):
+    """Member-controlled SMS preferences. Mirrors EmailPreferencesIn.
+
+    `sms_opt_out` is the master kill-switch — when True, ALL outbound SMS to
+    this member is suppressed regardless of the per-category flags. The per-
+    category flag (currently only `dues_reminders`) lets a member silence one
+    kind of text without opting out of the platform's other SMS features
+    (like video-meeting fan-out notifications).
+    """
+    dues_reminders: Optional[bool] = None
+    sms_opt_out: Optional[bool] = None
+
+
 class EmailTestSendIn(BaseModel):
     to_email: Optional[str] = None
     subject: Optional[str] = None
@@ -517,6 +530,58 @@ def register(
             "ok": True,
             "email_opt_out": bool(u.get("email_opt_out", False)),
             "email_prefs": u.get("email_prefs") or next_prefs,
+        }
+
+    # ============================================================
+    # Member SMS preferences (symmetric to email preferences above).
+    # Backs the "SMS reminders" toggle in Profile → Notifications.
+    # ============================================================
+    @api.get("/me/sms-preferences")
+    async def get_my_sms_preferences(user: dict = Depends(get_current_user)):
+        prefs = user.get("sms_prefs") or {}
+        return {
+            "phone": user.get("phone") or "",
+            "sms_opt_out": bool(user.get("sms_opt_out", False)),
+            "sms_opt_out_at": user.get("sms_opt_out_at"),
+            "sms_prefs": {
+                # Default ON — matches the email-side default so an existing
+                # phone number opts you in for dues texts automatically.
+                "dues_reminders": prefs.get("dues_reminders", True),
+            },
+        }
+
+    @api.put("/me/sms-preferences")
+    async def update_my_sms_preferences(body: SmsPreferencesIn, user: dict = Depends(get_current_user)):
+        cur_prefs = user.get("sms_prefs") or {}
+        next_prefs = {
+            "dues_reminders": cur_prefs.get("dues_reminders", True),
+        }
+        if body.dues_reminders is not None:
+            next_prefs["dues_reminders"] = bool(body.dues_reminders)
+
+        update_doc: dict = {"sms_prefs": next_prefs}
+        unset_doc: dict = {}
+        if body.sms_opt_out is not None:
+            update_doc["sms_opt_out"] = bool(body.sms_opt_out)
+            if body.sms_opt_out:
+                update_doc["sms_opt_out_at"] = iso(now_utc())
+            else:
+                unset_doc["sms_opt_out_at"] = ""
+        elif next_prefs["dues_reminders"] and user.get("sms_opt_out"):
+            # Auto-clear the master kill-switch if the member re-enables a
+            # sub-category — matches the email-side ergonomics.
+            update_doc["sms_opt_out"] = False
+            unset_doc["sms_opt_out_at"] = ""
+
+        mongo_update: dict = {"$set": update_doc}
+        if unset_doc:
+            mongo_update["$unset"] = unset_doc
+        await db.users.update_one({"id": user["id"]}, mongo_update)
+        u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+        return {
+            "ok": True,
+            "sms_opt_out": bool(u.get("sms_opt_out", False)),
+            "sms_prefs": u.get("sms_prefs") or next_prefs,
         }
 
     # ============================================================
