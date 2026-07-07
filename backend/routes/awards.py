@@ -381,7 +381,7 @@ def register(
           - community_service     (>= 100 approved volunteer hours in year)
           - ken_thompson          (top weighted-hours member per chapter)
           - recruitment_ribbon    (top recruiter of the year)
-          - members_ribbon        (top 3 across hours + recruits + fundraising)
+          - members_ribbon        (top 5 across AOP hours / total hours / recruits / donations / check-ins)
           - chapter_of_the_year   (chapter with highest composite score)
         """
         if admin_role_of(admin) != "full":
@@ -482,13 +482,16 @@ def register(
             if cid:
                 recruits_by_chapter[cid] = recruits_by_chapter.get(cid, 0) + 1
 
-        # ---- Checkins per chapter ----
+        # ---- Checkins per chapter (and per user for the Member's Ribbon) ----
         checkins_by_chapter: dict = {}
+        checkins_by_user: dict = {}
         async for c in db.checkins.find(
             {"checked_in_at": {"$gte": year_start, "$lte": year_end}},
             {"_id": 0, "user_id": 1},
         ):
             uid = c.get("user_id")
+            if uid:
+                checkins_by_user[uid] = checkins_by_user.get(uid, 0) + 1
             u = users_map.get(uid or "") or {}
             cid = u.get("chapter_id")
             if cid:
@@ -630,17 +633,31 @@ def register(
             for i, (uid, n) in enumerate(recruit_candidates[:5])
         ]
 
-        # ---- Member's Ribbon (top 3 in each of hours/recruits/fundraising) ----
-        top_hours = sorted(hours_by_user.items(), key=lambda x: -x[1])[:3]
-        top_recruits = sorted(recruits_by_user.items(), key=lambda x: -x[1])[:3]
-        top_fund = sorted(donors_by_user.items(), key=lambda x: -x[1])[:3]
+        # ---- Member's Ribbon ----
+        # Top 5 members in each of five categories (calendar year):
+        #   most AOP-related hours, most overall hours, most recruits,
+        #   most amount donated, most check-ins.
+        top_aop = sorted(aop_by_user.items(), key=lambda x: -x[1])[:5]
+        top_hours = sorted(hours_by_user.items(), key=lambda x: -x[1])[:5]
+        top_recruits = sorted(recruits_by_user.items(), key=lambda x: -x[1])[:5]
+        top_fund = sorted(donors_by_user.items(), key=lambda x: -x[1])[:5]
+        top_checkins = sorted(checkins_by_user.items(), key=lambda x: -x[1])[:5]
         member_bucket: dict = {}
+        for uid, hrs in top_aop:
+            if hrs > 0:
+                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"AOP hours ({round(hrs, 2)})")
         for uid, hrs in top_hours:
-            member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Hours ({round(hrs, 2)})")
+            if hrs > 0:
+                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Total hours ({round(hrs, 2)})")
         for uid, n in top_recruits:
-            member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Recruits ({n})")
+            if n > 0:
+                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Recruits ({n})")
         for uid, amt in top_fund:
-            member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Fundraising (${round(amt, 2)})")
+            if amt > 0:
+                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Donated (${round(amt, 2)})")
+        for uid, n in top_checkins:
+            if n > 0:
+                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Check-ins ({n})")
         members_ribbon = [
             user_row(uid, categories=data["categories"], category_count=len(data["categories"]))
             for uid, data in member_bucket.items()

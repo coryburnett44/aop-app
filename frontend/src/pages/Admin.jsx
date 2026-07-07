@@ -2578,7 +2578,7 @@ function AwardEligibilityPanel({ awards, onGranted }) {
                     />
                     <EligibilityCard
                         title="Member's Ribbon"
-                        subtitle="Top 3 in hours, top 3 in recruits, top 3 in fundraising."
+                        subtitle="Top 5 in each of: most AOP-related hours, most overall hours, most recruits, most amount donated, most check-ins."
                         rows={data.members_ribbon}
                         empty="No qualifying activity this year."
                         columns={[
