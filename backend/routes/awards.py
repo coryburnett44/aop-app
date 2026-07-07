@@ -637,22 +637,61 @@ def register(
         # Top 5 members in each of five categories (calendar year):
         #   most AOP-related hours, most overall hours, most recruits,
         #   most amount donated, most check-ins.
+        #
+        # Iter 118: we now surface EVERY candidate's full stats across all
+        # five categories (not just the ones they placed in), plus a
+        # `top_in` marker per category showing whether they broke into the
+        # top-5. This lets the admin panel render a row per member with
+        # all five values side-by-side, so it's obvious at a glance who's
+        # strong in each area even if they didn't reach top-5.
         top_aop = sorted(aop_by_user.items(), key=lambda x: -x[1])[:5]
         top_hours = sorted(hours_by_user.items(), key=lambda x: -x[1])[:5]
         top_recruits = sorted(recruits_by_user.items(), key=lambda x: -x[1])[:5]
         top_fund = sorted(donors_by_user.items(), key=lambda x: -x[1])[:5]
         top_checkins = sorted(checkins_by_user.items(), key=lambda x: -x[1])[:5]
-        member_bucket: dict = {}
-        for uid, hrs in top_aop:
-            if hrs > 0:
-                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"AOP hours ({round(hrs, 2)})")
-        for uid, hrs in top_hours:
-            if hrs > 0:
-                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Total hours ({round(hrs, 2)})")
-        for uid, n in top_recruits:
-            if n > 0:
-                member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Recruits ({n})")
-        for uid, amt in top_fund:
+        top_aop_ids = {uid for uid, _ in top_aop}
+        top_hours_ids = {uid for uid, _ in top_hours}
+        top_recruits_ids = {uid for uid, _ in top_recruits}
+        top_fund_ids = {uid for uid, _ in top_fund}
+        top_checkins_ids = {uid for uid, _ in top_checkins}
+        # A member is a candidate if they broke into top-5 in ANY category.
+        candidate_ids: set = (
+            top_aop_ids | top_hours_ids | top_recruits_ids | top_fund_ids | top_checkins_ids
+        )
+        members_ribbon: list = []
+        for uid in candidate_ids:
+            top_in: list = []
+            if uid in top_aop_ids:      top_in.append("AOP hours")
+            if uid in top_hours_ids:    top_in.append("Total hours")
+            if uid in top_recruits_ids: top_in.append("Recruits")
+            if uid in top_fund_ids:     top_in.append("Donations")
+            if uid in top_checkins_ids: top_in.append("Check-ins")
+            members_ribbon.append(user_row(
+                uid,
+                aop_hours=round(aop_by_user.get(uid, 0.0), 2),
+                total_hours=round(hours_by_user.get(uid, 0.0), 2),
+                recruits=recruits_by_user.get(uid, 0),
+                donated_amount=round(donors_by_user.get(uid, 0.0), 2),
+                checkins=checkins_by_user.get(uid, 0),
+                top_in=top_in,
+                # Legacy `categories` field kept for backward-compat with any
+                # older UI that still reads it — but it now enumerates ALL
+                # categories the member has activity in (not just top-5 ones),
+                # so the admin never sees a member with "no context".
+                categories=[
+                    f"AOP hours ({round(aop_by_user.get(uid, 0.0), 2)})"    if aop_by_user.get(uid, 0.0) > 0 else None,
+                    f"Total hours ({round(hours_by_user.get(uid, 0.0), 2)})" if hours_by_user.get(uid, 0.0) > 0 else None,
+                    f"Recruits ({recruits_by_user.get(uid, 0)})"             if recruits_by_user.get(uid, 0) > 0 else None,
+                    f"Donated (${round(donors_by_user.get(uid, 0.0), 2)})"   if donors_by_user.get(uid, 0.0) > 0 else None,
+                    f"Check-ins ({checkins_by_user.get(uid, 0)})"            if checkins_by_user.get(uid, 0) > 0 else None,
+                ],
+                category_count=len(top_in),
+            ))
+        # Compact away any None placeholders from the legacy `categories` list.
+        for r in members_ribbon:
+            r["categories"] = [c for c in r["categories"] if c]
+        # Sort by how many categories the member is top-5 in (desc), then name.
+        members_ribbon.sort(key=lambda r: (-r["category_count"], r["name"]))
             if amt > 0:
                 member_bucket.setdefault(uid, {"categories": []})["categories"].append(f"Donated (${round(amt, 2)})")
         for uid, n in top_checkins:
