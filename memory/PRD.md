@@ -502,6 +502,17 @@ User-reported production bugs in the Photos page; all four fixed and end-to-end 
 - **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
 - **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
 
+### Iteration 120 — Automatic award grants + Service Ribbon year-scoping fix (2026-07-08)
+- **Year-scoping fix (bug)**: `routes/awards.py` Service Ribbon eligibility now strictly buckets by `anniversary.year == queried_year`. Previously, a 5-year milestone earned in 2025 would leak into the 2026 view during the pre-anniversary window each new year. Fixed.
+- **New module `routes/awards_auto.py`**: shared helpers + daily background loop for automatic award grants. Every grant is tagged `auto_granted=True`, `granted_by="system:auto"`, and `auto_grant_kind ∈ {alpha_omega_phi_ribbon, service_ribbon, community_service_ribbon}`.
+  - **Alpha Omega Phi Ribbon** — auto-granted on join. Hooked into every member-creation path: `POST /admin/members`, bulk-import (`POST /admin/members/bulk-import`), public application approval (`routes/applications.py`), and public self-registration (`routes/auth.py`). Idempotent per user.
+  - **Service Ribbon** — daily sweep. Fires only on the actual MM/DD anniversary at milestones (1yr, then every 5yrs). Uses the reactivation clock (`reactivated_at` → latest `status_history` "active" entry → `join_date` → `created_at`), so a member who went inactive and paid dues starts counting from their renewal date. Dedupes on `(user, award, reason)`.
+  - **Community Service Ribbon (annual 100+ hrs)** — sweep is a no-op on every day except Dec 31, when it grants every active member with ≥100 approved hours in that calendar year. Dedupes on `(user, year)`.
+- **Admin surfaces** (`/api/admin/auto-grants` + `/api/admin/auto-grants/run-now`):
+  - `Admin.jsx` Awards tab gains an "**Recent automatic grants**" panel with a 7/30/90/365-day filter, per-kind chip filters with live counts, a table of every fired grant with reason, and a "Run sweep now" button (useful right after deploy or on Dec 31 morning).
+  - Every ribbon in the member card now shows an **AUTO** pill next to the award name when it was auto-granted.
+- **Tests**: 5 new tests in `test_iteration120_auto_award_grants.py` covering join grant, year-scoping, reactivation-clock anniversary logic, Dec 31 annual sweep + dedupe, and admin-only auth on the new endpoints. Full regression 23/23 across iter114–120.
+
 ### Iteration 119 — Member-side SMS opt-in/out preferences (2026-07-07)
 - **Backend**: New `GET/PUT /api/me/sms-preferences` symmetric to `/me/email-preferences`. Persists `sms_opt_out` (master + timestamp) and `sms_prefs.dues_reminders` (granular per-category). Re-enabling any sub-category auto-clears the master opt-out — same ergonomics as the email side.
 - **Dues-reminder SMS honors both flags**: `routes/automated_emails.py::_send_dues_reminders` projects `sms_opt_out` + `sms_prefs`, and skips the SMS companion when either the master flag OR `sms_prefs.dues_reminders` is off.

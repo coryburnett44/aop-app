@@ -1201,6 +1201,11 @@ async def startup():
     _routes_chat_digest.start_chat_digest_loop()
     asyncio.create_task(routes_automated_emails.register.automated_email_loop())
     asyncio.create_task(_auto_inactive_loop())
+    # Iter 120: automatic award grants (Alpha Omega Phi Ribbon on join, Service
+    # Ribbon on anniversary, Community Service Ribbon on Dec 31).
+    from routes import awards_auto as _routes_awards_auto  # noqa: E402
+    _routes_awards_auto.register(db_ref=db, iso_fn=iso, now_utc_fn=now_utc, logger_ref=logger)
+    asyncio.create_task(_routes_awards_auto.auto_grant_daily_loop())
 
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")

@@ -16,7 +16,7 @@ Owns:
 The `award_out` serializer is owned here. Helpers (`db`, `get_current_user`,
 `admin_tab_dep`, `iso`, `now_utc`) are injected by `register(...)`.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from fastapi import Depends, HTTPException
@@ -229,6 +229,44 @@ def register(
         if res.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Grant not found")
         return {"ok": True}
+
+    # Iter 120: automatic-award-grant admin surfaces.
+    @api.get("/admin/auto-grants")
+    async def list_recent_auto_grants(
+        days: int = 30,
+        _: dict = Depends(admin_tab_dep("awards")),
+    ):
+        """Recent automatic grants for the Admin dashboard. Newest-first,
+        includes the auto_grant_kind so the UI can bucket by type."""
+        days = max(1, min(int(days or 30), 365))
+        since = iso(now_utc() - timedelta(days=days))
+        cursor = db.award_grants.find(
+            {"auto_granted": True, "granted_at": {"$gte": since}},
+            {"_id": 0},
+        ).sort("granted_at", -1).limit(500)
+        items = await cursor.to_list(500)
+        # Enrich with each user's chapter for filtering on the client.
+        user_ids = list({g.get("user_id") for g in items if g.get("user_id")})
+        if user_ids:
+            u_docs = await db.users.find(
+                {"id": {"$in": user_ids}},
+                {"_id": 0, "id": 1, "chapter_id": 1, "avatar_url": 1},
+            ).to_list(len(user_ids))
+            by_id = {u["id"]: u for u in u_docs}
+            for g in items:
+                u = by_id.get(g.get("user_id")) or {}
+                g["chapter_id"] = u.get("chapter_id")
+                g["avatar_url"] = u.get("avatar_url", "")
+        return {"days": days, "count": len(items), "items": items}
+
+    @api.post("/admin/auto-grants/run-now")
+    async def trigger_auto_grants(_: dict = Depends(admin_tab_dep("awards"))):
+        """Manually kick off the auto-grant daily sweep — useful right after
+        deploying, at year-end for the Community Service Ribbon, or when an
+        admin wants to backfill today's anniversary grants."""
+        from routes import awards_auto as _aa
+        summary = await _aa.run_daily_sweeps()
+        return summary
 
     @api.put("/awards/grants/{grant_id}")
     async def update_award_grant(grant_id: str, body: dict, _: dict = Depends(admin_tab_dep("awards"))):
@@ -570,6 +608,11 @@ def register(
             except ValueError:
                 # Feb 29 → non-leap year → fall back to Feb 28.
                 anniversary = start_d.replace(year=start_d.year + years_complete, day=28)
+            # Iter 120: strictly bucket by anniversary year. A member whose
+            # 5-year anniversary fell in 2025 must NOT reappear in the 2026
+            # eligibility view (their next milestone is the 10-year in 2030).
+            if anniversary.year != year_i:
+                continue
             service_ribbon.append(user_row(
                 uid,
                 years_complete=years_complete,

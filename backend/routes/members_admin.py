@@ -178,6 +178,12 @@ def register(
                 if tier.get("is_lifetime"):
                     doc["membership_expires_at"] = None
         await db.users.insert_one(doc)
+        # Iter 120: auto-grant Alpha Omega Phi Ribbon on join.
+        try:
+            from routes import awards_auto as _aa  # local import to avoid cycles
+            await _aa.grant_alpha_omega_phi_ribbon_on_join(doc)
+        except Exception as _e:
+            logger.warning(f"[auto-grant] on admin create failed for {email}: {_e}")
         try:
             await send_welcome_email(email, composed_name, body.password)
         except Exception as e:
@@ -290,6 +296,13 @@ def register(
             }
             try:
                 await db.users.insert_one(doc)
+                # Iter 120: auto-grant Alpha Omega Phi Ribbon on join for
+                # bulk-imported members too — they're joining today.
+                try:
+                    from routes import awards_auto as _aa
+                    await _aa.grant_alpha_omega_phi_ribbon_on_join(doc)
+                except Exception:
+                    pass
                 row_result = {
                     "row": idx,
                     "email": email,

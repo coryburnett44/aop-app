@@ -74,6 +74,12 @@ def register(
             "created_at": iso(created),
         }
         await db.users.insert_one(doc)
+        # Iter 120: auto-grant Alpha Omega Phi Ribbon to the freshly-registered member.
+        try:
+            from routes import awards_auto as _aa
+            await _aa.grant_alpha_omega_phi_ribbon_on_join(doc)
+        except Exception:
+            pass
         await db.email_verification_tokens.insert_one({
             "token": verify_token,
             "user_id": uid,

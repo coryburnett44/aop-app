@@ -2436,6 +2436,138 @@ function AwardsAdmin() {
                 ))}
             </div>
             {isFullAdmin && <AwardEligibilityPanel awards={awards} onGranted={load} />}
+            <AutoGrantsPanel />
+        </div>
+    );
+}
+
+function AutoGrantsPanel() {
+    const [data, setData] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [days, setDays] = useState(30);
+    const [kindFilter, setKindFilter] = useState("all");
+
+    async function load(nextDays = days) {
+        try {
+            const { data } = await api.get(`/admin/auto-grants?days=${nextDays}`);
+            setData(data);
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "Failed to load auto-grants");
+        }
+    }
+    useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    async function runNow() {
+        setBusy(true);
+        try {
+            const { data: sweep } = await api.post("/admin/auto-grants/run-now");
+            toast.success(
+                `Sweep complete · Service Ribbon: ${sweep.service_ribbon_granted} · CS Ribbon: ${sweep.community_service_ribbon_granted}`
+            );
+            await load();
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "Sweep failed");
+        }
+        setBusy(false);
+    }
+
+    const items = data?.items || [];
+    const filtered = kindFilter === "all"
+        ? items
+        : items.filter((g) => (g.auto_grant_kind || "").toLowerCase() === kindFilter);
+
+    const byKind = items.reduce((acc, g) => {
+        const k = g.auto_grant_kind || "other";
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+    }, {});
+
+    const KINDS = [
+        { key: "all",                        label: "All",                          count: items.length },
+        { key: "alpha_omega_phi_ribbon",     label: "AOP Ribbon (on join)",         count: byKind.alpha_omega_phi_ribbon || 0 },
+        { key: "service_ribbon",             label: "Service Ribbon (anniversary)", count: byKind.service_ribbon || 0 },
+        { key: "community_service_ribbon",   label: "Community Service (100h)",     count: byKind.community_service_ribbon || 0 },
+    ];
+
+    return (
+        <div className="mt-10 bg-card border border-border rounded-2xl p-5" data-testid="auto-grants-panel">
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div>
+                    <div className="font-heading text-xl font-bold">Recent automatic grants</div>
+                    <div className="text-xs text-muted-foreground mt-1 max-w-xl">
+                        Awards granted automatically by the system — Alpha Omega Phi Ribbon on join, Service Ribbon on the actual anniversary, and Community Service Ribbon on Dec 31 for members with 100+ hours.
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <select
+                        value={days}
+                        onChange={(e) => { const d = Number(e.target.value); setDays(d); load(d); }}
+                        className="h-9 rounded-full border border-border bg-background px-3 text-sm"
+                        data-testid="auto-grants-days-filter"
+                    >
+                        <option value={7}>Last 7 days</option>
+                        <option value={30}>Last 30 days</option>
+                        <option value={90}>Last 90 days</option>
+                        <option value={365}>Last year</option>
+                    </select>
+                    <Button onClick={runNow} disabled={busy} variant="outline" size="sm" className="rounded-full" data-testid="auto-grants-run-now-btn">
+                        {busy ? "Running…" : "Run sweep now"}
+                    </Button>
+                </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+                {KINDS.map((k) => (
+                    <button
+                        key={k.key}
+                        type="button"
+                        onClick={() => setKindFilter(k.key)}
+                        className={`text-xs rounded-full px-3 py-1.5 font-semibold transition-colors border ${kindFilter === k.key ? "bg-primary text-white border-primary" : "bg-background text-muted-foreground border-border hover:border-primary/40"}`}
+                        data-testid={`auto-grants-kind-${k.key}`}
+                    >
+                        {k.label} <span className={`ml-1.5 text-[10px] ${kindFilter === k.key ? "text-white/80" : "text-muted-foreground"}`}>{k.count}</span>
+                    </button>
+                ))}
+            </div>
+
+            {!data ? (
+                <div className="text-sm text-muted-foreground">Loading…</div>
+            ) : filtered.length === 0 ? (
+                <div className="text-sm text-muted-foreground italic">
+                    No automatic grants in the selected window. Automatic Alpha Omega Phi Ribbons will fire the moment new members join, and Service Ribbons will fire on each anniversary.
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b">
+                                <th className="py-2 pr-3">Granted at</th>
+                                <th className="py-2 pr-3">Member</th>
+                                <th className="py-2 pr-3">Award</th>
+                                <th className="py-2 pr-3">Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filtered.map((g) => (
+                                <tr key={g.id} className="border-b border-border/60" data-testid={`auto-grant-row-${g.id}`}>
+                                    <td className="py-2 pr-3 whitespace-nowrap tabular-nums">
+                                        {g.granted_at ? new Date(g.granted_at).toLocaleDateString() : "—"}
+                                    </td>
+                                    <td className="py-2 pr-3">{g.user_name || g.user_id}</td>
+                                    <td className="py-2 pr-3">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: g.award_color || "#F9D466" }} />
+                                            {g.award_name || "—"}
+                                            {g.ordinal > 1 && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-primary/10 text-primary">{g.ordinal}×</span>}
+                                        </span>
+                                    </td>
+                                    <td className="py-2 pr-3 text-muted-foreground">{g.reason || "—"}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
 }
@@ -2983,7 +3115,19 @@ function MemberCardDialog({ member, chapters, tiers, trigger }) {
                                         <div className="flex items-center gap-2 min-w-0">
                                             <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: g.award_color || "#F9D466" }}></span>
                                             <div className="min-w-0">
-                                                <div className="font-semibold text-sm truncate">{g.award_name || g.name || "Ribbon"} {g.ordinal > 1 && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-primary/10 text-primary ml-1">{g.ordinal}×</span>}</div>
+                                                <div className="font-semibold text-sm truncate flex items-center gap-1.5 flex-wrap">
+                                                    <span className="truncate">{g.award_name || g.name || "Ribbon"}</span>
+                                                    {g.ordinal > 1 && <span className="text-[10px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-primary/10 text-primary">{g.ordinal}×</span>}
+                                                    {g.auto_granted && (
+                                                        <span
+                                                            title="Automatically granted by the system"
+                                                            className="text-[9px] uppercase tracking-wider font-bold rounded-full px-1.5 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                                            data-testid={`ribbon-auto-badge-${g.id}`}
+                                                        >
+                                                            AUTO
+                                                        </span>
+                                                    )}
+                                                </div>
                                                 <div className="text-[11px] text-muted-foreground truncate">
                                                     {g.granted_at ? formatCalendarDay(g.granted_at, "MMM d, yyyy") : ""}{g.reason ? ` · ${g.reason}` : ""}
                                                 </div>

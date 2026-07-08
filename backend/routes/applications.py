@@ -267,6 +267,12 @@ def register(
                 "created_at": iso(created),
             }
             await db.users.insert_one(user_doc)
+            # Iter 120: auto-grant Alpha Omega Phi Ribbon on join.
+            try:
+                from routes import awards_auto as _aa
+                await _aa.grant_alpha_omega_phi_ribbon_on_join(user_doc)
+            except Exception:
+                pass
             await db.applications.update_one(
                 {"id": app_id},
                 {"$set": {
