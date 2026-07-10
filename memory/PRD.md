@@ -502,6 +502,11 @@ User-reported production bugs in the Photos page; all four fixed and end-to-end 
 - **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
 - **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
 
+### Iteration 121 — Governor Manager & Membership Manager can log their own hours (2026-07-10)
+- **Bug**: Any admin user opening the "Log hours" dialog on `/hours` was force-routed into admin-mode which (a) required picking another member before submitting, and (b) POSTed to `/hours/admin` (requires the `hours` admin tab). Governor Manager technically had the tab but couldn't log for themselves; Membership Manager didn't have the tab and got 403 either way.
+- **Fix**: `Hours.jsx` `LogHoursDialog` gains a "Log for others / Log for myself" toggle for admin users. "Log for myself" hides the member picker, restores the full required-field set, and POSTs to `/hours` (member endpoint that uses `get_current_user`). The default is smart: Full admins + Governor Managers land on "Log for others" (their normal flow); Membership Managers and any sub-role without `hours` tab land on "Log for myself".
+- **Tests**: 4 new tests in `test_iteration121_admin_own_hours.py` locking in the behavior end-to-end (Governor + MM own-hours, MM 403 on admin endpoint, Governor still logs for chapter peers). 24/24 regression across iter116–121 green.
+
 ### Iteration 120 — Automatic award grants + Service Ribbon year-scoping fix (2026-07-08)
 - **Year-scoping fix (bug)**: `routes/awards.py` Service Ribbon eligibility now strictly buckets by `anniversary.year == queried_year`. Previously, a 5-year milestone earned in 2025 would leak into the 2026 view during the pre-anniversary window each new year. Fixed.
 - **New module `routes/awards_auto.py`**: shared helpers + daily background loop for automatic award grants. Every grant is tagged `auto_granted=True`, `granted_by="system:auto"`, and `auto_grant_kind ∈ {alpha_omega_phi_ribbon, service_ribbon, community_service_ribbon}`.

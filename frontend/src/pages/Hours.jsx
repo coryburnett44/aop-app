@@ -51,6 +51,23 @@ function LogHoursDialog() {
     const { user } = useAuth();
     const isAdmin = user?.role === "admin";
     const [open, setOpen] = useState(false);
+    // Iter 121: admins can log their OWN hours by flipping this toggle. It
+    // switches the dialog back to the plain-member flow (`POST /hours`,
+    // requires the full required-field set) so Governor Managers /
+    // Membership Managers who don't have the `hours` admin tab can still
+    // log for themselves. Defaults ON when the admin doesn't have the
+    // `hours` admin tab granted.
+    const _adminRole = user?.admin_role || "full";
+    const _customTabs = user?.allowed_tabs || [];
+    // Full admins and Governor Managers get `hours` via role defaults;
+    // Membership Managers and other custom roles need it in their custom
+    // allowed_tabs list. Mirrors ADMIN_ROLE_TABS in server.py.
+    const hasHoursTab = !isAdmin
+        || _adminRole === "full"
+        || _adminRole === "governor_manager"
+        || _customTabs.includes("hours");
+    const [logForMyself, setLogForMyself] = useState(!hasHoursTab);
+    const inAdminMode = isAdmin && !logForMyself;
     const [members, setMembers] = useState([]);
     const [memberQuery, setMemberQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState([]);
@@ -71,12 +88,13 @@ function LogHoursDialog() {
         setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
     }
 
-    // Admins need a roster to pick the target member. Load lazily when the
-    // dialog opens so we don't fetch on every page mount.
+    // Admins in "log for others" mode need a roster to pick the target
+    // member. Load lazily when the dialog opens so we don't fetch on every
+    // page mount. Skip the fetch when the admin is logging for themselves.
     useEffect(() => {
-        if (!open || !isAdmin || members.length) return;
+        if (!open || !inAdminMode || members.length) return;
         api.get("/members").then(({ data }) => setMembers(data)).catch(() => {});
-    }, [open, isAdmin, members.length]);
+    }, [open, inAdminMode, members.length]);
 
     function emptyForm() {
         return {
@@ -87,8 +105,9 @@ function LogHoursDialog() {
 
     async function save(e) {
         if (e) e.preventDefault();
-        if (isAdmin) {
-            // Admins: only hours + date + ≥1 member are required. Everything else optional.
+        if (inAdminMode) {
+            // Admins logging for others: only hours + date + ≥1 member are
+            // required. Everything else optional.
             if (!form.hours || !form.date || selectedIds.length === 0) {
                 toast.error("Pick at least one member and enter hours + date");
                 return;
@@ -117,7 +136,7 @@ function LogHoursDialog() {
                 host_email: form.host_email,
                 host_phone: form.host_phone,
             };
-            if (isAdmin) {
+            if (inAdminMode) {
                 if (selectedIds.length > 1) {
                     payload.user_ids = selectedIds;
                     const { data } = await api.post("/hours/admin/bulk", payload);
@@ -132,8 +151,9 @@ function LogHoursDialog() {
                     toast.success("Hours logged & approved");
                 }
             } else {
+                // Member flow (also used by admins who chose "Log for myself").
                 await api.post("/hours", payload);
-                toast.success("Hours logged — pending admin review");
+                toast.success(isAdmin ? "Hours logged for you — pending review" : "Hours logged — pending admin review");
             }
             setOpen(false);
             setForm(emptyForm());
@@ -146,7 +166,7 @@ function LogHoursDialog() {
         setBusy(false);
     }
 
-    const filteredMembers = isAdmin && memberQuery.trim()
+    const filteredMembers = inAdminMode && memberQuery.trim()
         ? members.filter((m) => {
             const q = memberQuery.trim().toLowerCase();
             return (m.name || "").toLowerCase().includes(q) || (m.email || "").toLowerCase().includes(q);
@@ -161,16 +181,41 @@ function LogHoursDialog() {
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle className="font-heading text-2xl">
-                        {isAdmin ? "Log volunteer hours for members" : "Log volunteer hours"}
+                        {inAdminMode ? "Log volunteer hours for members" : "Log volunteer hours"}
                     </DialogTitle>
                 </DialogHeader>
                 <form onSubmit={save} className="space-y-4 mt-2" data-testid="log-hours-form">
                     {isAdmin && (
+                        <div className="flex items-center gap-2 rounded-2xl border border-border bg-muted/40 p-2.5" data-testid="hours-log-mode-switch">
+                            <button
+                                type="button"
+                                onClick={() => setLogForMyself(false)}
+                                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors ${!logForMyself ? "bg-primary text-white shadow-warm" : "text-muted-foreground hover:bg-muted"}`}
+                                data-testid="hours-log-mode-others"
+                            >
+                                Log for others
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setLogForMyself(true)}
+                                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors ${logForMyself ? "bg-primary text-white shadow-warm" : "text-muted-foreground hover:bg-muted"}`}
+                                data-testid="hours-log-mode-myself"
+                            >
+                                Log for myself
+                            </button>
+                        </div>
+                    )}
+                    {inAdminMode && (
                         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-3 text-xs text-foreground/80 leading-relaxed" data-testid="hours-admin-banner">
                             <strong className="text-primary">Admin mode:</strong> only Members, Hours, and Date are required. Pick one or many members — the entry will be auto-approved for each.
                         </div>
                     )}
-                    {isAdmin && (
+                    {isAdmin && logForMyself && (
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 text-xs text-emerald-900 leading-relaxed" data-testid="hours-self-banner">
+                            <strong>Personal entry:</strong> logging hours for yourself. Same required fields as any member — the entry will go into the review queue for a Full Access admin to approve.
+                        </div>
+                    )}
+                    {inAdminMode && (
                         <div>
                             <Label>Members * <span className="text-xs font-normal text-muted-foreground">({selectedIds.length} selected)</span></Label>
                             <Input
@@ -234,7 +279,7 @@ function LogHoursDialog() {
                         </div>
                     </div>
                     <div>
-                        <Label>Event type {!isAdmin && "*"}</Label>
+                        <Label>Event type {!inAdminMode && "*"}</Label>
                         <Select value={form.event_type} onValueChange={(v) => set("event_type", v)}>
                             <SelectTrigger className="rounded-xl mt-1.5" data-testid="hours-event-type">
                                 <SelectValue />
@@ -247,25 +292,25 @@ function LogHoursDialog() {
                         </Select>
                     </div>
                     <div>
-                        <Label>Agency / Organization name {!isAdmin && "*"}</Label>
-                        <Input required={!isAdmin} value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" />
+                        <Label>Agency / Organization name {!inAdminMode && "*"}</Label>
+                        <Input required={!inAdminMode} value={form.agency_name} onChange={(e) => set("agency_name", e.target.value)} placeholder="e.g. Wounded Warrior Project" className="rounded-xl mt-1.5" data-testid="hours-agency-input" />
                     </div>
                     <div>
-                        <Label>What did {isAdmin && selectedIds.length > 1 ? "they" : "you"} do? {!isAdmin && "*"}</Label>
-                        <Textarea required={!isAdmin} rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" />
+                        <Label>What did {inAdminMode && selectedIds.length > 1 ? "they" : "you"} do? {!inAdminMode && "*"}</Label>
+                        <Textarea required={!inAdminMode} rows={3} value={form.activity} onChange={(e) => set("activity", e.target.value)} placeholder="Trail cleanup at Forest Park, picked up 3 bags of trash." className="rounded-xl mt-1.5" data-testid="hours-activity-input" />
                     </div>
                     <div className="border-t pt-3">
-                        <Label className="text-xs uppercase tracking-wider text-muted-foreground">Host / Point of contact {!isAdmin && "*"}</Label>
+                        <Label className="text-xs uppercase tracking-wider text-muted-foreground">Host / Point of contact {!inAdminMode && "*"}</Label>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1.5">
-                            <Input required={!isAdmin} value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder={isAdmin ? "Host name" : "Host name *"} className="rounded-xl" data-testid="hours-host-name-input" />
-                            <Input required={!isAdmin} type="email" value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder={isAdmin ? "Host email" : "Host email *"} className="rounded-xl" data-testid="hours-host-email-input" />
-                            <Input required={!isAdmin} value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder={isAdmin ? "Host phone" : "Host phone *"} className="rounded-xl" data-testid="hours-host-phone-input" />
+                            <Input required={!inAdminMode} value={form.host_name} onChange={(e) => set("host_name", e.target.value)} placeholder={inAdminMode ? "Host name" : "Host name *"} className="rounded-xl" data-testid="hours-host-name-input" />
+                            <Input required={!inAdminMode} type="email" value={form.host_email} onChange={(e) => set("host_email", e.target.value)} placeholder={inAdminMode ? "Host email" : "Host email *"} className="rounded-xl" data-testid="hours-host-email-input" />
+                            <Input required={!inAdminMode} value={form.host_phone} onChange={(e) => set("host_phone", e.target.value)} placeholder={inAdminMode ? "Host phone" : "Host phone *"} className="rounded-xl" data-testid="hours-host-phone-input" />
                         </div>
                     </div>
                     <Button type="submit" disabled={busy} className="w-full rounded-full bg-primary hover:bg-primary/90" data-testid="hours-submit-btn">
                         {busy
                             ? "Saving…"
-                            : isAdmin
+                            : inAdminMode
                                 ? (selectedIds.length > 1
                                     ? `Log hours for ${selectedIds.length} members (auto-approved)`
                                     : "Log hours (auto-approved)")
