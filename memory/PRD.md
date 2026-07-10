@@ -502,6 +502,14 @@ User-reported production bugs in the Photos page; all four fixed and end-to-end 
 - **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
 - **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
 
+### Iteration 122 — Hours: sub-admin lock-down + review reserved for Full Access + Ops Manager (2026-07-10)
+- **Backend** (`routes/hours.py`): all "act on someone else" hours endpoints — `POST /hours/admin`, `POST /hours/admin/bulk`, `POST /hours/admin/csv`, `PUT /hours/{id}/review`, `PUT /hours/{id}` — now hard-restricted to Full Access + Operations Manager admins. Governor Manager and Membership Manager can only log for themselves via `POST /hours` (returns `pending`, routed to Full/Ops Manager for approval).
+- **Frontend** (`Hours.jsx`):
+  - Governor Manager & Membership Manager no longer see the Review Queue tab or the CSV Import button.
+  - The Log Hours dialog no longer shows the "Log for others / Log for myself" toggle for these sub-roles — they see the same personal-entry form every regular member sees, ending in "Submit for approval".
+  - Full Access + Operations Manager admins retain the toggle and can still switch between "Log for others" (auto-approved) and "Log for myself" (queued for another Full Access admin).
+- **Tests**: 7 new tests in `test_iteration122_hours_subadmin_lockdown.py` (lock-down on `admin`, `admin/bulk`, `admin/csv`, `review`, plus positive tests that both sub-roles CAN still log their own hours and Full Access can still review). Iter121 test updated to lock in the *new* restrictive rule. 31/31 regression across iter116–122.
+
 ### Iteration 121 — Governor Manager & Membership Manager can log their own hours (2026-07-10)
 - **Bug**: Any admin user opening the "Log hours" dialog on `/hours` was force-routed into admin-mode which (a) required picking another member before submitting, and (b) POSTed to `/hours/admin` (requires the `hours` admin tab). Governor Manager technically had the tab but couldn't log for themselves; Membership Manager didn't have the tab and got 403 either way.
 - **Fix**: `Hours.jsx` `LogHoursDialog` gains a "Log for others / Log for myself" toggle for admin users. "Log for myself" hides the member picker, restores the full required-field set, and POSTs to `/hours` (member endpoint that uses `get_current_user`). The default is smart: Full admins + Governor Managers land on "Log for others" (their normal flow); Membership Managers and any sub-role without `hours` tab land on "Log for myself".

@@ -89,6 +89,17 @@ def register(
     now_utc,
 ):
 
+    # Iter 122: Only Full Access + Operations Manager can log hours for
+    # OTHER members and approve pending entries. Governor Manager and
+    # Membership Manager can log for themselves only (via `POST /hours`).
+    _FULL_HOURS_ROLES = {None, "", "full", "operations_manager"}
+
+    def _admin_role(u: dict) -> str:
+        return (u.get("admin_role") or "full") if u.get("role") == "admin" else ""
+
+    def _can_manage_hours_for_others(admin: dict) -> bool:
+        return _admin_role(admin) in _FULL_HOURS_ROLES
+
     @api.post("/hours")
     async def log_hours(body: HoursLogIn, user: dict = Depends(get_current_user)):
         activity_text = body.activity or body.description or ""
@@ -114,11 +125,14 @@ def register(
 
     @api.post("/hours/admin")
     async def admin_log_hours(body: AdminHoursLogIn, admin: dict = Depends(admin_tab_dep("hours"))):
-        """Admin logs hours on behalf of a member. Auto-approved for Full Access
-        admins (their act of logging IS the approval). Chapter-scoped admins
-        such as Governor Managers post entries as `pending` — a Full Access
-        admin must still approve. Only `user_id`, `hours`, and `date` are
-        functionally required — everything else is optional."""
+        """Admin logs hours on behalf of a member. Restricted to Full Access
+        and Operations Manager admins — Governor Managers and Membership
+        Managers must use `POST /hours` to log their own hours."""
+        if not _can_manage_hours_for_others(admin):
+            raise HTTPException(
+                status_code=403,
+                detail="Only Full Access and Operations Manager admins can log hours for other members. Use the personal hours form to log your own.",
+            )
         target = await db.users.find_one({"id": body.user_id}, {"_id": 0, "id": 1, "name": 1, "chapter_id": 1})
         if not target:
             raise HTTPException(status_code=404, detail="Member not found")
@@ -157,9 +171,12 @@ def register(
     @api.post("/hours/admin/bulk")
     async def admin_log_hours_bulk(body: AdminHoursBulkLogIn, admin: dict = Depends(admin_tab_dep("hours"))):
         """Admin logs the SAME volunteer activity for multiple members at once.
-        Returns a per-member result list so the frontend can show which inserts
-        succeeded and which were rejected (e.g. user not found, out of chapter
-        scope). Auto-approved like the single-member variant."""
+        Restricted to Full Access + Operations Manager admins."""
+        if not _can_manage_hours_for_others(admin):
+            raise HTTPException(
+                status_code=403,
+                detail="Only Full Access and Operations Manager admins can log hours for other members.",
+            )
         # De-dupe user_ids in case the picker sent the same id twice
         unique_ids = list(dict.fromkeys(body.user_ids))
         if not unique_ids:
@@ -266,7 +283,8 @@ def register(
         dry_run: bool = False,
         admin: dict = Depends(admin_tab_dep("hours")),
     ):
-        """Bulk-import volunteer hours from a CSV file.
+        """Bulk-import volunteer hours from a CSV file. Restricted to Full
+        Access + Operations Manager admins.
 
         Member identifier (any ONE of):
           - `member_email` (preferred, exact case-insensitive)
@@ -286,6 +304,11 @@ def register(
         written to the database. The response includes a `preview` array
         with one entry per CSV row.
         """
+        if not _can_manage_hours_for_others(admin):
+            raise HTTPException(
+                status_code=403,
+                detail="Only Full Access and Operations Manager admins can bulk-import hours for other members.",
+            )
         if not file.filename or not file.filename.lower().endswith(".csv"):
             raise HTTPException(status_code=400, detail="Upload a .csv file")
         raw = await file.read()
@@ -465,13 +488,13 @@ def register(
         existing = await db.volunteer_hours.find_one({"id": hours_id})
         if not existing:
             raise HTTPException(status_code=404, detail="Hours entry not found")
-        # Iter 111: Governor Managers can no longer auto-approve hours. They
-        # may still reject or leave pending, but flipping to approved is
-        # reserved for Full Access admins.
-        if is_chapter_scoped(admin) and body.status == "approved":
+        # Iter 122: Only Full Access + Operations Manager admins can review
+        # (approve/reject/adjust) hours. Governor Managers and Membership
+        # Managers can view the queue for their scope but cannot flip status.
+        if not _can_manage_hours_for_others(admin):
             raise HTTPException(
                 status_code=403,
-                detail="Governor Managers cannot approve hours — a Full Access admin must review this entry.",
+                detail="Only Full Access and Operations Manager admins can review volunteer hours.",
             )
         update_doc: dict = {
             "status": body.status,
@@ -507,6 +530,12 @@ def register(
         existing = await db.volunteer_hours.find_one({"id": hours_id})
         if not existing:
             raise HTTPException(status_code=404, detail="Hours entry not found")
+        # Iter 122: full-edit reserved for Full Access + Operations Manager.
+        if not _can_manage_hours_for_others(admin):
+            raise HTTPException(
+                status_code=403,
+                detail="Only Full Access and Operations Manager admins can edit other members' hours.",
+            )
         patch = body.model_dump(exclude_unset=True)
         if not patch:
             return hours_out(existing)
@@ -522,13 +551,6 @@ def register(
 
         # Status change → stamp review audit fields (same as /review).
         if "status" in patch and patch["status"] and patch["status"] != existing.get("status"):
-            # Iter 111: Governor Managers cannot flip to approved via the
-            # generic edit endpoint either.
-            if is_chapter_scoped(admin) and patch["status"] == "approved":
-                raise HTTPException(
-                    status_code=403,
-                    detail="Governor Managers cannot approve hours — a Full Access admin must review this entry.",
-                )
             update_doc["status"] = patch["status"]
             update_doc["reviewed_by"] = admin["id"]
             update_doc["reviewed_by_name"] = admin.get("name", "Admin")

@@ -85,8 +85,8 @@ def test_membership_manager_cannot_use_admin_hours_endpoint():
 
 
 def test_governor_manager_can_still_log_for_another_member_in_chapter():
-    """Sanity: the fix must not break Governor Manager's ability to log for
-    OTHER members in their chapter (their normal admin workflow)."""
+    """SUPERSEDED by iter122: Governor Manager may NO LONGER log for other
+    members. This test is kept (and inverted) to lock in the new behavior."""
     gov = _login("governor.tx@clubhaven.app", "Governor123!")
     r = gov.get(f"{BASE}/auth/me", timeout=15)
     me = r.json()
@@ -94,20 +94,14 @@ def test_governor_manager_can_still_log_for_another_member_in_chapter():
     gov_chapter = me.get("chapter_id")
     r = gov.get(f"{BASE}/members", timeout=15)
     assert r.status_code == 200, r.text
-    # Pick a peer explicitly in the governor's own chapter.
     peer = next((m for m in r.json() if m["id"] != gov_id and m.get("chapter_id") == gov_chapter), None)
     if peer is None:
-        # If no peer in-chapter is seeded, this specific check is inapplicable
-        # — the primary fix (own-hours for both sub-admin roles) is already
-        # verified by the other 3 tests. Skip cleanly.
         import pytest as _pytest
         _pytest.skip("no other member in Governor's chapter in this environment")
     r = gov.post(f"{BASE}/hours/admin", json={
         "user_id": peer["id"], "hours": 0.5, "date": "2026-07-08T00:00:00",
         "event_type": "other", "agency_name": "Iter121", "activity": "for peer",
     }, timeout=15)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    # Governor is chapter-scoped, so entries post as `pending`, not auto-approved.
-    assert body["status"] == "pending"
-    assert body["user_id"] == peer["id"]
+    # Iter 122 flipped this from 200 to 403.
+    assert r.status_code == 403, r.text
+    assert "full access" in (r.json().get("detail") or "").lower()

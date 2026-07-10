@@ -18,6 +18,10 @@ export default function Hours() {
     const [tab, setTab] = useState("mine");
 
     if (!user) return null;
+    // Iter 122: Only Full Access + Operations Manager admins can review /
+    // log hours on behalf of others. Governor Manager and Membership
+    // Manager see the same "My hours"-only view as regular members.
+    const canManageOthers = user.role === "admin" && ["full", "operations_manager"].includes(user.admin_role || "full");
     return (
         <div className="max-w-5xl mx-auto px-6 lg:px-10 py-12">
             <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
@@ -26,7 +30,7 @@ export default function Hours() {
                     <p className="text-muted-foreground mt-2">Log hours, track approvals, celebrate the work.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                    {user.role === "admin" && <CsvImportDialog />}
+                    {canManageOthers && <CsvImportDialog />}
                     <LogHoursDialog />
                 </div>
             </div>
@@ -34,12 +38,12 @@ export default function Hours() {
             <Tabs value={tab} onValueChange={setTab}>
                 <TabsList className="rounded-full bg-muted p-1">
                     <TabsTrigger value="mine" className="rounded-full" data-testid="hours-tab-mine">My hours</TabsTrigger>
-                    {user.role === "admin" && (
+                    {canManageOthers && (
                         <TabsTrigger value="review" className="rounded-full" data-testid="hours-tab-review">Review queue</TabsTrigger>
                     )}
                 </TabsList>
                 <TabsContent value="mine" className="mt-6"><MyHours /></TabsContent>
-                {user.role === "admin" && (
+                {canManageOthers && (
                     <TabsContent value="review" className="mt-6"><ReviewQueue /></TabsContent>
                 )}
             </Tabs>
@@ -51,23 +55,14 @@ function LogHoursDialog() {
     const { user } = useAuth();
     const isAdmin = user?.role === "admin";
     const [open, setOpen] = useState(false);
-    // Iter 121: admins can log their OWN hours by flipping this toggle. It
-    // switches the dialog back to the plain-member flow (`POST /hours`,
-    // requires the full required-field set) so Governor Managers /
-    // Membership Managers who don't have the `hours` admin tab can still
-    // log for themselves. Defaults ON when the admin doesn't have the
-    // `hours` admin tab granted.
+    // Iter 122: only Full Access + Operations Manager admins can log hours
+    // for OTHER members. Governor Manager and Membership Manager can only
+    // log for themselves — the toggle is hidden for them and the dialog
+    // is forced into personal-entry mode.
     const _adminRole = user?.admin_role || "full";
-    const _customTabs = user?.allowed_tabs || [];
-    // Full admins and Governor Managers get `hours` via role defaults;
-    // Membership Managers and other custom roles need it in their custom
-    // allowed_tabs list. Mirrors ADMIN_ROLE_TABS in server.py.
-    const hasHoursTab = !isAdmin
-        || _adminRole === "full"
-        || _adminRole === "governor_manager"
-        || _customTabs.includes("hours");
-    const [logForMyself, setLogForMyself] = useState(!hasHoursTab);
-    const inAdminMode = isAdmin && !logForMyself;
+    const canManageOthers = isAdmin && ["full", "operations_manager"].includes(_adminRole);
+    const [logForMyself, setLogForMyself] = useState(!canManageOthers);
+    const inAdminMode = canManageOthers && !logForMyself;
     const [members, setMembers] = useState([]);
     const [memberQuery, setMemberQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState([]);
@@ -185,7 +180,7 @@ function LogHoursDialog() {
                     </DialogTitle>
                 </DialogHeader>
                 <form onSubmit={save} className="space-y-4 mt-2" data-testid="log-hours-form">
-                    {isAdmin && (
+                    {isAdmin && canManageOthers && (
                         <div className="flex items-center gap-2 rounded-2xl border border-border bg-muted/40 p-2.5" data-testid="hours-log-mode-switch">
                             <button
                                 type="button"
@@ -210,7 +205,7 @@ function LogHoursDialog() {
                             <strong className="text-primary">Admin mode:</strong> only Members, Hours, and Date are required. Pick one or many members — the entry will be auto-approved for each.
                         </div>
                     )}
-                    {isAdmin && logForMyself && (
+                    {isAdmin && logForMyself && canManageOthers && (
                         <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 text-xs text-emerald-900 leading-relaxed" data-testid="hours-self-banner">
                             <strong>Personal entry:</strong> logging hours for yourself. Same required fields as any member — the entry will go into the review queue for a Full Access admin to approve.
                         </div>
