@@ -2,6 +2,7 @@ import "@/App.css";
 import { Navigate, Routes, Route } from "react-router-dom";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { ThemeProvider } from "./lib/theme";
 import { Toaster } from "./components/ui/sonner";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
@@ -42,6 +43,7 @@ import GlobalChatNotifier from "./components/GlobalChatNotifier";
 
 function App() {
     return (
+        <ThemeProvider>
         <AuthProvider>
             <SiteSettingsProvider>
                 <BrowserRouter>
@@ -91,6 +93,7 @@ function App() {
             </BrowserRouter>
             </SiteSettingsProvider>
         </AuthProvider>
+        </ThemeProvider>
     );
 }
 

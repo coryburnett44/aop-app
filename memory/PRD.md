@@ -502,6 +502,13 @@ User-reported production bugs in the Photos page; all four fixed and end-to-end 
 - **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
 - **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
 
+### Iteration 124 — Theme switcher: light / dark / black-and-white / system (2026-07-11)
+- **New `ThemeProvider`** in `lib/theme.jsx` — React context that persists to `localStorage["aop.theme"]`, resolves `system` to the OS preference via `prefers-color-scheme`, and toggles `.dark` / `.mono` classes on `<html>`.
+- **New `.mono` theme** in `index.css` — pure grayscale HSL variables + a global `filter: grayscale(100%)` on `.mono` so every element (Tailwind hardcoded colors, brand gradients, uploaded photos) renders truly monochrome. High-contrast, a11y-friendly.
+- **New `ThemePicker` component** with two modes: `menu-item` (embedded in the Navbar user menu with an "APPEARANCE" section) and `standalone` (pill button shown for logged-out visitors on the marketing pages so guests can flip themes too).
+- Wired into Navbar user menu + as a standalone pill next to the "Member login" button for anonymous visitors.
+- **Provider hierarchy**: `ThemeProvider > AuthProvider > SiteSettingsProvider > BrowserRouter`, so theme state is available before any route mounts.
+
 ### Iteration 123 — Admin-configurable per-role hours behavior (2026-07-11)
 - **Backend** (`routes/hours.py`):
   - New `db.app_settings.hours_role_config` doc — shape `{ roles: { <role>: { can_manage_others, default_mode } } }`.

@@ -50,6 +50,43 @@
         --input: 225 40% 24%;
         --ring: 352 78% 50%;
     }
+
+    /* Iter 124: pure black-and-white monochrome theme — high-contrast,
+       fully grayscale. Every accent color is replaced with a shade of
+       gray so the interface renders like a printout. */
+    .mono {
+        --background: 0 0% 100%;
+        --foreground: 0 0% 0%;
+        --card: 0 0% 100%;
+        --card-foreground: 0 0% 0%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 0 0% 0%;
+        --primary: 0 0% 0%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 0 0% 20%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 0 0% 96%;
+        --muted-foreground: 0 0% 30%;
+        --accent: 0 0% 90%;
+        --accent-foreground: 0 0% 0%;
+        --destructive: 0 0% 15%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 0 0% 78%;
+        --input: 0 0% 78%;
+        --ring: 0 0% 0%;
+    }
+    /* Turn everything into grayscale so the mono theme is actually
+       monochrome across the whole UI — Tailwind color classes, brand
+       gradients, uploaded photos, and inline hex values all included. */
+    .mono {
+        filter: grayscale(100%);
+    }
+    /* Guard: if a component ever manually sets a filter, don't stack ours
+       on top of theirs. This block is intentionally simple so future
+       Tailwind additions don't need special-casing. */
+    .mono video {
+        filter: grayscale(100%);
+    }
 }
 
 @layer base {

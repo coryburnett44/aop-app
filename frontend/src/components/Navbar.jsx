@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { mediaUrl } from "../lib/api";
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
+import ThemePicker from "./ThemePicker";
 import {
     DropdownMenu,
     DropdownMenuTrigger,
@@ -134,6 +135,8 @@ export default function Navbar() {
                                     </>
                                 )}
                                 <DropdownMenuSeparator />
+                                <ThemePicker />
+                                <DropdownMenuSeparator />
                                 <DropdownMenuItem
                                     onClick={async () => {
                                         await logout();
@@ -146,13 +149,16 @@ export default function Navbar() {
                             </DropdownMenuContent>
                         </DropdownMenu>
                     ) : (
-                        <Button
-                            className="rounded-full bg-primary hover:bg-primary/90 shadow-warm"
-                            onClick={() => navigate("/login")}
-                            data-testid="nav-login-btn"
-                        >
-                            Member login
-                        </Button>
+                        <div className="flex items-center gap-2">
+                            <div className="hidden sm:block"><ThemePicker variant="standalone" /></div>
+                            <Button
+                                className="rounded-full bg-primary hover:bg-primary/90 shadow-warm"
+                                onClick={() => navigate("/login")}
+                                data-testid="nav-login-btn"
+                            >
+                                Member login
+                            </Button>
+                        </div>
                     )}
                     <button
                         className={`xl:hidden rounded-full p-2 hover:bg-muted ${!user ? "hidden" : ""}`}
