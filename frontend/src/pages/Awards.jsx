@@ -81,7 +81,7 @@ function CatalogSection() {
                     return (
                         <div key={a.id} className="bg-card rounded-2xl border border-border p-6 shadow-warm relative overflow-hidden" data-testid={`award-${a.id}`}>
                             <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full opacity-20" style={{ backgroundColor: a.color }} />
-                            <div className="w-14 h-14 rounded-2xl grid place-items-center relative z-10" style={{ backgroundColor: `${a.color}33`, color: a.color }}>
+                            <div className="award-icon-tile w-14 h-14 rounded-2xl grid place-items-center relative z-10" style={{ backgroundColor: `${a.color}33`, color: a.color }}>
                                 <Icon className="h-7 w-7" />
                             </div>
                             <h3 className="font-heading font-bold text-xl mt-4 relative z-10">{a.name}</h3>

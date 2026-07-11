@@ -157,3 +157,126 @@
 .scrollbar-hide::-webkit-scrollbar {
     display: none;            /* Chrome / Safari / iOS */
 }
+
+/* ==================================================================
+   Iter 125 — Dark-mode compatibility layer.
+   The app was built light-first, so several components hardcoded
+   `bg-white`, `bg-slate-*`, `text-slate-*`, and `border-slate-*`
+   classes. These stay white/light-gray in dark mode and hide content.
+   Rather than sweeping every component (thousands of call sites), we
+   remap the most common offenders below when `.dark` is active. Any
+   component that needs a genuinely-white surface in dark mode can
+   opt back in with `dark:bg-white` explicitly.
+   ================================================================== */
+.dark .bg-white {
+    background-color: hsl(var(--card));
+    color: hsl(var(--card-foreground));
+}
+.dark .bg-slate-50,
+.dark .bg-gray-50 {
+    background-color: hsl(var(--muted));
+}
+.dark .bg-slate-100,
+.dark .bg-gray-100 {
+    background-color: hsl(var(--muted) / 0.7);
+    color: hsl(var(--foreground));
+}
+.dark .bg-slate-200,
+.dark .bg-gray-200 {
+    background-color: hsl(var(--muted));
+}
+.dark .text-slate-400,
+.dark .text-gray-400,
+.dark .text-slate-500,
+.dark .text-gray-500,
+.dark .text-slate-600,
+.dark .text-gray-600 {
+    color: hsl(var(--muted-foreground));
+}
+.dark .text-slate-700,
+.dark .text-gray-700,
+.dark .text-slate-800,
+.dark .text-gray-800,
+.dark .text-slate-900,
+.dark .text-gray-900 {
+    color: hsl(var(--foreground));
+}
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-white {
+    border-color: hsl(var(--border));
+}
+/* Divider/hover states used across the message list, side rails, etc. */
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-slate-100:hover,
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover {
+    background-color: hsl(var(--muted));
+}
+
+/* --- Volunteer Hours: "Approved" pill and other emerald/green status
+   badges were `bg-emerald-100 text-emerald-800` which becomes a
+   near-invisible pale-white on the dark card. Give them a saturated
+   dark-mode variant. --- */
+.dark .bg-emerald-50 { background-color: hsl(160 60% 18%); }
+.dark .bg-emerald-100 { background-color: hsl(160 55% 22%); }
+.dark .text-emerald-700,
+.dark .text-emerald-800,
+.dark .text-emerald-900 { color: hsl(160 70% 78%); }
+.dark .border-emerald-200 { border-color: hsl(160 40% 32%); }
+
+.dark .bg-amber-50 { background-color: hsl(40 60% 20%); }
+.dark .bg-amber-100 { background-color: hsl(40 55% 24%); }
+.dark .text-amber-700,
+.dark .text-amber-800,
+.dark .text-amber-900 { color: hsl(40 90% 75%); }
+.dark .border-amber-200 { border-color: hsl(40 40% 34%); }
+
+.dark .bg-red-50 { background-color: hsl(0 55% 22%); }
+.dark .bg-red-100 { background-color: hsl(0 55% 26%); }
+.dark .text-red-700,
+.dark .text-red-800,
+.dark .text-red-900 { color: hsl(0 90% 78%); }
+.dark .border-red-200 { border-color: hsl(0 40% 36%); }
+
+/* --- Legacy hardcoded HSL: several components use
+   `text-[hsl(34_8%_16%)]` (near-black amber-tinted) for badges built
+   pre-dark-mode. In dark theme this becomes invisible on any accent
+   background. Remap to `--foreground`. --- */
+.dark .text-\[hsl\(34_8\%_16\%\)\] {
+    color: hsl(var(--foreground));
+}
+
+.dark .bg-blue-50 { background-color: hsl(210 55% 22%); }
+.dark .bg-blue-100 { background-color: hsl(210 55% 26%); }
+.dark .text-blue-700,
+.dark .text-blue-800,
+.dark .text-blue-900 { color: hsl(210 90% 80%); }
+.dark .border-blue-200 { border-color: hsl(210 40% 36%); }
+
+/* --- Awards: trophy tile backgrounds are typically colour/10 which
+   reads as an almost-invisible near-white wash on light bg; on dark it
+   becomes an almost-invisible near-black wash. Bump their base tone so
+   the trophy icon is always legible. Everything with a data-testid
+   containing "award-tile" or class containing "award-icon-tile" gets
+   a neutral fallback background. --- */
+.dark [class*="award-icon-tile"],
+.dark [class*="ribbon-tile"] {
+    background-color: hsl(var(--muted)) !important;
+}
+/* Also boost the icon inside the tile to a brighter shade so a dim
+   brand color (e.g. deep navy) doesn't disappear against the muted
+   dark background. */
+.dark [class*="award-icon-tile"] > svg {
+    filter: brightness(1.4);
+}
+
+/* --- Global safety net: any element that manually sets an inline
+   white/near-white color and lives inside a .dark tree gets nudged
+   toward the theme foreground. Cheap and unobtrusive. --- */
+.dark [style*="color: #0A2463"],
+.dark [style*="color:#0A2463"] {
+    color: hsl(var(--foreground)) !important;
+}

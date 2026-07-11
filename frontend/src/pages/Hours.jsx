@@ -820,8 +820,8 @@ function StatBox({ label, value, tint, testid }) {
 
 function StatusBadge({ status }) {
     const map = {
-        pending: "bg-secondary/40 text-[hsl(34_8%_16%)]",
-        approved: "bg-accent/40 text-[hsl(34_8%_16%)]",
+        pending: "bg-secondary/40 text-foreground",
+        approved: "bg-accent/40 text-foreground",
         rejected: "bg-destructive/15 text-destructive",
     };
     return (

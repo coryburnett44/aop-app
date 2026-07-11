@@ -502,6 +502,13 @@ User-reported production bugs in the Photos page; all four fixed and end-to-end 
 - **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
 - **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
 
+### Iteration 125 — Dark-mode contrast fixes across Chat, Profile, Hours, Awards (2026-07-11)
+- **New dark-mode compatibility layer** in `index.css` — remaps the most common light-first Tailwind classes (`bg-white`, `bg-slate-*`, `text-slate-*`, `border-slate-*`, `hover:bg-slate-*`) to theme-aware equivalents (`bg-card`, `bg-muted`, `text-muted-foreground`, `text-foreground`, `border-border`) when `.dark` is active. Fixes hundreds of components at once without a per-file sweep.
+- **Colored status badges** (emerald/amber/red/blue for "Approved"/"Pending"/"Rejected"/info) now have saturated dark-mode HSL variants so they remain visible on dark cards.
+- **Trophy tiles in Awards**: added `award-icon-tile` class + CSS override that swaps the near-invisible `${color}33` inline background for `hsl(var(--muted))` in dark mode and brightens the icon via `filter: brightness(1.4)` so trophy pictures stay legible.
+- **"Approved" pill in Volunteer Hours**: fixed the hardcoded `text-[hsl(34_8%_16%)]` (near-black amber) → `text-foreground` so it renders on any theme. Extended with a global CSS override for the arbitrary HSL literal so every other component using the same legacy pattern (`AdminDashboard`, `EventDetail`) inherits the fix.
+- **Verified all 4 modes** (light, dark, mono, system) with screenshots. Light theme unchanged; dark theme now has clearly visible video/settings buttons in Chat, all profile boxes, the Approved pill, and every trophy tile.
+
 ### Iteration 124 — Theme switcher: light / dark / black-and-white / system (2026-07-11)
 - **New `ThemeProvider`** in `lib/theme.jsx` — React context that persists to `localStorage["aop.theme"]`, resolves `system` to the OS preference via `prefers-color-scheme`, and toggles `.dark` / `.mono` classes on `<html>`.
 - **New `.mono` theme** in `index.css` — pure grayscale HSL variables + a global `filter: grayscale(100%)` on `.mono` so every element (Tailwind hardcoded colors, brand gradients, uploaded photos) renders truly monochrome. High-contrast, a11y-friendly.
