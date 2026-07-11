@@ -502,6 +502,17 @@ User-reported production bugs in the Photos page; all four fixed and end-to-end 
 - **First production-style run**: migration re-flagged 2 incorrectly-cleared members on the first restart, then "all candidates already correctly flagged" thereafter.
 - **Tests**: `test_iteration78_pending_setpw.py` — 5/5 pass (login no-clear regression, reset/change/set-password clears, migration re-flag).
 
+### Iteration 123 — Admin-configurable per-role hours behavior (2026-07-11)
+- **Backend** (`routes/hours.py`):
+  - New `db.app_settings.hours_role_config` doc — shape `{ roles: { <role>: { can_manage_others, default_mode } } }`.
+  - New endpoints: `GET /api/hours/role-config` (any authenticated user — used by the frontend to decide UI) and `PUT /api/hours/role-config` (Full Access only). Rejects invalid `default_mode` values and unknown-shaped payloads with 400.
+  - `_can_manage_hours_for_others()` is now async and reads the merged config on every check — a runtime flip immediately affects `POST /hours/admin`, `/admin/bulk`, `/admin/csv`, `PUT /review`, and `PUT /hours/{id}`.
+  - Built-in defaults preserved for the 4 known roles; unknown roles conservatively default to `{ can_manage_others: false, default_mode: "for_myself" }`.
+- **Frontend**:
+  - New `HoursRoleConfigAdmin` component in Admin → Pages tab — table with a toggle per role (manage-others) and a mode dropdown, plus an "Add new admin role key" input so future sub-roles need zero code changes.
+  - `Hours.jsx` now fetches the config once on mount and passes it to `LogHoursDialog`; `canManageOthers` and the default `logForMyself` state are both derived from the config with graceful fallback to the payload's `defaults` block. Removes the hardcoded `["full", "operations_manager"]` gate.
+- **Tests**: 6 new tests in `test_iteration123_hours_role_config.py` (schema shape, admin-only writes, runtime permission flip round-trip on Governor Manager, adding an unknown role, invalid input rejection, public read). 37/37 across iter116–123.
+
 ### Iteration 122 — Hours: sub-admin lock-down + review reserved for Full Access + Ops Manager (2026-07-10)
 - **Backend** (`routes/hours.py`): all "act on someone else" hours endpoints — `POST /hours/admin`, `POST /hours/admin/bulk`, `POST /hours/admin/csv`, `PUT /hours/{id}/review`, `PUT /hours/{id}` — now hard-restricted to Full Access + Operations Manager admins. Governor Manager and Membership Manager can only log for themselves via `POST /hours` (returns `pending`, routed to Full/Ops Manager for approval).
 - **Frontend** (`Hours.jsx`):

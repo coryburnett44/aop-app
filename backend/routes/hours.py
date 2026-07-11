@@ -92,13 +92,51 @@ def register(
     # Iter 122: Only Full Access + Operations Manager can log hours for
     # OTHER members and approve pending entries. Governor Manager and
     # Membership Manager can log for themselves only (via `POST /hours`).
-    _FULL_HOURS_ROLES = {None, "", "full", "operations_manager"}
+    # Iter 123: This is now overridable per-role via db.app_settings.
+    _DEFAULT_HOURS_ROLE_CONFIG = {
+        "full":                {"can_manage_others": True,  "default_mode": "for_others"},
+        "operations_manager":  {"can_manage_others": True,  "default_mode": "for_others"},
+        "governor_manager":    {"can_manage_others": False, "default_mode": "for_myself"},
+        "membership_manager":  {"can_manage_others": False, "default_mode": "for_myself"},
+    }
+
+    def _fallback_role_entry(role: str) -> dict:
+        """Default per-role behavior when no override doc exists."""
+        return _DEFAULT_HOURS_ROLE_CONFIG.get(role, {
+            # Unknown role → conservative: cannot manage others, self-only.
+            "can_manage_others": False,
+            "default_mode": "for_myself",
+        })
+
+    async def _load_hours_role_config() -> dict:
+        """Merge stored overrides on top of the built-in defaults so every
+        known role always has an entry, and unknown/new roles fall back
+        cleanly."""
+        merged = {k: dict(v) for k, v in _DEFAULT_HOURS_ROLE_CONFIG.items()}
+        try:
+            doc = await db.app_settings.find_one({"key": "hours_role_config"}, {"_id": 0})
+        except Exception:
+            doc = None
+        overrides = (doc or {}).get("roles") or {}
+        for role, entry in overrides.items():
+            if not isinstance(entry, dict):
+                continue
+            merged.setdefault(role, {"can_manage_others": False, "default_mode": "for_myself"})
+            if "can_manage_others" in entry:
+                merged[role]["can_manage_others"] = bool(entry["can_manage_others"])
+            if "default_mode" in entry and entry["default_mode"] in ("for_others", "for_myself"):
+                merged[role]["default_mode"] = entry["default_mode"]
+        return merged
 
     def _admin_role(u: dict) -> str:
         return (u.get("admin_role") or "full") if u.get("role") == "admin" else ""
 
-    def _can_manage_hours_for_others(admin: dict) -> bool:
-        return _admin_role(admin) in _FULL_HOURS_ROLES
+    async def _can_manage_hours_for_others(admin: dict) -> bool:
+        role = _admin_role(admin)
+        if not role:
+            return False
+        cfg = await _load_hours_role_config()
+        return bool(cfg.get(role, _fallback_role_entry(role))["can_manage_others"])
 
     @api.post("/hours")
     async def log_hours(body: HoursLogIn, user: dict = Depends(get_current_user)):
@@ -123,12 +161,95 @@ def register(
         await db.volunteer_hours.insert_one(doc)
         return hours_out(doc)
 
+    # ============================================================
+    # Iter 123: admin-configurable per-role hours behavior.
+    # Lets Full Access admins add/edit the {role → can_manage_others,
+    # default_mode} map without a code change. New sub-roles (added via
+    # admin custom roles) can be granted or denied hours-manage rights
+    # entirely from the Admin Settings UI.
+    # ============================================================
+    @api.get("/hours/role-config")
+    async def get_hours_role_config(user: dict = Depends(get_current_user)):
+        """Returns the effective per-role hours config. Any authenticated
+        user can read it — the frontend uses it to decide whether to show
+        the 'Log for others / Log for myself' toggle. Non-admins get a
+        trivial payload (their role isn't listed)."""
+        cfg = await _load_hours_role_config()
+        # Return as a sorted list for deterministic client rendering.
+        items = [
+            {"role": role, "label": _pretty_role(role), **entry}
+            for role, entry in sorted(cfg.items(), key=lambda kv: kv[0])
+        ]
+        # The `defaults` block is what the frontend uses if the caller's
+        # own role isn't listed in the config — matches _fallback_role_entry.
+        return {
+            "items": items,
+            "defaults": {"can_manage_others": False, "default_mode": "for_myself"},
+        }
+
+    @api.put("/hours/role-config")
+    async def set_hours_role_config(body: dict, admin: dict = Depends(require_admin)):
+        """Full Access admin overrides one or more roles. Body shape:
+          { roles: { "<role_key>": { can_manage_others: bool, default_mode: "for_others"|"for_myself" }, ... } }
+        Missing role keys keep their existing behavior. Passing `null` for a
+        role removes its override (falls back to code defaults)."""
+        if _admin_role(admin) != "full":
+            raise HTTPException(
+                status_code=403,
+                detail="Only Full Access admins can change the hours role config.",
+            )
+        roles_in = body.get("roles") if isinstance(body, dict) else None
+        if not isinstance(roles_in, dict) or not roles_in:
+            raise HTTPException(status_code=400, detail="Provide `roles` object with at least one role update.")
+        existing = await db.app_settings.find_one({"key": "hours_role_config"}, {"_id": 0}) or {}
+        overrides = dict(existing.get("roles") or {})
+        for role, entry in roles_in.items():
+            role = str(role or "").strip().lower()
+            if not role or " " in role:
+                raise HTTPException(status_code=400, detail=f"Invalid role key: {role!r}")
+            if entry is None:
+                overrides.pop(role, None)
+                continue
+            if not isinstance(entry, dict):
+                raise HTTPException(status_code=400, detail=f"Entry for {role!r} must be an object or null.")
+            new_entry: dict = {}
+            if "can_manage_others" in entry:
+                new_entry["can_manage_others"] = bool(entry["can_manage_others"])
+            if "default_mode" in entry:
+                mode = entry["default_mode"]
+                if mode not in ("for_others", "for_myself"):
+                    raise HTTPException(status_code=400, detail=f"default_mode for {role!r} must be 'for_others' or 'for_myself'.")
+                new_entry["default_mode"] = mode
+            if not new_entry:
+                continue
+            overrides[role] = {**(overrides.get(role) or {}), **new_entry}
+        await db.app_settings.update_one(
+            {"key": "hours_role_config"},
+            {"$set": {
+                "key": "hours_role_config",
+                "roles": overrides,
+                "updated_at": iso(now_utc()),
+                "updated_by": admin.get("name", "") or admin.get("email", ""),
+            }},
+            upsert=True,
+        )
+        return await get_hours_role_config(admin)
+
+    def _pretty_role(role: str) -> str:
+        """Human-facing label. Falls back to Title Case for unknown roles."""
+        return {
+            "full": "Full Access",
+            "operations_manager": "Operations Manager",
+            "governor_manager": "Governor Manager",
+            "membership_manager": "Membership Manager",
+        }.get(role, role.replace("_", " ").title())
+
     @api.post("/hours/admin")
     async def admin_log_hours(body: AdminHoursLogIn, admin: dict = Depends(admin_tab_dep("hours"))):
         """Admin logs hours on behalf of a member. Restricted to Full Access
         and Operations Manager admins — Governor Managers and Membership
         Managers must use `POST /hours` to log their own hours."""
-        if not _can_manage_hours_for_others(admin):
+        if not await _can_manage_hours_for_others(admin):
             raise HTTPException(
                 status_code=403,
                 detail="Only Full Access and Operations Manager admins can log hours for other members. Use the personal hours form to log your own.",
@@ -172,7 +293,7 @@ def register(
     async def admin_log_hours_bulk(body: AdminHoursBulkLogIn, admin: dict = Depends(admin_tab_dep("hours"))):
         """Admin logs the SAME volunteer activity for multiple members at once.
         Restricted to Full Access + Operations Manager admins."""
-        if not _can_manage_hours_for_others(admin):
+        if not await _can_manage_hours_for_others(admin):
             raise HTTPException(
                 status_code=403,
                 detail="Only Full Access and Operations Manager admins can log hours for other members.",
@@ -304,7 +425,7 @@ def register(
         written to the database. The response includes a `preview` array
         with one entry per CSV row.
         """
-        if not _can_manage_hours_for_others(admin):
+        if not await _can_manage_hours_for_others(admin):
             raise HTTPException(
                 status_code=403,
                 detail="Only Full Access and Operations Manager admins can bulk-import hours for other members.",
@@ -491,7 +612,7 @@ def register(
         # Iter 122: Only Full Access + Operations Manager admins can review
         # (approve/reject/adjust) hours. Governor Managers and Membership
         # Managers can view the queue for their scope but cannot flip status.
-        if not _can_manage_hours_for_others(admin):
+        if not await _can_manage_hours_for_others(admin):
             raise HTTPException(
                 status_code=403,
                 detail="Only Full Access and Operations Manager admins can review volunteer hours.",
@@ -531,7 +652,7 @@ def register(
         if not existing:
             raise HTTPException(status_code=404, detail="Hours entry not found")
         # Iter 122: full-edit reserved for Full Access + Operations Manager.
-        if not _can_manage_hours_for_others(admin):
+        if not await _can_manage_hours_for_others(admin):
             raise HTTPException(
                 status_code=403,
                 detail="Only Full Access and Operations Manager admins can edit other members' hours.",

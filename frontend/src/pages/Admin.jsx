@@ -22,6 +22,7 @@ import RichEditor from "../components/RichEditor";
 import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
 import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
 import SmsSettingsAdmin from "../components/SmsSettingsAdmin";
+import HoursRoleConfigAdmin from "../components/HoursRoleConfigAdmin";
 import ProfileLayoutAdmin from "../components/ProfileLayoutAdmin";
 import PageBuilder from "../components/cms/PageBuilder";
 import BulkImportMembersDialog from "../components/BulkImportMembersDialog";
@@ -876,6 +877,7 @@ function PagesAdmin() {
         <div className="space-y-8">
             <SiteSettingsAdmin />
             <SmsSettingsAdmin />
+            <HoursRoleConfigAdmin />
             <ProfileLayoutAdmin />
             <div>
                 <div className="flex items-end justify-between mb-4">

@@ -16,12 +16,21 @@ import { formatCalendarDay } from "../lib/dateUtil";
 export default function Hours() {
     const { user } = useAuth();
     const [tab, setTab] = useState("mine");
+    // Iter 123: role-based hours behavior is now driven by an admin-editable
+    // config in db.app_settings.hours_role_config. Load it once on mount
+    // and pass it down to LogHoursDialog. The config is public-read (any
+    // authenticated user can fetch it) — the write endpoint is admin-only.
+    const [roleCfg, setRoleCfg] = useState(null);
+    useEffect(() => {
+        api.get("/hours/role-config")
+            .then(({ data }) => setRoleCfg(data))
+            .catch(() => setRoleCfg({ items: [], defaults: { can_manage_others: false, default_mode: "for_myself" } }));
+    }, []);
 
     if (!user) return null;
-    // Iter 122: Only Full Access + Operations Manager admins can review /
-    // log hours on behalf of others. Governor Manager and Membership
-    // Manager see the same "My hours"-only view as regular members.
-    const canManageOthers = user.role === "admin" && ["full", "operations_manager"].includes(user.admin_role || "full");
+    const myEntry = (roleCfg?.items || []).find((r) => r.role === (user.admin_role || "full"));
+    const canManageOthers = user.role === "admin"
+        && (myEntry ? myEntry.can_manage_others : (roleCfg?.defaults?.can_manage_others ?? false));
     return (
         <div className="max-w-5xl mx-auto px-6 lg:px-10 py-12">
             <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
@@ -31,7 +40,7 @@ export default function Hours() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     {canManageOthers && <CsvImportDialog />}
-                    <LogHoursDialog />
+                    <LogHoursDialog roleCfg={roleCfg} />
                 </div>
             </div>
 
@@ -51,17 +60,30 @@ export default function Hours() {
     );
 }
 
-function LogHoursDialog() {
+function LogHoursDialog({ roleCfg }) {
     const { user } = useAuth();
     const isAdmin = user?.role === "admin";
     const [open, setOpen] = useState(false);
-    // Iter 122: only Full Access + Operations Manager admins can log hours
-    // for OTHER members. Governor Manager and Membership Manager can only
-    // log for themselves — the toggle is hidden for them and the dialog
-    // is forced into personal-entry mode.
+    // Iter 123: read the admin-configurable role → hours-behavior map
+    // instead of the previously-hardcoded list.
     const _adminRole = user?.admin_role || "full";
-    const canManageOthers = isAdmin && ["full", "operations_manager"].includes(_adminRole);
-    const [logForMyself, setLogForMyself] = useState(!canManageOthers);
+    const _myEntry = (roleCfg?.items || []).find((r) => r.role === _adminRole);
+    const canManageOthers = isAdmin && (_myEntry
+        ? _myEntry.can_manage_others
+        : (roleCfg?.defaults?.can_manage_others ?? false));
+    const _defaultMode = _myEntry?.default_mode
+        || roleCfg?.defaults?.default_mode
+        || "for_myself";
+    // If the caller can't manage others at all, always start in "for myself"
+    // (and hide the toggle). Otherwise honor the configured default.
+    const [logForMyself, setLogForMyself] = useState(!canManageOthers || _defaultMode === "for_myself");
+    // If the config loads AFTER the dialog first mounts (async fetch), keep
+    // the state in sync so the initial default lands correctly.
+    useEffect(() => {
+        if (!isAdmin) return;
+        setLogForMyself(!canManageOthers || _defaultMode === "for_myself");
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [_defaultMode, canManageOthers]);
     const inAdminMode = canManageOthers && !logForMyself;
     const [members, setMembers] = useState([]);
     const [memberQuery, setMemberQuery] = useState("");
