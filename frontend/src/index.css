@@ -249,6 +249,43 @@
     color: hsl(var(--foreground));
 }
 
+/* Iter 126: dark-mode BLUE text remap.
+   Home, Chat, Gear, Donate, Meet, Calendar, and Photos pages use
+   navy inline colors (`style={{ color: NAVY }}` where NAVY = #0A2463)
+   plus a few `text-[#0A2463]`, `text-blue-*` classes. On dark theme
+   these become dark-blue-on-dark-navy → nearly invisible. Force white
+   whenever the user is in dark mode.
+   NB: we cover several serialized forms because different browsers
+   render inline styles differently:
+     • Chrome:  style="color: rgb(10, 36, 99)"
+     • Safari:  style="color: rgb(10, 36, 99)" too
+     • Written: style={{ color: NAVY }} → React emits "color: rgb(...)"
+   React always emits `rgb(...)` for inline hex, so we cover that too. */
+.dark [style*="color: rgb(10, 36, 99)"],
+.dark [style*="color:rgb(10,36,99)"],
+.dark [style*="color: #0A2463"],
+.dark [style*="color:#0A2463"],
+.dark [style*="color: #0a2463"],
+.dark [style*="color:#0a2463"] {
+    color: #ffffff !important;
+}
+.dark .text-\[\#0A2463\],
+.dark .text-\[\#0a2463\] {
+    color: #ffffff;
+}
+.dark .text-blue-500,
+.dark .text-blue-600,
+.dark .text-blue-700,
+.dark .text-blue-800,
+.dark .text-blue-900,
+.dark .text-navy-500,
+.dark .text-navy-600,
+.dark .text-navy-700,
+.dark .text-navy-800,
+.dark .text-navy-900 {
+    color: #ffffff;
+}
+
 .dark .bg-blue-50 { background-color: hsl(210 55% 22%); }
 .dark .bg-blue-100 { background-color: hsl(210 55% 26%); }
 .dark .text-blue-700,
@@ -275,8 +312,4 @@
 
 /* --- Global safety net: any element that manually sets an inline
    white/near-white color and lives inside a .dark tree gets nudged
-   toward the theme foreground. Cheap and unobtrusive. --- */
-.dark [style*="color: #0A2463"],
-.dark [style*="color:#0A2463"] {
-    color: hsl(var(--foreground)) !important;
-}
+   toward the theme foreground. Handled below in the iter-126 block. --- */
