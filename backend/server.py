@@ -1457,575 +1457,10 @@ async def seed_data():
 # PHASE B — Omega Chapter, Gear store, Donations, Event Calendar, Check-ins, Reports
 # ============================================================
 
-# ---------- Omega Chapter (in memoriam) ----------
-# Templates the admin can pick when honoring a member (frontend renders the corresponding layout).
-# - biography     -> long-form bio with photo, dates, epitaph
-# - memorial-card -> formal portrait with name/dates centered + short tribute quote
-# - in-service    -> military brief: rank/branch/service dates + photo + summary
-OMEGA_TEMPLATES = ["biography", "memorial-card", "in-service"]
-# Background styles (frontend maps to CSS gradients / textures).
-OMEGA_BACKGROUNDS = [
-    "american-flag",
-    "navy-starfield",
-    "marble",
-    "sepia",
-    "solid-red",
-    "solid-navy",
-    "solid-white",
-]
+# ---------- Omega Chapter (in memoriam) — extracted to routes/omega.py ----------
+# ---------- AOP Form Links + Meeting Cards — extracted to routes/cms_cards.py ----------
+# ---------- Generic admin image uploads — extracted to routes/uploads.py ----------
 
-
-class OmegaTributeIn(BaseModel):
-    user_id: str
-    template: Literal["biography", "memorial-card", "in-service"] = "biography"
-    background: Literal[
-        "american-flag", "navy-starfield", "marble", "sepia",
-        "solid-red", "solid-navy", "solid-white",
-    ] = "navy-starfield"
-    cover_image: str = ""  # storage URL for tribute photo (separate from member avatar)
-    synopsis: str = ""  # short paragraph (used in 'memorial-card' / 'in-service')
-    biography: str = ""  # longer rich text (used in 'biography')
-    epitaph: str = ""  # short quote/line displayed prominently
-    born_at: str = ""  # YYYY-MM-DD
-    passed_at: str = ""  # YYYY-MM-DD
-    location: str = ""  # city/state where they were laid to rest, optional
-    rank: str = ""  # military rank (in-service template)
-    service_dates: str = ""  # free-text service dates e.g. "1998 — 2018"
-
-
-class OmegaTributeUpdateIn(BaseModel):
-    template: Optional[Literal["biography", "memorial-card", "in-service"]] = None
-    background: Optional[Literal[
-        "american-flag", "navy-starfield", "marble", "sepia",
-        "solid-red", "solid-navy", "solid-white",
-    ]] = None
-    cover_image: Optional[str] = None
-    synopsis: Optional[str] = None
-    biography: Optional[str] = None
-    epitaph: Optional[str] = None
-    born_at: Optional[str] = None
-    passed_at: Optional[str] = None
-    location: Optional[str] = None
-    rank: Optional[str] = None
-    service_dates: Optional[str] = None
-
-
-def tribute_out(t: dict, member: Optional[dict] = None) -> dict:
-    out = {
-        "id": t["id"],
-        "user_id": t["user_id"],
-        "template": t.get("template", "biography"),
-        "background": t.get("background", "navy-starfield"),
-        "cover_image": t.get("cover_image", ""),
-        "synopsis": t.get("synopsis", ""),
-        "biography": t.get("biography", ""),
-        "epitaph": t.get("epitaph", ""),
-        "born_at": t.get("born_at", ""),
-        "passed_at": t.get("passed_at", ""),
-        "location": t.get("location", ""),
-        "rank": t.get("rank", ""),
-        "service_dates": t.get("service_dates", ""),
-        "created_at": t.get("created_at"),
-        "created_by_name": t.get("created_by_name", ""),
-        "updated_at": t.get("updated_at"),
-    }
-    if member:
-        out["member"] = {
-            "id": member["id"],
-            "name": member.get("name", ""),
-            "email": member.get("email", ""),
-            "line_name": member.get("line_name", ""),
-            "branch_of_service": member.get("branch_of_service", ""),
-            "city": member.get("city", ""),
-            "state": member.get("state", ""),
-            "country": member.get("country", ""),
-            "avatar_url": member.get("avatar_url", ""),
-            "join_date": member.get("join_date", ""),
-            "intake_line": member.get("intake_line", ""),
-            "deceased_at": member.get("deceased_at", ""),
-        }
-    return out
-
-
-@api.get("/omega")
-async def omega_chapter():
-    """Returns the Omega list — users who are deceased PLUS any explicit tributes,
-    merged so the frontend can render either the legacy auto-card or the new template-based tribute."""
-    # 1) Fetch deceased members
-    member_cursor = db.users.find(
-        {"$or": [{"status_override": "deceased"}, {"deceased_at": {"$nin": [None, ""]}}]},
-        {"_id": 0, "password_hash": 0},
-    ).sort("deceased_at", -1)
-    members = await member_cursor.to_list(500)
-    # 2) Fetch tributes
-    tribute_cursor = db.omega_tributes.find({}, {"_id": 0}).sort("created_at", -1)
-    tributes = await tribute_cursor.to_list(500)
-    tributes_by_uid = {t["user_id"]: t for t in tributes}
-    # 3) Merge — every deceased member gets an entry; tributes provide template+synopsis
-    out = []
-    seen = set()
-    for m in members:
-        seen.add(m["id"])
-        t = tributes_by_uid.get(m["id"])
-        if t:
-            out.append({"type": "tribute", **tribute_out(t, m)})
-        else:
-            # Legacy member-only card
-            pu = public_user(m)
-            out.append({
-                "type": "member",
-                "id": m["id"],
-                "user_id": m["id"],
-                "template": "biography",
-                "background": "navy-starfield",
-                "cover_image": "",
-                "synopsis": "",
-                "biography": "",
-                "epitaph": "",
-                "born_at": "",
-                "passed_at": m.get("deceased_at", ""),
-                "location": pu.get("city", ""),
-                "rank": "",
-                "service_dates": "",
-                "member": {
-                    "id": m["id"],
-                    "name": pu.get("name", ""),
-                    "email": pu.get("email", ""),
-                    "line_name": pu.get("line_name", ""),
-                    "branch_of_service": pu.get("branch_of_service", ""),
-                    "city": pu.get("city", ""),
-                    "state": pu.get("state", ""),
-                    "country": pu.get("country", ""),
-                    "avatar_url": pu.get("avatar_url", ""),
-                    "join_date": pu.get("join_date", ""),
-                    "intake_line": pu.get("intake_line", ""),
-                    "deceased_at": pu.get("deceased_at", ""),
-                },
-            })
-    # 4) Tributes for non-deceased members (admin published a tribute manually without setting status)
-    for t in tributes:
-        if t["user_id"] in seen:
-            continue
-        m = await db.users.find_one({"id": t["user_id"]}, {"_id": 0, "password_hash": 0})
-        if not m:
-            continue
-        out.append({"type": "tribute", **tribute_out(t, m)})
-    # Sort: most recent passed_at / deceased_at first
-    def sort_key(x):
-        return x.get("passed_at") or (x.get("member") or {}).get("deceased_at") or ""
-    out.sort(key=sort_key, reverse=True)
-    return out
-
-
-@api.get("/omega/options")
-async def omega_options(_: dict = Depends(get_current_user)):
-    """Frontend uses this to populate the template + background pickers."""
-    return {"templates": OMEGA_TEMPLATES, "backgrounds": OMEGA_BACKGROUNDS}
-
-
-@api.post("/omega/tributes")
-async def create_tribute(body: OmegaTributeIn, admin: dict = Depends(admin_tab_dep("members"))):
-    """Admin creates a tribute for a member. Also flips the member's status to deceased
-    if not already so they appear in the Omega Chapter."""
-    member = await db.users.find_one({"id": body.user_id})
-    if not member:
-        raise HTTPException(status_code=404, detail="Member not found")
-    existing = await db.omega_tributes.find_one({"user_id": body.user_id})
-    if existing:
-        raise HTTPException(status_code=400, detail="A tribute already exists for this member — edit it instead.")
-    doc = {
-        "id": str(uuid.uuid4()),
-        **body.model_dump(),
-        "created_by": admin["id"],
-        "created_by_name": admin.get("name", ""),
-        "created_at": iso(now_utc()),
-        "updated_at": iso(now_utc()),
-    }
-    await db.omega_tributes.insert_one(doc)
-    # Mark deceased automatically if not already
-    if member.get("status_override") != "deceased":
-        set_doc = {"status_override": "deceased"}
-        if body.passed_at and not member.get("deceased_at"):
-            set_doc["deceased_at"] = body.passed_at
-        await db.users.update_one({"id": body.user_id}, {"$set": set_doc})
-    return tribute_out(doc, member)
-
-
-@api.put("/omega/tributes/{tribute_id}")
-async def update_tribute(tribute_id: str, body: OmegaTributeUpdateIn, admin: dict = Depends(admin_tab_dep("members"))):
-    existing = await db.omega_tributes.find_one({"id": tribute_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Tribute not found")
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    updates["updated_at"] = iso(now_utc())
-    updates["updated_by"] = admin["id"]
-    updates["updated_by_name"] = admin.get("name", "")
-    await db.omega_tributes.update_one({"id": tribute_id}, {"$set": updates})
-    t = await db.omega_tributes.find_one({"id": tribute_id}, {"_id": 0})
-    member = await db.users.find_one({"id": t["user_id"]}, {"_id": 0, "password_hash": 0})
-    return tribute_out(t, member)
-
-
-@api.delete("/omega/tributes/{tribute_id}")
-async def delete_tribute(tribute_id: str, _: dict = Depends(admin_tab_dep("members"))):
-    existing = await db.omega_tributes.find_one({"id": tribute_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Tribute not found")
-    await db.omega_tributes.delete_one({"id": tribute_id})
-    return {"ok": True}
-
-
-@api.post("/omega/upload")
-async def upload_omega_cover(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("members"))):
-    """Admin uploads a tribute cover photo. Returns {url} that can be used as cover_image."""
-    chunks: list = []
-    total = 0
-    while True:
-        chunk = await file.read(1024 * 1024)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > 15 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Tribute image must be under 15 MB")
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    fname = (file.filename or "tribute.jpg").replace("/", "_")
-    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
-    if ext not in IMAGE_EXT:
-        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
-    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
-    file_id = str(uuid.uuid4())
-    storage_path = f"omega/{file_id}/{fname}"
-
-    def _put():
-        return put_object(storage_path, data, content_type)
-    await asyncio.to_thread(_put)
-    rec = {
-        "id": file_id,
-        "filename": fname,
-        "storage_path": storage_path,
-        "content_type": content_type,
-        "size": total,
-        "kind": "image",
-        "uploaded_by": user["id"],
-        "is_deleted": False,
-        "created_at": iso(now_utc()),
-    }
-    await db.chat_files.insert_one(rec)
-    return {"url": f"/api/files/{storage_path}", "size": total}
-
-
-# ---------- Omega Hero (featured banner image at top of /omega) ----------
-class OmegaHeroIn(BaseModel):
-    image_url: str = ""
-    title: str = ""
-    caption: str = ""
-
-
-@api.get("/omega/hero")
-async def get_omega_hero():
-    doc = await db.app_settings.find_one({"key": "omega_hero"}, {"_id": 0})
-    if not doc:
-        return {"image_url": "", "title": "", "caption": ""}
-    return {
-        "image_url": doc.get("image_url", ""),
-        "title": doc.get("title", ""),
-        "caption": doc.get("caption", ""),
-        "updated_at": doc.get("updated_at"),
-    }
-
-
-@api.put("/omega/hero")
-async def set_omega_hero(body: OmegaHeroIn, admin: dict = Depends(admin_tab_dep("members"))):
-    await db.app_settings.update_one(
-        {"key": "omega_hero"},
-        {"$set": {
-            "key": "omega_hero",
-            "image_url": body.image_url,
-            "title": body.title,
-            "caption": body.caption,
-            "updated_at": iso(now_utc()),
-            "updated_by": admin.get("name", ""),
-        }},
-        upsert=True,
-    )
-    return {"ok": True, "image_url": body.image_url, "title": body.title, "caption": body.caption}
-
-
-# ---------- AOP Form Links (picture cards linking to a webpage on AOP Forms page) ----------
-class FormLinkIn(BaseModel):
-    title: str
-    description: str = ""
-    url: str
-    image_url: str = ""
-    order: int = 0
-
-
-class FormLinkUpdateIn(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    url: Optional[str] = None
-    image_url: Optional[str] = None
-    order: Optional[int] = None
-
-
-def _form_link_out(d: dict) -> dict:
-    return {
-        "id": d["id"],
-        "title": d.get("title", ""),
-        "description": d.get("description", ""),
-        "url": d.get("url", ""),
-        "image_url": d.get("image_url", ""),
-        "order": d.get("order", 0),
-        "created_at": d.get("created_at"),
-        "created_by_name": d.get("created_by_name", ""),
-    }
-
-
-@api.get("/form-links")
-async def list_form_links():
-    rows = await db.form_links.find({}, {"_id": 0}).sort([("order", 1), ("created_at", 1)]).to_list(200)
-    return [_form_link_out(r) for r in rows]
-
-
-@api.post("/form-links")
-async def create_form_link(body: FormLinkIn, admin: dict = Depends(admin_tab_dep("members"))):
-    if not body.title.strip() or not body.url.strip():
-        raise HTTPException(status_code=400, detail="Title and URL are required.")
-    doc = {
-        "id": str(uuid.uuid4()),
-        "title": body.title.strip(),
-        "description": body.description.strip(),
-        "url": body.url.strip(),
-        "image_url": body.image_url.strip(),
-        "order": body.order,
-        "created_by": admin["id"],
-        "created_by_name": admin.get("name", ""),
-        "created_at": iso(now_utc()),
-        "updated_at": iso(now_utc()),
-    }
-    await db.form_links.insert_one(doc)
-    return _form_link_out(doc)
-
-
-@api.put("/form-links/{link_id}")
-async def update_form_link(link_id: str, body: FormLinkUpdateIn, _: dict = Depends(admin_tab_dep("members"))):
-    existing = await db.form_links.find_one({"id": link_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Form link not found")
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if "title" in updates and not str(updates["title"]).strip():
-        raise HTTPException(status_code=400, detail="Title cannot be blank.")
-    if "url" in updates and not str(updates["url"]).strip():
-        raise HTTPException(status_code=400, detail="URL cannot be blank.")
-    updates["updated_at"] = iso(now_utc())
-    await db.form_links.update_one({"id": link_id}, {"$set": updates})
-    out = await db.form_links.find_one({"id": link_id}, {"_id": 0})
-    return _form_link_out(out)
-
-
-@api.delete("/form-links/{link_id}")
-async def delete_form_link(link_id: str, _: dict = Depends(admin_tab_dep("members"))):
-    existing = await db.form_links.find_one({"id": link_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Form link not found")
-    await db.form_links.delete_one({"id": link_id})
-    return {"ok": True}
-
-
-@api.post("/form-links/upload")
-async def upload_form_link_image(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("members"))):
-    """Admin uploads a picture for a form-link card. Returns {url}."""
-    chunks: list = []
-    total = 0
-    while True:
-        chunk = await file.read(1024 * 1024)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > 10 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Image must be under 10 MB")
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    fname = (file.filename or "link.jpg").replace("/", "_")
-    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
-    if ext not in IMAGE_EXT:
-        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
-    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
-    file_id = str(uuid.uuid4())
-    storage_path = f"form-links/{file_id}/{fname}"
-    await asyncio.to_thread(put_object, storage_path, data, content_type)
-    rec = {
-        "id": file_id,
-        "filename": fname,
-        "storage_path": storage_path,
-        "content_type": content_type,
-        "size": total,
-        "kind": "image",
-        "uploaded_by": user["id"],
-        "is_deleted": False,
-        "created_at": iso(now_utc()),
-    }
-    await db.chat_files.insert_one(rec)
-    return {"url": f"/api/files/{storage_path}", "size": total}
-
-
-# ---------- Generic admin image upload (chapter logo / cause / news / chat group) ----------
-async def _upload_image(file: UploadFile, prefix: str, user: dict, max_mb: int = 10) -> dict:
-    chunks: list = []
-    total = 0
-    while True:
-        chunk = await file.read(1024 * 1024)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_mb * 1024 * 1024:
-            raise HTTPException(status_code=413, detail=f"Image must be under {max_mb} MB")
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    fname = (file.filename or "image.jpg").replace("/", "_")
-    ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
-    if ext not in IMAGE_EXT:
-        raise HTTPException(status_code=400, detail="Only images allowed (jpg, png, gif, webp)")
-    content_type = file.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
-    file_id = str(uuid.uuid4())
-    storage_path = f"{prefix}/{file_id}/{fname}"
-    await asyncio.to_thread(put_object, storage_path, data, content_type)
-    await db.chat_files.insert_one({
-        "id": file_id, "filename": fname, "storage_path": storage_path,
-        "content_type": content_type, "size": total, "kind": "image",
-        "uploaded_by": user["id"], "is_deleted": False, "created_at": iso(now_utc()),
-    })
-    return {"url": f"/api/files/{storage_path}", "size": total}
-
-
-@api.post("/chapters/upload-logo")
-async def chapter_logo_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("chapters"))):
-    return await _upload_image(file, "chapter-logos", user)
-
-
-@api.post("/causes/upload-image")
-async def cause_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("causes"))):
-    return await _upload_image(file, "causes", user)
-
-
-@api.post("/news/upload-image")
-async def news_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("news"))):
-    return await _upload_image(file, "news", user)
-
-
-@api.post("/leadership/upload-image")
-async def leadership_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("pages"))):
-    return await _upload_image(file, "leadership", user)
-
-
-@api.post("/founders/upload-image")
-async def founders_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("pages"))):
-    return await _upload_image(file, "founders", user)
-
-
-@api.post("/events/upload-cover")
-async def events_cover_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("events"))):
-    return await _upload_image(file, "events", user)
-
-
-@api.post("/chat/group-photo-upload")
-async def chat_group_photo_upload(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    """Any logged-in user can upload — they'll only be able to attach the
-    resulting URL to a conversation they belong to (enforced by /conversations PUT)."""
-    return await _upload_image(file, "chat-groups", user, max_mb=8)
-
-
-# ---------- Schedule a Meeting (admin-editable cards) ----------
-class MeetingCardIn(BaseModel):
-    name: str
-    title: str = ""
-    description: str = ""
-    image_url: str = ""
-    button_label: str = "Book Meeting"
-    button_url: str
-    order: int = 0
-
-
-class MeetingCardUpdateIn(BaseModel):
-    name: Optional[str] = None
-    title: Optional[str] = None
-    description: Optional[str] = None
-    image_url: Optional[str] = None
-    button_label: Optional[str] = None
-    button_url: Optional[str] = None
-    order: Optional[int] = None
-
-
-def _meeting_out(d: dict) -> dict:
-    return {
-        "id": d["id"],
-        "name": d.get("name", ""),
-        "title": d.get("title", ""),
-        "description": d.get("description", ""),
-        "image_url": d.get("image_url", ""),
-        "button_label": d.get("button_label", "Book Meeting"),
-        "button_url": d.get("button_url", ""),
-        "order": d.get("order", 0),
-        "created_at": d.get("created_at"),
-    }
-
-
-@api.get("/meeting-cards")
-async def list_meeting_cards():
-    rows = await db.meeting_cards.find({}, {"_id": 0}).sort([("order", 1), ("created_at", 1)]).to_list(200)
-    return [_meeting_out(r) for r in rows]
-
-
-@api.post("/meeting-cards")
-async def create_meeting_card(body: MeetingCardIn, admin: dict = Depends(admin_tab_dep("members"))):
-    if not body.name.strip() or not body.button_url.strip():
-        raise HTTPException(status_code=400, detail="Name and Book Meeting URL are required.")
-    doc = {
-        "id": str(uuid.uuid4()),
-        "name": body.name.strip(),
-        "title": body.title.strip(),
-        "description": body.description.strip(),
-        "image_url": body.image_url.strip(),
-        "button_label": (body.button_label or "Book Meeting").strip(),
-        "button_url": body.button_url.strip(),
-        "order": body.order,
-        "created_by_name": admin.get("name", ""),
-        "created_at": iso(now_utc()),
-        "updated_at": iso(now_utc()),
-    }
-    await db.meeting_cards.insert_one(doc)
-    return _meeting_out(doc)
-
-
-@api.put("/meeting-cards/{card_id}")
-async def update_meeting_card(card_id: str, body: MeetingCardUpdateIn, _: dict = Depends(admin_tab_dep("members"))):
-    existing = await db.meeting_cards.find_one({"id": card_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Meeting card not found")
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if "name" in updates and not str(updates["name"]).strip():
-        raise HTTPException(status_code=400, detail="Name cannot be blank.")
-    if "button_url" in updates and not str(updates["button_url"]).strip():
-        raise HTTPException(status_code=400, detail="Book Meeting URL cannot be blank.")
-    updates["updated_at"] = iso(now_utc())
-    await db.meeting_cards.update_one({"id": card_id}, {"$set": updates})
-    out = await db.meeting_cards.find_one({"id": card_id}, {"_id": 0})
-    return _meeting_out(out)
-
-
-@api.delete("/meeting-cards/{card_id}")
-async def delete_meeting_card(card_id: str, _: dict = Depends(admin_tab_dep("members"))):
-    existing = await db.meeting_cards.find_one({"id": card_id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Meeting card not found")
-    await db.meeting_cards.delete_one({"id": card_id})
-    return {"ok": True}
-
-
-@api.post("/meeting-cards/upload-image")
-async def meeting_card_image_upload(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("members"))):
-    return await _upload_image(file, "meeting-cards", user)
 
 
 
@@ -3689,6 +3124,47 @@ routes_login_activity.register(
     logger=logger,
 )
 
+# Iter 128 modularization: Omega Chapter tributes, form-link/meeting-card CMS
+# cards, and the generic admin image-upload endpoints all extracted out of
+# server.py into dedicated route modules.
+from routes import uploads as routes_uploads  # noqa: E402
+from routes import omega as routes_omega  # noqa: E402
+from routes import cms_cards as routes_cms_cards  # noqa: E402
+
+routes_uploads.register(
+    api,
+    db=db,
+    get_current_user=get_current_user,
+    admin_tab_dep=admin_tab_dep,
+    put_object=put_object,
+    iso=iso,
+    now_utc=now_utc,
+    image_ext=IMAGE_EXT,
+    mime_by_ext=MIME_BY_EXT,
+)
+routes_omega.register(
+    api,
+    db=db,
+    get_current_user=get_current_user,
+    admin_tab_dep=admin_tab_dep,
+    put_object=put_object,
+    public_user=public_user,
+    iso=iso,
+    now_utc=now_utc,
+    image_ext=IMAGE_EXT,
+    mime_by_ext=MIME_BY_EXT,
+)
+routes_cms_cards.register(
+    api,
+    db=db,
+    admin_tab_dep=admin_tab_dep,
+    put_object=put_object,
+    iso=iso,
+    now_utc=now_utc,
+    image_ext=IMAGE_EXT,
+    mime_by_ext=MIME_BY_EXT,
+)
+
 # Patch the back-compat _ensure_site_settings shim to delegate to the route module
 _ensure_site_settings = routes_site_settings.register.ensure
 
@@ -3786,6 +3262,21 @@ routes_reports.register(
 # Wire back-compat helper shims used by /me/personnel-brief* in server.py.
 _personnel_brief_data._impl = routes_reports.register.personnel_brief_data
 _personnel_brief_pdf_response._impl = routes_reports.register.personnel_brief_pdf_response
+
+# Iter 127: CSV + PDF exports. Registered AFTER reports so the PDF
+# delegation can find the sibling /reports/{kind} routes.
+from routes import exports as routes_exports  # noqa: E402
+routes_exports.register(
+    api,
+    db=db,
+    admin_tab_dep=admin_tab_dep,
+    public_user=public_user,
+    is_chapter_scoped=is_chapter_scoped,
+    chapter_scope_user_ids=chapter_scope_user_ids,
+    iso=iso,
+    now_utc=now_utc,
+    logger=logger,
+)
 
 routes_rsvps.register(
     api,

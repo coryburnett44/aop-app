@@ -15,6 +15,22 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 128 — Modularization: extract omega / cms_cards / uploads out of server.py (2026-02-27) [REFACTOR]
+Long-deferred P1 refactor to keep `server.py` maintainable. Three legacy blocks (Omega Chapter in-memoriam tributes, AOP Form Links + Meeting Cards CMS, generic admin image-upload endpoints) extracted into dedicated modules.
+
+- **`routes/omega.py` (new, ~270 lines)** — full extraction of the in-memoriam surface:
+  - `GET /omega` (public deceased+tribute merge), `GET /omega/options`, `POST/PUT/DELETE /omega/tributes/*`, `POST /omega/upload`, `GET/PUT /omega/hero`.
+  - Pydantic models `OmegaTributeIn`, `OmegaTributeUpdateIn`, `OmegaHeroIn` and `tribute_out` helper moved along with the routes.
+- **`routes/cms_cards.py` (new, ~230 lines)** — AOP Form-Links picture cards + Schedule-a-Meeting cards:
+  - `GET/POST /form-links`, `PUT/DELETE /form-links/{id}`, `POST /form-links/upload`.
+  - `GET/POST /meeting-cards`, `PUT/DELETE /meeting-cards/{id}`, `POST /meeting-cards/upload-image`.
+- **`routes/uploads.py` (new, ~75 lines)** — generic admin image upload helper + wrappers:
+  - Internal `_upload_image(file, prefix, user, max_mb)` shared helper (also re-exposed via `register.upload_image` for future re-use).
+  - Wrappers: `/chapters/upload-logo`, `/causes/upload-image`, `/news/upload-image`, `/leadership/upload-image`, `/founders/upload-image`, `/events/upload-cover`, `/chat/group-photo-upload`.
+- **`server.py` shrinks 4109 → ~3579 lines (−530, ~13%)**. Registration follows the same `register(api, *, db, ...)` pattern used by the other extracted modules.
+- **Tests**: `tests/test_iteration128_modularization.py` — 9/9 pass. Verifies module importability, `server.py` no longer owns extracted symbols (`_upload_image`, `tribute_out`, `_form_link_out`, `_meeting_out`), the public endpoints still respond, and full CRUD round-trips on `/form-links` + `/meeting-cards`. Regression suite (omega, admin exports, iter120-127): **54/54 pass**.
+
+
 ### Iteration 112 — Awards eligibility fixes + catalog ordering + Directory join year (2026-02-27) [FIX+ENHANCEMENT]
 User reports: eligibility "Grant" buttons were resolving to the wrong award (Community Service → Ken Thompson; Member's → Life Membership), year selector only went 5 years back, Service Ribbon ignored the admin-set Year Joined, join year missing from Directory, and awards catalog needed a canonical order (or admin drag-rank).
 

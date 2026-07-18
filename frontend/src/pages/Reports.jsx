@@ -32,6 +32,55 @@ function downloadCSV(filename, csv) {
     setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
+/**
+ * Iter 127 — small helper button that downloads a landscape PDF snapshot
+ * of the current report from `/api/reports/{kind}/export.pdf`.
+ *
+ * Usage:
+ *   <ExportPdfButton kind="members" filters={filters} />
+ *
+ * All truthy filter values are passed as querystring params so the
+ * server-side JSON delegator applies the same filters the UI has active.
+ */
+function ExportPdfButton({ kind, filters }) {
+    const [busy, setBusy] = useState(false);
+    async function run() {
+        setBusy(true);
+        try {
+            const params = filters
+                ? Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== "" && v != null))
+                : {};
+            const res = await api.get(`/reports/${kind}/export.pdf`, { params, responseType: "blob" });
+            const disp = res.headers?.["content-disposition"] || "";
+            const m = /filename="?([^"]+)"?/.exec(disp);
+            const filename = m ? m[1] : `aop-${kind}-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+            const url = URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+            const a = document.createElement("a");
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1500);
+        } catch (e) {
+            const detail = e.response?.data?.detail;
+            toast.error(typeof detail === "string" ? detail : `Failed to export ${kind} PDF`);
+        }
+        setBusy(false);
+    }
+    return (
+        <Button
+            onClick={run}
+            disabled={busy}
+            variant="outline"
+            className="rounded-full"
+            data-testid={`report-pdf-btn-${kind}`}
+            title="Download a landscape PDF snapshot with the current filters applied"
+        >
+            <Printer className="h-4 w-4 mr-1.5" />
+            {busy ? "Preparing…" : "Export PDF"}
+        </Button>
+    );
+}
+
+
 export default function Reports() {
     return (
         <Tabs defaultValue="members">
@@ -124,6 +173,7 @@ function MembersReport() {
                 <div className="flex justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="report-run-btn">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="report-csv-btn"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
+                    <ExportPdfButton kind="members" filters={filters} />
                 </div>
             </div>
             <div className="text-sm text-muted-foreground mb-2">{rows.length} member{rows.length !== 1 ? "s" : ""}</div>
@@ -361,6 +411,7 @@ function RsvpsReport() {
                 <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="rsvps-report-run-btn">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="rsvps-report-csv-btn"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
+                    <ExportPdfButton kind="rsvps" filters={filters} />
                 </div>
             </div>
 
@@ -917,6 +968,7 @@ function HoursReport() {
                 <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="hours-report-run">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="hours-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
+                    <ExportPdfButton kind="hours" filters={filters} />
                 </div>
             </div>
 
@@ -1294,6 +1346,7 @@ function DonationsReport() {
                 <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="donations-report-run">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="donations-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
+                    <ExportPdfButton kind="donations" filters={filters} />
                 </div>
             </div>
 
