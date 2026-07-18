@@ -46,15 +46,19 @@ function ExportPdfButton({ kind, filters }) {
     const [busy, setBusy] = useState(false);
     const [pickerOpen, setPickerOpen] = useState(false);
     const [columns, setColumns] = useState([]); // [{ key, label, checked }]
+    // Iter 131 — only the members kind has an alternate layout right now.
+    const supportsLayout = kind === "members";
+    const [layout, setLayout] = useState("cards");
 
     // Iter 130 — fetch the available column set for this kind so the
-    // picker can render checkboxes with defaults. We cache client-side
-    // between opens; a full refetch fires each time the modal opens so
-    // schema changes propagate without a page reload.
+    // picker can render checkboxes with defaults. For the members kind
+    // the column set changes based on layout (cards has none, rows has
+    // 18), so we refetch whenever the modal (re)opens.
     async function openPicker() {
         setPickerOpen(true);
         try {
-            const { data } = await api.get(`/reports/${kind}/columns`);
+            const params = supportsLayout && layout === "rows" ? { layout: "rows" } : {};
+            const { data } = await api.get(`/reports/${kind}/columns`, { params });
             setColumns((data?.columns || []).map((c) => ({ ...c, checked: true })));
         } catch (e) {
             toast.error("Couldn't load column options");
@@ -62,12 +66,16 @@ function ExportPdfButton({ kind, filters }) {
         }
     }
 
-    async function run(useSelectedCols) {
+    async function run(useSelectedCols, layoutOverride) {
         setBusy(true);
         try {
             const params = filters
                 ? Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== "" && v != null))
                 : {};
+            const effLayout = layoutOverride || layout;
+            if (supportsLayout && effLayout !== "cards") {
+                params.layout = effLayout;
+            }
             if (useSelectedCols) {
                 const picked = columns.filter((c) => c.checked).map((c) => c.key);
                 if (picked.length === 0) {
@@ -131,26 +139,79 @@ function ExportPdfButton({ kind, filters }) {
                     <DialogHeader>
                         <DialogTitle>Choose columns · {kind.replace("-", " ")}</DialogTitle>
                     </DialogHeader>
-                    <div className="space-y-1 max-h-[50vh] overflow-y-auto">
-                        {columns.map((c) => (
-                            <label key={c.key} className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-accent cursor-pointer text-sm" data-testid={`pdf-col-${kind}-${c.key}`}>
-                                <input
-                                    type="checkbox"
-                                    checked={!!c.checked}
-                                    onChange={() => toggleCol(c.key)}
-                                    className="h-4 w-4"
-                                />
-                                <span className="font-medium">{c.label}</span>
-                                <span className="ml-auto text-[10px] text-muted-foreground font-mono">{c.key}</span>
-                            </label>
-                        ))}
-                    </div>
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
-                        <div className="flex gap-2">
-                            <Button variant="outline" size="sm" onClick={() => selectAll(true)} className="rounded-full text-xs" data-testid={`pdf-col-all-${kind}`}>Select all</Button>
-                            <Button variant="outline" size="sm" onClick={() => selectAll(false)} className="rounded-full text-xs" data-testid={`pdf-col-none-${kind}`}>Clear</Button>
+                    {supportsLayout && (
+                        <div className="rounded-xl border p-3 space-y-2" data-testid={`pdf-layout-toggle-${kind}`}>
+                            <div className="text-xs font-semibold text-muted-foreground uppercase">Layout</div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <label className={`flex items-start gap-2 rounded-lg border p-2 cursor-pointer text-xs ${layout === "cards" ? "border-primary bg-accent" : ""}`}>
+                                    <input
+                                        type="radio"
+                                        name={`pdf-layout-${kind}`}
+                                        value="cards"
+                                        checked={layout === "cards"}
+                                        onChange={async () => { setLayout("cards"); }}
+                                        data-testid={`pdf-layout-cards-${kind}`}
+                                    />
+                                    <span>
+                                        <span className="font-medium block">Detail cards</span>
+                                        <span className="text-muted-foreground">Portrait · one page per member</span>
+                                    </span>
+                                </label>
+                                <label className={`flex items-start gap-2 rounded-lg border p-2 cursor-pointer text-xs ${layout === "rows" ? "border-primary bg-accent" : ""}`}>
+                                    <input
+                                        type="radio"
+                                        name={`pdf-layout-${kind}`}
+                                        value="rows"
+                                        checked={layout === "rows"}
+                                        onChange={async () => {
+                                            setLayout("rows");
+                                            try {
+                                                const { data } = await api.get(`/reports/${kind}/columns`, { params: { layout: "rows" } });
+                                                setColumns((data?.columns || []).map((c) => ({ ...c, checked: true })));
+                                            } catch { /* ignore */ }
+                                        }}
+                                        data-testid={`pdf-layout-rows-${kind}`}
+                                    />
+                                    <span>
+                                        <span className="font-medium block">Roster rows</span>
+                                        <span className="text-muted-foreground">Landscape · print-friendly</span>
+                                    </span>
+                                </label>
+                            </div>
+                            {layout === "cards" && (
+                                <p className="text-[11px] text-muted-foreground italic">The card layout prints every field for every member — no column picker needed.</p>
+                            )}
                         </div>
-                        <Button onClick={() => run(true)} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`pdf-col-download-${kind}`}>
+                    )}
+                    {!(supportsLayout && layout === "cards") && (
+                        <div className="space-y-1 max-h-[45vh] overflow-y-auto">
+                            {columns.map((c) => (
+                                <label key={c.key} className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-accent cursor-pointer text-sm" data-testid={`pdf-col-${kind}-${c.key}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={!!c.checked}
+                                        onChange={() => toggleCol(c.key)}
+                                        className="h-4 w-4"
+                                    />
+                                    <span className="font-medium">{c.label}</span>
+                                    <span className="ml-auto text-[10px] text-muted-foreground font-mono">{c.key}</span>
+                                </label>
+                            ))}
+                        </div>
+                    )}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
+                        {!(supportsLayout && layout === "cards") ? (
+                            <div className="flex gap-2">
+                                <Button variant="outline" size="sm" onClick={() => selectAll(true)} className="rounded-full text-xs" data-testid={`pdf-col-all-${kind}`}>Select all</Button>
+                                <Button variant="outline" size="sm" onClick={() => selectAll(false)} className="rounded-full text-xs" data-testid={`pdf-col-none-${kind}`}>Clear</Button>
+                            </div>
+                        ) : <div />}
+                        <Button
+                            onClick={() => run(!(supportsLayout && layout === "cards"))}
+                            disabled={busy}
+                            className="rounded-full bg-primary hover:bg-primary/90"
+                            data-testid={`pdf-col-download-${kind}`}
+                        >
                             <Printer className="h-4 w-4 mr-1.5" />
                             {busy ? "Preparing…" : "Download PDF"}
                         </Button>

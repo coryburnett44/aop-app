@@ -192,6 +192,65 @@ def register(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    # Iter 131 — column set for the "rows" (landscape one-line-per-member)
+    # layout. Two-letter-abbreviated headers keep the row compact enough that
+    # every field still fits in a single landscape page. Weights sum to a
+    # sensible visual balance across the full page width.
+    _MEMBERS_ROW_COLUMNS = [
+        ("Name",       "name",                    2.0),
+        ("Email",      "email",                   2.4),
+        ("Phone",      "phone",                   1.3),
+        ("Address",    "address",                 2.2),
+        ("City",       "city",                    1.1),
+        ("ST",         "state",                   0.5),
+        ("Zip",        "postal_code",             0.7),
+        ("DOB",        "birth_date",              0.9),
+        ("Chapter",    "chapter",                 1.2),
+        ("Tier",       "tier",                    1.0),
+        ("Role",       "role",                    0.9),
+        ("Status",     "status",                  0.8),
+        ("Joined",     "join_date",               0.9),
+        ("Expires",    "membership_expires_at",   0.9),
+        ("Bal",        "outstanding_balance_total", 0.6),
+        ("Hrs",        "hours_approved_total",    0.5),
+        ("Donations",  "donations_total",         0.8),
+        ("Awards",     "awards",                  2.0),
+    ]
+
+    def _pdf_members_rows_response(title: str, subtitle: str, rows: list, filename: str, cols_meta: Optional[list] = None):
+        """Iter 131 — landscape one-row-per-member view. Meant for printing
+        rosters as flat sheets instead of one-card-per-member. Reuses
+        `_pdf_response` so we get the branded cover header, navy/white
+        column header row, and proportional column widths automatically."""
+        cols = cols_meta if cols_meta else _MEMBERS_ROW_COLUMNS
+        column_labels = [c[0] for c in cols]
+        col_weights = [c[2] if len(c) >= 3 else 1.0 for c in cols]
+
+        # Convert each row into a label-keyed dict so `_pdf_response` can
+        # look it up directly. Flatten list-valued fields (awards / events
+        # / rsvps) into compact bullet-separated strings so they still fit
+        # in a single row.
+        keyed = []
+        for r in rows:
+            kd = {}
+            for (label, key, *_rest) in cols:
+                v = r.get(key)
+                if isinstance(v, list):
+                    v = " · ".join(str(x) for x in v[:4])
+                    if len(r.get(key) or []) > 4:
+                        v += f" (+{len(r.get(key)) - 4} more)"
+                kd[label] = v
+            keyed.append(kd)
+
+        return _pdf_response(
+            title=title,
+            columns=column_labels,
+            rows=keyed,
+            filename=filename,
+            subtitle=subtitle or f"{len(rows)} members",
+            col_weights=col_weights,
+        )
+
     def _pdf_member_cards_response(title: str, subtitle: str, rows: list, filename: str):
         """Renders one detail card per member — every field from the CSV,
         grouped into readable sections (Personal · Membership · Awards ·
@@ -339,14 +398,26 @@ def register(
 
     @api.get("/admin/members/export.pdf")
     async def export_members_pdf(
+        # Iter 131 — `layout` chooses the visual shape:
+        #   • `cards` (default) — portrait, one detail card per member
+        #   • `rows`            — landscape one-line-per-member table
+        layout: str = "cards",
         admin: dict = Depends(admin_tab_dep("members")),
     ):
         """Full-fat member directory PDF. Matches the CSV export field-for-field
-        but renders each member as their own detail card so names never clip
-        and every field stays legible."""
+        but renders each member as their own detail card (default) or as a
+        landscape row-per-member roster (`?layout=rows`, useful for printing)."""
         rows = await _build_full_member_rows(admin)
         fname = f"aop-members-{iso(now_utc())[:10]}.pdf"
-        subtitle = f"Full member directory · {len(rows)} members · Generated {iso(now_utc())[:19].replace('T',' ')} UTC"
+        layout = (layout or "cards").lower().strip()
+        if layout == "rows":
+            return _pdf_members_rows_response(
+                title="AOP · Member Directory (roster)",
+                subtitle=f"{len(rows)} members",
+                rows=rows,
+                filename=fname.replace(".pdf", "-roster.pdf"),
+            )
+        subtitle = f"Full member directory · {len(rows)} members"
         return _pdf_member_cards_response(
             title="AOP Members — Full Directory",
             subtitle=subtitle,
@@ -641,18 +712,28 @@ def register(
         return rows
 
     @api.get("/reports/{kind}/columns")
-    async def report_pdf_columns(kind: str, _: dict = Depends(admin_tab_dep("reports"))):
+    async def report_pdf_columns(kind: str, layout: str = "default", _: dict = Depends(admin_tab_dep("reports"))):
         """Iter 130 — enumerates available PDF columns for a given report
         kind so the frontend picker can render checkboxes with the right
-        labels + default-on state."""
+        labels + default-on state.
+
+        Iter 131 — for kind=members, `?layout=rows` returns the landscape
+        roster columns instead of the full CSV field set (the card layout
+        does not currently expose a column picker — every field always
+        prints in its own section)."""
         k = (kind or "").lower().strip()
         if k not in _PDF_COLUMNS:
             raise HTTPException(status_code=400, detail=f"Unknown report kind {k!r}")
+        if k == "members" and (layout or "").lower().strip() == "rows":
+            source = _MEMBERS_ROW_COLUMNS
+        else:
+            source = _PDF_COLUMNS[k]
         return {
             "kind": k,
+            "layout": (layout or "default").lower(),
             "columns": [
                 {"key": c[1], "label": c[0], "default": True}
-                for c in _PDF_COLUMNS[k]
+                for c in source
             ],
         }
 
@@ -680,6 +761,9 @@ def register(
         # wants included in the PDF (matches keys in _PDF_COLUMNS[kind]).
         # Unrecognized keys are ignored; empty means "include everything".
         columns: Optional[str] = None,
+        # Iter 131 — the members PDF supports two layouts: `cards` (default,
+        # portrait one-page-per-member) or `rows` (landscape roster).
+        layout: str = "cards",
         admin: dict = Depends(admin_tab_dep("reports")),
     ):
         kind = (kind or "").lower().strip()
@@ -689,10 +773,26 @@ def register(
                 detail=f"Unknown report kind {kind!r}. Supported: {sorted(_PDF_COLUMNS)}",
             )
         # `members` PDF export uses the full-card layout so every field
-        # from the CSV export shows up — no column clipping.
+        # from the CSV export shows up — no column clipping. Landscape
+        # roster available via ?layout=rows for print-friendly output.
         if kind == "members":
             rows = await _build_full_member_rows(admin)
             subtitle = f"{len(rows)} members"
+            if (layout or "cards").lower().strip() == "rows":
+                # Honor the column whitelist against the row column set too.
+                cols_meta = _MEMBERS_ROW_COLUMNS
+                if columns:
+                    wanted = {c.strip() for c in columns.split(",") if c.strip()}
+                    filtered = [c for c in cols_meta if c[1] in wanted]
+                    if filtered:
+                        cols_meta = filtered
+                return _pdf_members_rows_response(
+                    title="AOP · Members Roster",
+                    subtitle=subtitle,
+                    rows=rows,
+                    filename=f"aop-members-roster-{iso(now_utc())[:10]}.pdf",
+                    cols_meta=cols_meta,
+                )
             return _pdf_member_cards_response(
                 title="AOP · Members Report",
                 subtitle=subtitle,

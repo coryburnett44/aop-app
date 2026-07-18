@@ -15,6 +15,27 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 131 — Print-friendly landscape "roster" layout for the members PDF (2026-02-27) [FEATURE]
+Follow-up to the iter 130 exports refactor. Admins asked for a printer-friendly one-line-per-member roster PDF as an alternative to the portrait detail-card view.
+
+- **Backend `routes/exports.py`**:
+  - New `_MEMBERS_ROW_COLUMNS` — 18-column landscape table (Name, Email, Phone, Address, City, ST, Zip, DOB, Chapter, Tier, Role, Status, Joined, Expires, Bal, Hrs, Donations, Awards) with per-column weight tuples so wide fields (Email 2.4, Awards 2.0, Address 2.2) get enough room and narrow ones (ST 0.5, DOB 0.9) don't waste page real estate.
+  - New `_pdf_members_rows_response(...)` helper — delegates to the existing `_pdf_response` so we automatically inherit the cover header, navy-on-white column header row, alternating row shading, and column-weight sizing. List-valued fields (awards) are flattened to `"item1 · item2 · … (+N more)"` so each member still fits on a single line.
+  - `GET /api/admin/members/export.pdf` and `GET /api/reports/members/export.pdf` both accept `?layout=cards|rows` — `cards` stays the default (portrait detail-per-member), `rows` returns the landscape roster PDF. Invalid values fall through to `cards`.
+  - `GET /api/reports/members/columns?layout=rows` returns the 18 roster columns so the column-picker checkboxes match what actually prints; layout omitted or `default` returns the 8-column cards column set. The `columns=...` whitelist filter applies to both layouts.
+  - Roster filename gets a `-roster` suffix so downloaded files don't clobber the card variant.
+- **Frontend**:
+  - `pages/Admin.jsx` — `ExportMembersPdfButton` is now a split button: primary click still downloads the portrait card layout; a chevron opens a menu with two labeled choices ("Detail cards (portrait)" vs "Roster (landscape rows)") explaining each layout.
+  - `pages/Reports.jsx` — the shared `ExportPdfButton` gains a `supportsLayout` mode that only turns on for `kind === "members"`. Opens a radio-toggle inside the column-picker modal for switching between Cards and Rows; the column checkboxes refetch automatically when the admin flips to Rows so the picker reflects the roster's 18-column set. Cards mode hides the checkboxes (every field is always printed).
+- **Tests**: `tests/test_iteration131_members_roster_layout.py` — 9/9 pass. Verifies:
+  - Default returns portrait (cards); `?layout=rows` returns landscape.
+  - Roster filename ends `roster.pdf`, includes cover header + logo + wide column labels (Name/Email/Chapter/Tier/Awards).
+  - `/columns` swaps column set based on `?layout=rows`; whitelisting still filters the roster columns.
+  - Invalid layouts fall back to cards.
+  - `member@` account gets 403 on the admin roster endpoint.
+- **Combined regression (iter127+128+129+130+131)**: **42/42 passing**. Playwright spot-check confirmed the Admin → Members split button reveals both layout choices; rendered roster PDF shows all 18 columns with the AOP branded cover header, navy header row, alternating row shading, and the (+N more) awards truncation.
+
+
 ### Iteration 130 — Column picker + branded cover header on every PDF export + white header text (2026-02-27) [FEATURE + POLISH]
 Three admin requests bundled into one refactor of `routes/exports.py`:
 

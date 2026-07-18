@@ -1496,13 +1496,21 @@ function ExportMembersCsvButton() {
  * Iter 129 — companion to ExportMembersCsvButton. Downloads a portrait PDF
  * where each member is rendered as a full detail card with every field from
  * the CSV export — solves "PDF cuts off names" and "PDF doesn't match CSV".
+ *
+ * Iter 131 — split button: default click downloads the portrait card layout;
+ * the chevron opens a menu to pick a landscape "roster" (one-row-per-member)
+ * layout that's easier to print as a flat sheet.
  */
 function ExportMembersPdfButton() {
     const [busy, setBusy] = useState(false);
-    async function run() {
+    const [menuOpen, setMenuOpen] = useState(false);
+
+    async function run(layout) {
         setBusy(true);
+        setMenuOpen(false);
         try {
-            const res = await api.get("/admin/members/export.pdf", { responseType: "blob" });
+            const params = layout && layout !== "cards" ? { layout } : {};
+            const res = await api.get("/admin/members/export.pdf", { params, responseType: "blob" });
             const disp = res.headers?.["content-disposition"] || "";
             const m = /filename="?([^"]+)"?/.exec(disp);
             const filename = m ? m[1] : `aop-members-${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -1510,23 +1518,68 @@ function ExportMembersPdfButton() {
             const a = document.createElement("a");
             a.href = url; a.download = filename; document.body.appendChild(a); a.click();
             document.body.removeChild(a); URL.revokeObjectURL(url);
-            toast.success("Members PDF downloaded");
+            toast.success(layout === "rows" ? "Roster PDF downloaded" : "Members PDF downloaded");
         } catch (e) {
             toast.error(formatApiError(e.response?.data?.detail) || "Export failed");
         }
         setBusy(false);
     }
+
     return (
-        <Button
-            onClick={run}
-            disabled={busy}
-            variant="outline"
-            className="rounded-full"
-            data-testid="export-members-pdf-btn"
-            title="Download full member directory PDF — one card per member with every field from the CSV export."
-        >
-            <Printer className="h-4 w-4 mr-1" />{busy ? "Preparing…" : "Export PDF"}
-        </Button>
+        <div className="relative inline-flex" data-testid="export-members-pdf-group">
+            <Button
+                onClick={() => run("cards")}
+                disabled={busy}
+                variant="outline"
+                className="rounded-full rounded-r-none border-r-0"
+                data-testid="export-members-pdf-btn"
+                title="Download the portrait, one-page-per-member card layout with every field."
+            >
+                <Printer className="h-4 w-4 mr-1" />{busy ? "Preparing…" : "Export PDF"}
+            </Button>
+            <button
+                type="button"
+                onClick={() => setMenuOpen((v) => !v)}
+                className="border border-input rounded-full rounded-l-none px-2 hover:bg-accent focus:outline-none disabled:opacity-50"
+                data-testid="export-members-pdf-menu-btn"
+                disabled={busy}
+                title="Pick a layout"
+            >
+                <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+            {menuOpen && (
+                <div
+                    className="absolute right-0 top-full mt-1 z-30 bg-popover border border-input rounded-xl shadow-lg overflow-hidden text-sm min-w-[240px]"
+                    data-testid="export-members-pdf-menu"
+                    onMouseLeave={() => setMenuOpen(false)}
+                >
+                    <button
+                        type="button"
+                        onClick={() => run("cards")}
+                        className="w-full text-left px-3 py-2 hover:bg-accent flex items-start gap-2"
+                        data-testid="export-members-pdf-layout-cards"
+                    >
+                        <FileText className="h-4 w-4 mt-0.5 shrink-0" />
+                        <span>
+                            <div className="font-medium">Detail cards (portrait)</div>
+                            <div className="text-xs text-muted-foreground">One full-page card per member — every field grouped by section.</div>
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => run("rows")}
+                        className="w-full text-left px-3 py-2 hover:bg-accent flex items-start gap-2 border-t border-input"
+                        data-testid="export-members-pdf-layout-rows"
+                    >
+                        <LayoutDashboard className="h-4 w-4 mt-0.5 shrink-0" />
+                        <span>
+                            <div className="font-medium">Roster (landscape rows)</div>
+                            <div className="text-xs text-muted-foreground">One line per member — print-friendly flat sheet.</div>
+                        </span>
+                    </button>
+                </div>
+            )}
+        </div>
     );
 }
 
