@@ -1207,6 +1207,17 @@ async def startup():
     _routes_awards_auto.register(db_ref=db, iso_fn=iso, now_utc_fn=now_utc, logger_ref=logger)
     asyncio.create_task(_routes_awards_auto.auto_grant_daily_loop())
 
+    # Iter 133: automatic Happy Birthday emails on each member's MM/DD.
+    # (The admin endpoints are registered at module-load time in the block
+    # below `routes_cms_cards.register(...)`; here we only bind state + start
+    # the cron loop.)
+    from routes import birthday_emails as _routes_birthday  # noqa: E402
+    _routes_birthday.register(
+        db_ref=db, iso_fn=iso, now_utc_fn=now_utc, logger_ref=logger,
+        send_bulk_email_fn=send_bulk_email,
+    )
+    asyncio.create_task(_routes_birthday.birthday_email_loop())
+
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin123!")
@@ -3164,6 +3175,12 @@ routes_cms_cards.register(
     image_ext=IMAGE_EXT,
     mime_by_ext=MIME_BY_EXT,
 )
+
+# Iter 133: register the birthday email admin endpoints at module-load time.
+# The module-level state binding + cron loop happen inside on_startup so the
+# `db` / `send_bulk_email` symbols are fully initialised first.
+from routes import birthday_emails as _routes_birthday_import  # noqa: E402
+_routes_birthday_import.register_routes(api, admin_tab_dep)
 
 # Patch the back-compat _ensure_site_settings shim to delegate to the route module
 _ensure_site_settings = routes_site_settings.register.ensure

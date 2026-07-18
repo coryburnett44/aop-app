@@ -15,6 +15,31 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 133 — Automatic Happy Birthday emails (2026-02-27) [FEATURE]
+User request: "When a member's birthday has arrived, send them a nice, encouraging email wishing them a HAPPY BIRTHDAY, and mention that Alpha Omega Phi celebrates with them."
+
+- **New module `routes/birthday_emails.py`** — hourly cron loop that:
+  - Reads every active member's `birthdate` (falls back to `birth_date` for legacy docs).
+  - Handles multiple stored formats (ISO date, ISO datetime with tz, `MM/DD`, `MM-DD`, native `date` objects).
+  - Skips deceased members, members with `email_opt_out=True`, or members whose `email_prefs.blasts=False`.
+  - Dedupes via a `birthday_emails_sent` collection keyed on `{user_id}:{year}:{MM-DD}` — an hourly cadence means the email lands on the actual MM/DD in UTC without ever double-sending. First launch backfills today's birthdays only.
+  - Sends through the existing `send_bulk_email` pipeline so we automatically get: multipart HTML + auto-derived plain text, List-Unsubscribe + One-Click Post headers, `Precedence: bulk`, CAN-SPAM footer with the org mailing address.
+- **Email content** — warm and on-brand: navy→blue gradient header, big "Happy Birthday, {first_name}!" heading, 🎂🎉 emoji cluster, body copy that names the org explicitly ("On behalf of every brother and sister of Alpha Omega Phi Military Fraternity & Sorority, Inc., we wish you a truly happy birthday. Today, the entire Alpha Omega Phi family celebrates you…"), a red-accented callout with the motto "Duty. Honor. Service. Family.", and a sign-off from "The Alpha Omega Phi Family". Renders cleanly on every email client (no external CSS or images).
+- **Admin endpoints (mounted at module-load time via `register_routes`)**:
+  - `POST /api/admin/birthday-emails/sweep` — manual trigger, returns `{date, matched_today, sent, skipped_optout, skipped_already_sent, errors}`.
+  - `GET /api/admin/birthday-emails/upcoming?days=N` — lists upcoming birthdays in the next N days (default 30) with `will_send`, `already_sent_this_year`, and `email_opt_out` flags so admins can preview who's on deck.
+  - Both endpoints locked behind `admin_tab_dep("email")` / `admin_tab_dep("members")` — member accounts get 403.
+- **server.py wiring**: state bind + cron loop `asyncio.create_task(_routes_birthday.birthday_email_loop())` alongside the existing awards-auto loop; routes mounted at module-load time next to the other extracted route registrations.
+- **Tests**: `tests/test_iteration133_birthday_emails.py` — 7/7 pass. Verifies:
+  - Sweep + upcoming endpoints return the expected summary shapes.
+  - Setting a member's `birthdate` to today and running the sweep sends an email; second sweep dedupes.
+  - `email_opt_out=True` via the member's own `/me/email-preferences` skips the send (matched but not sent).
+  - Non-admin gets 403 on both endpoints.
+  - `_parse_birthday` helper handles ISO, ISO+time, `MM/DD`, `MM-DD`, empty, garbage, and native `date` objects.
+  - Rendered email contains "Happy Birthday", the recipient's first name, "Alpha Omega Phi", and celebration language.
+- **Combined regression (iter130+131+132+133)**: **33/33 passing**. End-to-end verified on preview: seeded Riley Chen's birthday → sweep sent 1 email → 2nd sweep skipped 1 → `/upcoming` correctly flagged `already_sent_this_year=True`.
+
+
 ### Iteration 132 — Full member data capture + correct outstanding balance in exports (2026-02-27) [P0 BUG FIX]
 User reported: "City, State, ZIP code, DOB and other info missing from PDF/CSV export. Outstanding balance is incorrect — 24 people have balances." **Two root causes**:
 
