@@ -9,7 +9,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight, UserPlus, Download } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight, UserPlus, Download, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
@@ -1282,6 +1282,7 @@ function MembersAdmin() {
                     )}
                     <BulkImportMembersDialog chapters={chapters.filter(officialOnly)} onImported={load} />
                     <ExportMembersCsvButton />
+                    <ExportMembersPdfButton />
                     <NewMemberDialog chapters={chapters} tiers={tiers} onSaved={load} />
                 </div>
             </div>
@@ -1487,6 +1488,44 @@ function ExportMembersCsvButton() {
             title="Download full member directory CSV — includes birth date, address, awards, RSVPs, events attended, hours & donations totals."
         >
             <Download className="h-4 w-4 mr-1" />{busy ? "Preparing…" : "Export CSV"}
+        </Button>
+    );
+}
+
+/**
+ * Iter 129 — companion to ExportMembersCsvButton. Downloads a portrait PDF
+ * where each member is rendered as a full detail card with every field from
+ * the CSV export — solves "PDF cuts off names" and "PDF doesn't match CSV".
+ */
+function ExportMembersPdfButton() {
+    const [busy, setBusy] = useState(false);
+    async function run() {
+        setBusy(true);
+        try {
+            const res = await api.get("/admin/members/export.pdf", { responseType: "blob" });
+            const disp = res.headers?.["content-disposition"] || "";
+            const m = /filename="?([^"]+)"?/.exec(disp);
+            const filename = m ? m[1] : `aop-members-${new Date().toISOString().slice(0, 10)}.pdf`;
+            const url = URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+            const a = document.createElement("a");
+            a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+            document.body.removeChild(a); URL.revokeObjectURL(url);
+            toast.success("Members PDF downloaded");
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "Export failed");
+        }
+        setBusy(false);
+    }
+    return (
+        <Button
+            onClick={run}
+            disabled={busy}
+            variant="outline"
+            className="rounded-full"
+            data-testid="export-members-pdf-btn"
+            title="Download full member directory PDF — one card per member with every field from the CSV export."
+        >
+            <Printer className="h-4 w-4 mr-1" />{busy ? "Preparing…" : "Export PDF"}
         </Button>
     );
 }

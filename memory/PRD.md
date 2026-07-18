@@ -15,6 +15,21 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 129 — Reports tab crash fix + expanded PDF exports across all admin report tabs (2026-02-27) [P0 BUG FIX + FEATURE]
+User bug bundle:
+  1. Admin Report tab — RSVPs / Donations / Hours sub-tabs were completely blank.
+  2. Members PDF export cut off member names and didn't match the CSV.
+  3. Wanted PDF + CSV exports on Admin Members tab covering every field (birthdate, address, phone, awards, events, etc.).
+  4. Wanted a PDF Export button on every tab of the admin Reports section.
+
+- **Root cause of the P0 crash (`pages/Reports.jsx`)**: iter 127's `<ExportPdfButton ... filters={filters} />` referenced a `filters` variable in `RsvpsReport`, `HoursReport`, and `DonationsReport` — but none of those components actually declared one (they use a `buildParams()` helper). The `ReferenceError: filters is not defined` bubbled up through the child, blowing away the whole sub-tab. Swapped all three sites to `filters={buildParams()}` — `MembersReport` and `DuesRemindersReport` already had their own `filters` state so those lines stay as-is.
+- **PDF now matches CSV field-for-field (`routes/exports.py`)**: Members PDF now renders a **card layout** — one section per member — with every CSV field grouped into Personal / Membership / Awards / Events attended / RSVPs / Hours & Donations / Preferences. Portrait letter page with a section header table so names never wrap or clip. The row-builder was extracted into `_build_full_member_rows(admin)` so the CSV and PDF share one source of truth and can't drift.
+- **New Admin Members endpoint**: `GET /api/admin/members/export.pdf` — full-detail directory PDF (same shared row-builder). Frontend `ExportMembersPdfButton` sits next to the existing CSV button on the Admin → Members tab. Both are locked behind the `members` admin tab dep so non-admins get 403.
+- **PDF export now available on every Reports subtab**: added `<ExportPdfButton kind="…" />` to RecruitmentReport, AwardsReport, ZeffyDuesApprovals, EventTicketApprovals, DuesRemindersReport. All rendered next to the existing CSV button. Backend expanded `_PDF_COLUMNS` with entries for `recruitment`, `awards`, `event-tickets`, `dues`, `dues-reminders` — each with per-column weight tuples so `Name/Member/Event/Cause/Activity` columns get 2-2.4x the width and small booleans get 0.6x (fixes the "cut off names" complaint on the tabular kinds too).
+- **Delegate lookup made robust**: `awards` frontend kind is now aliased to backend `/reports/award-grants`. Endpoints that declare `_: dict = Depends(...)` (no `admin` kwarg) no longer 500 when the exporter tries to force-inject one. `dues` and `event-tickets` (which have no `/reports/*` sibling) now read `db.transactions` directly via `_load_transactions_for_pdf(...)`.
+- **Tests**: new `tests/test_iteration129_exports_expansion.py` — 9/9 pass. Verifies all 9 report kinds return a valid `%PDF-` stream, admin-only lockdown on both `/admin/members/export.csv` + `.pdf`, unknown kind → 400, CSV/PDF agree on row count for admin members export, and the card-layout PDF is materially larger than the old table version (>20 KB for the current roster). Regression across iter127 + iter128 + iter129: **24/24 pass**. Playwright smoke confirmed every previously-broken sub-tab now renders with data + both export buttons visible.
+
+
 ### Iteration 128 — Modularization: extract omega / cms_cards / uploads out of server.py (2026-02-27) [REFACTOR]
 Long-deferred P1 refactor to keep `server.py` maintainable. Three legacy blocks (Omega Chapter in-memoriam tributes, AOP Form Links + Meeting Cards CMS, generic admin image-upload endpoints) extracted into dedicated modules.
 

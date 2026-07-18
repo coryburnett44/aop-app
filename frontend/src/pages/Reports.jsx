@@ -411,7 +411,7 @@ function RsvpsReport() {
                 <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="rsvps-report-run-btn">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="rsvps-report-csv-btn"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
-                    <ExportPdfButton kind="rsvps" filters={filters} />
+                    <ExportPdfButton kind="rsvps" filters={buildParams()} />
                 </div>
             </div>
 
@@ -700,6 +700,7 @@ function RecruitmentReport() {
                 <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="recruitment-report-run">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="recruitment-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
+                    <ExportPdfButton kind="recruitment" filters={buildParams()} />
                 </div>
             </div>
 
@@ -968,7 +969,7 @@ function HoursReport() {
                 <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="hours-report-run">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="hours-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
-                    <ExportPdfButton kind="hours" filters={filters} />
+                    <ExportPdfButton kind="hours" filters={buildParams()} />
                 </div>
             </div>
 
@@ -1346,7 +1347,7 @@ function DonationsReport() {
                 <div className="flex flex-wrap justify-end gap-2 mt-4">
                     <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="donations-report-run">Run report</Button>
                     <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="donations-report-csv"><Download className="h-4 w-4 mr-1.5" />Export CSV</Button>
-                    <ExportPdfButton kind="donations" filters={filters} />
+                    <ExportPdfButton kind="donations" filters={buildParams()} />
                 </div>
             </div>
 
@@ -2108,9 +2109,12 @@ function ZeffyDuesApprovals() {
 
     return (
         <div data-testid="zeffy-approvals-panel">
-            <div className="bg-card rounded-2xl border p-5 mb-4">
-                <div className="text-sm font-semibold mb-1">Pending Zeffy dues payments</div>
-                <p className="text-xs text-muted-foreground">Members who paid via Zeffy and submitted their receipt for verification. Approving extends their membership 365 days.</p>
+            <div className="bg-card rounded-2xl border p-5 mb-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                    <div className="text-sm font-semibold mb-1">Pending Zeffy dues payments</div>
+                    <p className="text-xs text-muted-foreground">Members who paid via Zeffy and submitted their receipt for verification. Approving extends their membership 365 days.</p>
+                </div>
+                <ExportPdfButton kind="dues" filters={{}} />
             </div>
             {rows.length === 0 ? (
                 <div className="bg-card rounded-2xl border border-dashed border-border p-10 text-center" data-testid="zeffy-approvals-empty">
@@ -2235,9 +2239,12 @@ function EventTicketApprovals() {
 
     return (
         <div data-testid="event-ticket-approvals-panel">
-            <div className="bg-card rounded-2xl border p-5 mb-4">
-                <div className="text-sm font-semibold mb-1">Pending event-ticket payments</div>
-                <p className="text-xs text-muted-foreground">Members who paid via Zeffy for a paid event. Approving creates the RSVP and emails the QR ticket.</p>
+            <div className="bg-card rounded-2xl border p-5 mb-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                    <div className="text-sm font-semibold mb-1">Pending event-ticket payments</div>
+                    <p className="text-xs text-muted-foreground">Members who paid via Zeffy for a paid event. Approving creates the RSVP and emails the QR ticket.</p>
+                </div>
+                <ExportPdfButton kind="event-tickets" filters={{}} />
             </div>
             {rows.length === 0 ? (
                 <div className="bg-card rounded-2xl border border-dashed border-border p-10 text-center" data-testid="event-ticket-approvals-empty">
@@ -2387,6 +2394,7 @@ function DuesRemindersReport() {
                     <div className="flex items-end gap-2">
                         <Button onClick={run} className="rounded-full bg-primary hover:bg-primary/90" data-testid="dues-reminders-run">{loading ? "Loading…" : "Run"}</Button>
                         <Button onClick={exportCSV} variant="outline" className="rounded-full" data-testid="dues-reminders-csv"><Download className="h-4 w-4 mr-1.5" />CSV</Button>
+                        <ExportPdfButton kind="dues-reminders" filters={filters} />
                     </div>
                 </div>
             </div>
@@ -2525,6 +2533,7 @@ function AwardGrantsTable() {
                         </SelectContent>
                     </Select>
                     <Button variant="outline" className="rounded-full h-9 text-xs" onClick={exportCSV} data-testid="awards-grants-export"><Download className="h-3.5 w-3.5 mr-1" />CSV</Button>
+                    <ExportPdfButton kind="awards" filters={year ? { year } : {}} />
                 </div>
             </div>
             <div className="text-xs text-muted-foreground px-4 pt-3" data-testid="awards-grants-count">
