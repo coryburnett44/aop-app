@@ -6,7 +6,7 @@ import { Label } from "../components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { Download, FileText, Filter, Printer, Pencil, Trash2 } from "lucide-react";
+import { Download, FileText, Filter, Printer, Pencil, Trash2, ChevronDown } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
 import { FullEditHoursDialog } from "./Hours";
@@ -44,12 +44,39 @@ function downloadCSV(filename, csv) {
  */
 function ExportPdfButton({ kind, filters }) {
     const [busy, setBusy] = useState(false);
-    async function run() {
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [columns, setColumns] = useState([]); // [{ key, label, checked }]
+
+    // Iter 130 — fetch the available column set for this kind so the
+    // picker can render checkboxes with defaults. We cache client-side
+    // between opens; a full refetch fires each time the modal opens so
+    // schema changes propagate without a page reload.
+    async function openPicker() {
+        setPickerOpen(true);
+        try {
+            const { data } = await api.get(`/reports/${kind}/columns`);
+            setColumns((data?.columns || []).map((c) => ({ ...c, checked: true })));
+        } catch (e) {
+            toast.error("Couldn't load column options");
+            setPickerOpen(false);
+        }
+    }
+
+    async function run(useSelectedCols) {
         setBusy(true);
         try {
             const params = filters
                 ? Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== "" && v != null))
                 : {};
+            if (useSelectedCols) {
+                const picked = columns.filter((c) => c.checked).map((c) => c.key);
+                if (picked.length === 0) {
+                    toast.error("Pick at least one column to include");
+                    setBusy(false);
+                    return;
+                }
+                params.columns = picked.join(",");
+            }
             const res = await api.get(`/reports/${kind}/export.pdf`, { params, responseType: "blob" });
             const disp = res.headers?.["content-disposition"] || "";
             const m = /filename="?([^"]+)"?/.exec(disp);
@@ -59,24 +86,78 @@ function ExportPdfButton({ kind, filters }) {
             a.href = url; a.download = filename;
             document.body.appendChild(a); a.click(); a.remove();
             setTimeout(() => URL.revokeObjectURL(url), 1500);
+            setPickerOpen(false);
         } catch (e) {
             const detail = e.response?.data?.detail;
             toast.error(typeof detail === "string" ? detail : `Failed to export ${kind} PDF`);
         }
         setBusy(false);
     }
+
+    function toggleCol(key) {
+        setColumns((cs) => cs.map((c) => (c.key === key ? { ...c, checked: !c.checked } : c)));
+    }
+    function selectAll(v) {
+        setColumns((cs) => cs.map((c) => ({ ...c, checked: v })));
+    }
+
     return (
-        <Button
-            onClick={run}
-            disabled={busy}
-            variant="outline"
-            className="rounded-full"
-            data-testid={`report-pdf-btn-${kind}`}
-            title="Download a landscape PDF snapshot with the current filters applied"
-        >
-            <Printer className="h-4 w-4 mr-1.5" />
-            {busy ? "Preparing…" : "Export PDF"}
-        </Button>
+        <>
+            <div className="inline-flex rounded-full border border-input overflow-hidden" data-testid={`report-pdf-group-${kind}`}>
+                <Button
+                    onClick={() => run(false)}
+                    disabled={busy}
+                    variant="outline"
+                    className="rounded-none border-0 rounded-l-full"
+                    data-testid={`report-pdf-btn-${kind}`}
+                    title="Download a PDF with all default columns and the current filters applied"
+                >
+                    <Printer className="h-4 w-4 mr-1.5" />
+                    {busy ? "Preparing…" : "Export PDF"}
+                </Button>
+                <button
+                    type="button"
+                    onClick={openPicker}
+                    className="px-2 border-l border-input hover:bg-accent focus:outline-none"
+                    data-testid={`report-pdf-columns-btn-${kind}`}
+                    title="Choose which columns to include"
+                >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+            </div>
+
+            <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+                <DialogContent className="max-w-md" data-testid={`report-pdf-picker-${kind}`}>
+                    <DialogHeader>
+                        <DialogTitle>Choose columns · {kind.replace("-", " ")}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-1 max-h-[50vh] overflow-y-auto">
+                        {columns.map((c) => (
+                            <label key={c.key} className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-accent cursor-pointer text-sm" data-testid={`pdf-col-${kind}-${c.key}`}>
+                                <input
+                                    type="checkbox"
+                                    checked={!!c.checked}
+                                    onChange={() => toggleCol(c.key)}
+                                    className="h-4 w-4"
+                                />
+                                <span className="font-medium">{c.label}</span>
+                                <span className="ml-auto text-[10px] text-muted-foreground font-mono">{c.key}</span>
+                            </label>
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
+                        <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => selectAll(true)} className="rounded-full text-xs" data-testid={`pdf-col-all-${kind}`}>Select all</Button>
+                            <Button variant="outline" size="sm" onClick={() => selectAll(false)} className="rounded-full text-xs" data-testid={`pdf-col-none-${kind}`}>Clear</Button>
+                        </div>
+                        <Button onClick={() => run(true)} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90" data-testid={`pdf-col-download-${kind}`}>
+                            <Printer className="h-4 w-4 mr-1.5" />
+                            {busy ? "Preparing…" : "Download PDF"}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+        </>
     );
 }
 

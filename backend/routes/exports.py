@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import csv
 import io
+import threading
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Response
@@ -26,8 +27,34 @@ from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak,
+    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image,
 )
+
+
+# Iter 130 — cover-letter header. AOP logo used across every export PDF so
+# printed reports look on-brand. Fetched once per process on first PDF and
+# cached in-memory.
+AOP_LOGO_URL = "https://customer-assets.emergentagent.com/job_club-express-lite/artifacts/k67x4iui_Trendsetters%20logo.png"
+AOP_ORG_NAME = "Alpha Omega Phi Military Fraternity & Sorority, Inc."
+_LOGO_CACHE: dict = {"bytes": None, "err": False}
+_LOGO_LOCK = threading.Lock()
+
+
+def _load_logo_bytes() -> Optional[bytes]:
+    """Fetch and cache the AOP logo. Returns None if the fetch fails —
+    PDFs still render, just without the image."""
+    if _LOGO_CACHE["bytes"] is not None or _LOGO_CACHE["err"]:
+        return _LOGO_CACHE["bytes"]
+    with _LOGO_LOCK:
+        if _LOGO_CACHE["bytes"] is not None or _LOGO_CACHE["err"]:
+            return _LOGO_CACHE["bytes"]
+        try:
+            import urllib.request
+            with urllib.request.urlopen(AOP_LOGO_URL, timeout=8) as resp:
+                _LOGO_CACHE["bytes"] = resp.read()
+        except Exception:
+            _LOGO_CACHE["err"] = True
+    return _LOGO_CACHE["bytes"]
 
 
 def register(
@@ -71,6 +98,37 @@ def register(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    def _cover_header(title: str, subtitle: str, h1_style, h2_style) -> list:
+        """Iter 130 — every export PDF starts with a common cover header:
+        AOP logo + org name banner on the left, title + generated-at line
+        on the right. Falls back to text-only if the logo fetch failed."""
+        logo_bytes = _load_logo_bytes()
+        # Right column: title + org name + subtitle.
+        org_style = ParagraphStyle("org", parent=h2_style, fontSize=9, textColor=colors.HexColor("#0A2463"), spaceAfter=1, fontName="Helvetica-Bold")
+        gen_style = ParagraphStyle("gen", parent=h2_style, fontSize=8, textColor=colors.grey, spaceAfter=2)
+        stamp = f"Generated {iso(now_utc())[:19].replace('T', ' ')} UTC"
+        right_flows = [
+            Paragraph(AOP_ORG_NAME, org_style),
+            Paragraph(title, h1_style),
+            Paragraph(subtitle, h2_style),
+            Paragraph(stamp, gen_style),
+        ]
+        if logo_bytes:
+            try:
+                img = Image(io.BytesIO(logo_bytes), width=0.75 * inch, height=0.75 * inch, kind="proportional")
+                header_tbl = Table([[img, right_flows]], colWidths=[0.9 * inch, None])
+                header_tbl.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("LINEBELOW", (0, 0), (-1, -1), 0.75, colors.HexColor("#C8102E")),
+                ]))
+                return [header_tbl, Spacer(1, 8)]
+            except Exception:
+                pass
+        # Fallback: text-only cover.
+        return right_flows + [Spacer(1, 6)]
     def _pdf_response(title: str, columns: list, rows: list, filename: str, subtitle: str = "", col_weights: Optional[list] = None):
         """Renders a landscape PDF with a title, an optional subtitle,
         and a table of the given columns/rows. Long text cells wrap via
@@ -93,16 +151,15 @@ def register(
         h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=16, spaceAfter=4, textColor=colors.HexColor("#0A2463"))
         h2 = ParagraphStyle("h2", parent=styles["Normal"], fontSize=9, textColor=colors.grey, spaceAfter=8)
         cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=8, leading=10, wordWrap="CJK")
-        story = [
-            Paragraph(title, h1),
-            Paragraph(subtitle or f"Generated {iso(now_utc())} · {len(rows)} rows", h2),
-        ]
+        # Header cells use white text so the labels stay readable on the navy fill.
+        header_cell = ParagraphStyle("header_cell", parent=cell, textColor=colors.white, fontName="Helvetica-Bold")
+        story = _cover_header(title, subtitle or f"Generated {iso(now_utc())} · {len(rows)} rows", h1, h2)
         if not rows:
             story.append(Paragraph("<i>No data for the selected filters.</i>", cell))
         else:
             # Build table data — header row + one row per record. Wrap
             # every cell in Paragraph so long text doesn't clip.
-            header = [Paragraph(f"<b>{c}</b>", cell) for c in columns]
+            header = [Paragraph(c, header_cell) for c in columns]
             data = [header]
             for r in rows:
                 data.append([Paragraph(_fmt_cell(r.get(c)), cell) for c in columns])
@@ -154,10 +211,7 @@ def register(
         name_hdr = ParagraphStyle("name_hdr", parent=styles["Heading2"], fontSize=13, spaceAfter=2, textColor=colors.HexColor("#0A2463"))
         section_hdr = ParagraphStyle("section_hdr", parent=styles["Normal"], fontSize=8, textColor=colors.white, backColor=colors.HexColor("#0A2463"), leftIndent=4, rightIndent=4, spaceBefore=6, spaceAfter=3, leading=11, fontName="Helvetica-Bold")
         cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=8, leading=10, wordWrap="CJK")
-        story = [
-            Paragraph(title, h1),
-            Paragraph(subtitle or f"Generated {iso(now_utc())} · {len(rows)} members", h2),
-        ]
+        story = _cover_header(title, subtitle or f"{len(rows)} members", h1, h2)
         if not rows:
             story.append(Paragraph("<i>No members match the current filters.</i>", cell))
         else:
@@ -512,7 +566,11 @@ def register(
         """Flatten each record's fields into a plain-dict row keyed by
         the column keys defined in _PDF_COLUMNS[kind]. Handles the
         camelCased shapes each /reports endpoint returns."""
-        cols = _PDF_COLUMNS[kind]
+        return _rows_for_pdf_with_cols(_PDF_COLUMNS[kind], kind, docs)
+
+    def _rows_for_pdf_with_cols(cols: list, kind: str, docs: list) -> list:
+        """Same as _rows_for_pdf but accepts an explicit column list — used
+        when the admin trims the column set via the ?columns=… whitelist."""
         out = []
         for d in docs:
             row = {}
@@ -582,6 +640,22 @@ def register(
         rows = await db.transactions.find(q, {"_id": 0}).sort("created_at", -1).limit(5000).to_list(5000)
         return rows
 
+    @api.get("/reports/{kind}/columns")
+    async def report_pdf_columns(kind: str, _: dict = Depends(admin_tab_dep("reports"))):
+        """Iter 130 — enumerates available PDF columns for a given report
+        kind so the frontend picker can render checkboxes with the right
+        labels + default-on state."""
+        k = (kind or "").lower().strip()
+        if k not in _PDF_COLUMNS:
+            raise HTTPException(status_code=400, detail=f"Unknown report kind {k!r}")
+        return {
+            "kind": k,
+            "columns": [
+                {"key": c[1], "label": c[0], "default": True}
+                for c in _PDF_COLUMNS[k]
+            ],
+        }
+
     @api.get("/reports/{kind}/export.pdf")
     async def export_report_pdf(
         kind: str,
@@ -602,6 +676,10 @@ def register(
         status: Optional[str] = None,
         recruiter_id: Optional[str] = None,
         award_id: Optional[str] = None,
+        # Iter 130 — comma-separated whitelist of column keys the admin
+        # wants included in the PDF (matches keys in _PDF_COLUMNS[kind]).
+        # Unrecognized keys are ignored; empty means "include everything".
+        columns: Optional[str] = None,
         admin: dict = Depends(admin_tab_dep("reports")),
     ):
         kind = (kind or "").lower().strip()
@@ -614,7 +692,7 @@ def register(
         # from the CSV export shows up — no column clipping.
         if kind == "members":
             rows = await _build_full_member_rows(admin)
-            subtitle = f"{len(rows)} members · Generated {iso(now_utc())[:19].replace('T',' ')} UTC"
+            subtitle = f"{len(rows)} members"
             return _pdf_member_cards_response(
                 title="AOP · Members Report",
                 subtitle=subtitle,
@@ -679,15 +757,22 @@ def register(
                 docs = []
 
         cols_meta = _PDF_COLUMNS[kind]
+        # Iter 130 — apply the column whitelist if the admin sent one.
+        # Column keys are the second tuple element in _PDF_COLUMNS entries.
+        if columns:
+            wanted = {c.strip() for c in columns.split(",") if c.strip()}
+            filtered = [c for c in cols_meta if c[1] in wanted]
+            if filtered:
+                cols_meta = filtered
         column_labels = [c[0] for c in cols_meta]
         col_weights = [c[2] if len(c) >= 3 else 1.0 for c in cols_meta]
-        rows = _rows_for_pdf(kind, docs)
+        rows = _rows_for_pdf_with_cols(cols_meta, kind, docs)
         pretty_kind = kind.replace("-", " ").title().replace("Rsvps", "RSVPs")
         subtitle_parts = []
         if year:    subtitle_parts.append(f"Year {year}")
         if quarter: subtitle_parts.append(f"Q{quarter}")
         if month:   subtitle_parts.append(f"Month {month}")
-        subtitle_parts.append(f"{len(rows)} rows · Generated {iso(now_utc())[:19].replace('T', ' ')} UTC")
+        subtitle_parts.append(f"{len(rows)} rows")
         # Rekey rows so _pdf_response can look them up by column label.
         keyed_rows = []
         for r in rows:

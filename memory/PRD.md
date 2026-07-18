@@ -15,6 +15,18 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 130 — Column picker + branded cover header on every PDF export + white header text (2026-02-27) [FEATURE + POLISH]
+Three admin requests bundled into one refactor of `routes/exports.py`:
+
+- **PDF column picker** — `<ExportPdfButton>` in `pages/Reports.jsx` is now a split button: the main action still fires the full-column export, but a new chevron button opens a modal listing every column with a checkbox + Select-all / Clear controls + Download. Backend adds:
+  - `GET /api/reports/{kind}/columns` — enumerates `[{key, label, default}]` per report kind so the picker labels match the PDF exactly.
+  - `?columns=key1,key2,…` on `GET /api/reports/{kind}/export.pdf` — whitelists which columns land in the PDF. Empty or all-unknown falls back to the default column set (never crashes).
+  - Extracted `_rows_for_pdf_with_cols(cols, kind, docs)` so the rekey logic accepts an arbitrary column subset.
+- **Cover-letter header on every PDF** — new `_cover_header(...)` helper builds a two-column banner: the AOP Trendsetters logo (fetched once per process from the emergent CDN, cached in `_LOGO_CACHE`, graceful text-only fallback on network failure), followed by org name → title → subtitle → "Generated YYYY-MM-DD HH:MM UTC" stamp, closed off with a red separator rule (`#C8102E`). Applied to both `_pdf_response` (tabular reports) and `_pdf_member_cards_response` (member card layout).
+- **Table header row now uses white bold text** — user reported the navy-filled header row was rendering with black text. Root cause: header cells wrapped in `Paragraph(f"<b>{c}</b>", cell)` used the default cell `ParagraphStyle` which defaults to black `textColor`, overriding the TableStyle's `TEXTCOLOR` operator. Added a dedicated `header_cell = ParagraphStyle(..., textColor=colors.white, fontName="Helvetica-Bold")` — rendered PDF now shows crisp white labels on the navy header fill.
+- **Tests**: `tests/test_iteration130_columns_and_cover.py` — 9/9 pass. Verifies `/columns` shape + admin-only guard + 400 on unknown kind, PDF export honors the whitelist + gracefully ignores unknown keys, both tabular + card-layout PDFs contain the org name / title / generated timestamp / embedded logo image (extracted via pdfplumber). Combined iter 127-130 regression: **24/24 pass**. Rendered PDF spot-check confirmed the header row now shows white bold labels on the navy fill and the AOP Trendsetters logo appears at the top-left of page 1.
+
+
 ### Iteration 129 — Reports tab crash fix + expanded PDF exports across all admin report tabs (2026-02-27) [P0 BUG FIX + FEATURE]
 User bug bundle:
   1. Admin Report tab — RSVPs / Donations / Hours sub-tabs were completely blank.
