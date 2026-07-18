@@ -15,6 +15,36 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 132 — Full member data capture + correct outstanding balance in exports (2026-02-27) [P0 BUG FIX]
+User reported: "City, State, ZIP code, DOB and other info missing from PDF/CSV export. Outstanding balance is incorrect — 24 people have balances." **Two root causes**:
+
+- **Root cause 1: Wrong field names.** `_build_full_member_rows` in `routes/exports.py` was:
+  - Reading `birth_date` — but the DB stores it as `birthdate` (no underscore).
+  - Treating `address` as a nested dict (`.city`, `.state`, `.postal_code`) — but users store all address parts as flat top-level fields (`city`, `state`, `zip_code`, `country`); `address` itself is a plain string.
+  - Reading `postal_code` — but the DB uses `zip_code`.
+- **Root cause 2: Stale balance field.** Reading `u.get("outstanding_balance_total")` from the user doc — but per `routes/balances.py` this value is **computed live** from `balance_lines`, never stored. Every member's balance therefore exported as `0`.
+
+**Fixes:**
+- Rewrote address extraction to read the flat top-level `city`/`state`/`zip_code`/`country` fields (with a legacy fallback for nested dicts on older docs).
+- `birth_date` now reads `birthdate` first, then falls back to `birth_date`.
+- Outstanding balance now computed inline: `sum(amount for ln in balance_lines if not ln.paid_at)`.
+- Added `total_paid` (sum of paid balance lines) so the CSV/PDF reflects payment history.
+- Added a `balance_lines` column (CSV) + a "Balance line items" section (PDF card layout) that lists every line with label + `$amount` + paid/unpaid state so admins see exactly what makes up the balance.
+- Added five previously-missing profile fields to both CSV and PDF: `branch_of_service`, `line_name`, `intake_line`, `marital_status`, `bio`.
+- Also formatted the balance and total-paid columns as `$1,234.50` in the card layout for readability.
+
+**Tests**: `tests/test_iteration132_full_data_and_balance.py` — 8/8 pass. Seeds a balance line via the admin API, verifies:
+  - Outstanding balance = seeded amount (was 0 before).
+  - Paid-mark flows into `total_paid` and out of `outstanding_balance_total`.
+  - `balance_lines` summary appears in the CSV and the "Balance line items" section renders in the PDF card.
+  - CSV headers include every new field.
+  - Card layout formats amounts as `$1,234.50`.
+  - Roster PDF surfaces the balance value in the Bal column.
+Combined iter 127-132 regression: **50/50 pass**. Verified end-to-end on preview data (Harper Liu now correctly exports City = "Chicago"; test balance of $75 shows up in both CSV `outstanding_balance_total` and the PDF card's Membership + Balance line items sections).
+
+⚠️ Reminder for user: this fix is on **preview**; production (`aop-app.org`) will need a redeploy to get the fixed exports.
+
+
 ### Iteration 131 — Print-friendly landscape "roster" layout for the members PDF (2026-02-27) [FEATURE]
 Follow-up to the iter 130 exports refactor. Admins asked for a printer-friendly one-line-per-member roster PDF as an alternative to the portrait detail-card view.
 

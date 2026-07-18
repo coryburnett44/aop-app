@@ -314,11 +314,15 @@ def register(
                     ("Phone", r.get("phone")),
                     ("Gender", r.get("gender")),
                     ("Birth date", r.get("birth_date")),
+                    ("Marital status", r.get("marital_status")),
                     ("Address", r.get("address")),
                     ("City", r.get("city")),
                     ("State", r.get("state")),
-                    ("Postal code", r.get("postal_code")),
+                    ("ZIP", r.get("postal_code")),
                     ("Country", r.get("country")),
+                    ("Branch of service", r.get("branch_of_service")),
+                    ("Line name", r.get("line_name")),
+                    ("Intake line", r.get("intake_line")),
                 ])
                 _section("Membership", [
                     ("Chapter", r.get("chapter")),
@@ -331,9 +335,13 @@ def register(
                     ("Created", r.get("created_at")),
                     ("Membership started", r.get("membership_started_at")),
                     ("Membership expires", r.get("membership_expires_at")),
-                    ("Outstanding balance", r.get("outstanding_balance_total")),
-                    ("Total paid", r.get("total_paid")),
+                    ("Outstanding balance", f"${float(r.get('outstanding_balance_total') or 0):,.2f}"),
+                    ("Total paid", f"${float(r.get('total_paid') or 0):,.2f}"),
                 ])
+                # Iter 132 — surface the actual line items so admins can see
+                # WHAT the outstanding balance is made up of.
+                if r.get("balance_lines"):
+                    _section("Balance line items", [(f"{i + 1}.", line) for i, line in enumerate(r.get("balance_lines") or [])])
                 _section("Awards", [("Awards granted", r.get("awards") or "—")])
                 _section("Events attended", [("Check-ins", r.get("events_attended") or "—")])
                 _section("RSVPs", [("Event RSVPs", r.get("rsvps") or "—")])
@@ -376,14 +384,15 @@ def register(
     _CSV_COLUMNS = [
         "id", "name", "email", "phone", "gender", "birth_date",
         "address", "city", "state", "postal_code", "country",
+        "branch_of_service", "line_name", "intake_line", "marital_status",
         "chapter", "tier", "role", "admin_role",
         "status", "is_lifetime_member", "join_date", "created_at",
         "membership_started_at", "membership_expires_at",
-        "outstanding_balance_total", "total_paid",
+        "outstanding_balance_total", "total_paid", "balance_lines",
         "hours_approved_total", "hours_pending_total",
         "donations_total", "recruits_count",
         "awards", "events_attended", "rsvps",
-        "email_opt_out", "sms_opt_out",
+        "email_opt_out", "sms_opt_out", "bio",
     ]
 
     @api.get("/admin/members/export.csv")
@@ -496,43 +505,85 @@ def register(
             # Recruits count.
             recruits_count = await db.users.count_documents({"recruiter_id": uid})
 
-            # Address is stored as a nested dict or as flat fields — normalize.
-            addr = u.get("address") or {}
-            if isinstance(addr, str):
-                addr_line = addr; city = state = postal = country = ""
+            # Iter 132 — address fields are FLAT on the user doc (city/state/
+            # zip_code/country are all top-level). The `address` field itself
+            # is a plain string. My earlier assumption that `address` was a
+            # nested dict was wrong and caused city/state/DOB/etc. to export
+            # as empty.
+            addr_val = u.get("address")
+            if isinstance(addr_val, dict):
+                # Legacy safety net — some old docs may have stored nested.
+                addr_line = addr_val.get("line1") or addr_val.get("street") or ""
+                city = addr_val.get("city") or u.get("city", "") or ""
+                state = addr_val.get("state") or u.get("state", "") or ""
+                postal = addr_val.get("postal_code") or addr_val.get("zip") or addr_val.get("zip_code") or u.get("zip_code", "") or ""
+                country = addr_val.get("country") or u.get("country", "") or ""
             else:
-                addr_line = addr.get("line1") or addr.get("street") or ""
-                city = addr.get("city") or ""
-                state = addr.get("state") or ""
-                postal = addr.get("postal_code") or addr.get("zip") or ""
-                country = addr.get("country") or ""
+                addr_line = addr_val or ""
+                city = u.get("city", "") or ""
+                state = u.get("state", "") or ""
+                postal = u.get("zip_code", "") or ""
+                country = u.get("country", "") or ""
 
+            # Iter 132 — outstanding balance is COMPUTED from `balance_lines`
+            # per routes/balances.py (never stored). Reading a stored
+            # `outstanding_balance_total` was returning 0 for every member.
+            balance_lines = u.get("balance_lines") or []
+            outstanding_total = round(
+                sum(float(ln.get("amount", 0) or 0) for ln in balance_lines if not ln.get("paid_at")),
+                2,
+            )
+            total_paid = round(
+                sum(float(ln.get("amount", 0) or 0) for ln in balance_lines if ln.get("paid_at")),
+                2,
+            )
+            # Also compact the balance lines themselves for a per-member detail
+            # field the card layout can show.
+            balance_lines_summary = [
+                f"{ln.get('label','')} (${float(ln.get('amount',0) or 0):,.2f}"
+                + (f" — paid {(ln.get('paid_at') or '')[:10]}" if ln.get("paid_at") else " — unpaid")
+                + ")"
+                for ln in balance_lines
+            ]
+
+            # Iter 132 — DOB is stored under `birthdate` (not `birth_date`).
+            # Membership tier can also be stored as `membership_tier` string
+            # when no explicit tier_id was set — fall back to that.
             chapter = chapters.get(u.get("chapter_id"))
             tier = tiers.get(u.get("tier_id"))
+            tier_name = tier.get("name", "") if tier else (u.get("membership_tier", "") or "")
+
+            # Compose a display name from first/middle/last if `name` is empty.
+            display_name = u.get("name", "") or " ".join(
+                x for x in [u.get("first_name", ""), u.get("middle_name", ""), u.get("last_name", "")]
+                if x
+            ).strip()
+
             rows.append({
                 "id": uid,
-                "name": u.get("name", ""),
+                "name": display_name,
                 "email": u.get("email", ""),
                 "phone": u.get("phone", ""),
                 "gender": u.get("gender", ""),
-                "birth_date": (u.get("birth_date") or "")[:10],
+                "birth_date": (u.get("birthdate") or u.get("birth_date") or "")[:10],
                 "address": addr_line,
                 "city": city,
                 "state": state,
                 "postal_code": postal,
                 "country": country,
                 "chapter": chapter.get("name", "") if chapter else "",
-                "tier": tier.get("name", "") if tier else "",
+                "tier": tier_name,
                 "role": u.get("role", ""),
-                "admin_role": u.get("admin_role", ""),
+                "admin_role": u.get("admin_role", "") or "",
                 "status": u.get("status", ""),
                 "is_lifetime_member": bool(u.get("is_lifetime_member")),
                 "join_date": (u.get("join_date") or "")[:10],
                 "created_at": (u.get("created_at") or "")[:10],
                 "membership_started_at": (u.get("membership_started_at") or "")[:10],
                 "membership_expires_at": (u.get("membership_expires_at") or "")[:10],
-                "outstanding_balance_total": u.get("outstanding_balance_total", 0),
-                "total_paid": u.get("total_paid", 0),
+                "outstanding_balance_total": outstanding_total,
+                "total_paid": total_paid,
+                "balance_lines": balance_lines_summary,
                 "hours_approved_total": round(hrs_by_status.get("approved", 0), 2),
                 "hours_pending_total": round(hrs_by_status.get("pending", 0), 2),
                 "donations_total": round(donations_total, 2),
@@ -540,6 +591,12 @@ def register(
                 "awards": awards_str,
                 "events_attended": events_attended,
                 "rsvps": rsvps_str,
+                # Extra profile fields the card layout can surface.
+                "branch_of_service": u.get("branch_of_service", "") or "",
+                "intake_line": u.get("intake_line", "") or "",
+                "line_name": u.get("line_name", "") or "",
+                "marital_status": u.get("marital_status", "") or "",
+                "bio": u.get("bio", "") or "",
                 "email_opt_out": bool(u.get("email_opt_out")),
                 "sms_opt_out": bool(u.get("sms_opt_out")),
             })
