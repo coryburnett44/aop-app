@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, mediaUrl } from "../lib/api";
 import { useSiteSettings } from "../context/SiteSettingsContext";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
@@ -54,14 +55,20 @@ function SocialIcons({ member, size = "h-7 w-7", stop = true }) {
 export default function Directory() {
     const { settings } = useSiteSettings();
     const pageTitle = settings?.page_titles?.directory || "Members";
+    const [searchParams, setSearchParams] = useSearchParams();
     const [members, setMembers] = useState([]);
     const [chapters, setChapters] = useState([]);
     const [tiers, setTiers] = useState([]);
+    const [regions, setRegions] = useState([]);
     const [q, setQ] = useState("");
     const [active, setActive] = useState(null);
     const [statusFilter, setStatusFilter] = useState("all");
     const [tierFilter, setTierFilter] = useState("all");
     const [chapterFilter, setChapterFilter] = useState("all");
+    // Iter 134 — region filter. Initial value picked up from `?region=...`
+    // so the Regions page's "Filter members in this region →" link deep-links
+    // straight into the filtered Directory view.
+    const [regionFilter, setRegionFilter] = useState(searchParams.get("region") || "all");
     const [sortBy, setSortBy] = useState("name");
 
     const load = async () => {
@@ -77,7 +84,36 @@ export default function Directory() {
     useEffect(() => {
         api.get("/chapters").then(({ data }) => setChapters(data)).catch(() => {});
         api.get("/tiers").then(({ data }) => setTiers(data)).catch(() => {});
+        api.get("/regions").then(({ data }) => setRegions(data.regions || [])).catch(() => {});
     }, []);
+
+    // Keep the ?region=… URL param in sync so the current filter survives
+    // a page refresh + can be shared.
+    useEffect(() => {
+        const next = new URLSearchParams(searchParams);
+        if (regionFilter === "all") next.delete("region");
+        else next.set("region", regionFilter);
+        setSearchParams(next, { replace: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [regionFilter]);
+
+    // Build a lowercase state-variant → region_id lookup so client-side
+    // filtering matches the same normalization the backend uses. This lets
+    // us filter without a round-trip to the server.
+    const stateToRegion = useMemo(() => {
+        const map = new Map();
+        // The backend's canonical state names + codes come in via /api/regions.
+        // Match on the canonical name AND common variants (USPS code, full).
+        for (const r of regions) {
+            for (const s of r.states) {
+                map.set((s.name || "").toLowerCase(), r.id);
+                map.set((s.code || "").toLowerCase(), r.id);
+                // Also accept "Fla." style short forms — brittle but rare.
+                map.set(`${(s.code || "").toLowerCase()}.`, r.id);
+            }
+        }
+        return map;
+    }, [regions]);
 
     const chapterName = (id) => chapters.find((c) => c.id === id)?.name || "—";
 
@@ -86,6 +122,12 @@ export default function Directory() {
         if (statusFilter !== "all") arr = arr.filter((m) => (m.status || "active").toLowerCase() === statusFilter);
         if (tierFilter !== "all") arr = arr.filter((m) => (m.membership_tier || "standard").toLowerCase() === tierFilter);
         if (chapterFilter !== "all") arr = arr.filter((m) => (m.chapter_id || "") === chapterFilter);
+        if (regionFilter !== "all") {
+            arr = arr.filter((m) => {
+                const s = (m.state || "").toString().trim().toLowerCase();
+                return s && stateToRegion.get(s) === regionFilter;
+            });
+        }
         const cmp = (a, b) => (a || "").localeCompare(b || "");
         if (sortBy === "name") arr.sort((a, b) => cmp(a.name, b.name));
         else if (sortBy === "chapter") arr.sort((a, b) => cmp(chapterName(a.chapter_id), chapterName(b.chapter_id)) || cmp(a.name, b.name));
@@ -93,7 +135,7 @@ export default function Directory() {
         else if (sortBy === "tier") arr.sort((a, b) => cmp(a.membership_tier, b.membership_tier) || cmp(a.name, b.name));
         return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [members, statusFilter, tierFilter, chapterFilter, sortBy, chapters]);
+    }, [members, statusFilter, tierFilter, chapterFilter, regionFilter, sortBy, chapters, stateToRegion]);
 
     const distinctStatuses = useMemo(() => Array.from(new Set(members.map((m) => (m.status || "active").toLowerCase()))).filter(Boolean).sort(), [members]);
 
@@ -139,6 +181,13 @@ export default function Directory() {
                         {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                     </SelectContent>
                 </Select>
+                <Select value={regionFilter} onValueChange={setRegionFilter}>
+                    <SelectTrigger className="w-auto min-w-[160px] rounded-full text-xs" data-testid="filter-region"><SelectValue placeholder="Region" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All regions</SelectItem>
+                        {regions.map((r) => <SelectItem key={r.id} value={r.id}>{r.name} ({r.total})</SelectItem>)}
+                    </SelectContent>
+                </Select>
                 <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
                     <span>Sort:</span>
                     <Select value={sortBy} onValueChange={setSortBy}>
@@ -151,9 +200,9 @@ export default function Directory() {
                         </SelectContent>
                     </Select>
                 </div>
-                {(statusFilter !== "all" || tierFilter !== "all" || chapterFilter !== "all") && (
+                {(statusFilter !== "all" || tierFilter !== "all" || chapterFilter !== "all" || regionFilter !== "all") && (
                     <button
-                        onClick={() => { setStatusFilter("all"); setTierFilter("all"); setChapterFilter("all"); }}
+                        onClick={() => { setStatusFilter("all"); setTierFilter("all"); setChapterFilter("all"); setRegionFilter("all"); }}
                         className="text-xs text-primary hover:underline ml-2"
                         data-testid="clear-filters"
                     >

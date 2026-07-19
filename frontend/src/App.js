@@ -25,6 +25,7 @@ import Documents from "./pages/Documents";
 import Hours from "./pages/Hours";
 import Awards from "./pages/Awards";
 import Chapters from "./pages/Chapters";
+import Regions from "./pages/Regions";
 import Anniversary from "./pages/Anniversary";
 import Omega from "./pages/Omega";
 import Gear from "./pages/Gear";
@@ -65,6 +66,7 @@ function App() {
                             <Route path="/news/:id" element={<ProtectedRoute><NewsDetail /></ProtectedRoute>} />
                             <Route path="/directory" element={<ProtectedRoute><Directory /></ProtectedRoute>} />
                             <Route path="/chapters" element={<ProtectedRoute><Chapters /></ProtectedRoute>} />
+                            <Route path="/regions" element={<ProtectedRoute><Regions /></ProtectedRoute>} />
                             <Route path="/photos" element={<ProtectedRoute><Photos /></ProtectedRoute>} />
                             <Route path="/photos/:albumId" element={<ProtectedRoute><Photos /></ProtectedRoute>} />
                             <Route path="/documents" element={<ProtectedRoute><Documents /></ProtectedRoute>} />

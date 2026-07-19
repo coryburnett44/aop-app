@@ -3182,6 +3182,11 @@ routes_cms_cards.register(
 from routes import birthday_emails as _routes_birthday_import  # noqa: E402
 _routes_birthday_import.register_routes(api, admin_tab_dep)
 
+# Iter 134: regions endpoint (Central-East / Gulf Coast / Southeastern /
+# Mid-Atlantic) with per-state member counts.
+from routes import regions as _routes_regions  # noqa: E402
+_routes_regions.register(api, db=db, get_current_user=get_current_user)
+
 # Patch the back-compat _ensure_site_settings shim to delegate to the route module
 _ensure_site_settings = routes_site_settings.register.ensure
 

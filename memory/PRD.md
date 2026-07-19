@@ -15,6 +15,24 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 134 — Regions page + members Region filter (2026-02-27) [FEATURE]
+User request: "In the Chapter page, make a Region page. Currently we have four regions [Central-East, Gulf Coast, Southeastern, Mid-Atlantic]. Just like the chapters shows how many members is in the state, the Region page will show how many members are in the region by state. Also, on the Members page, allow members to filter by Region."
+
+- **New module `routes/regions.py`** — defines the 4 canonical regions with their states + accepted state-name variants (full name, USPS code, common abbreviations like "Fla.", "N.C.", "D.C."). Exposes:
+  - `GET /api/regions` → `{regions: [...], unassigned_count}`. Each region includes id, name, description, total member count, and per-state array with individual counts. Uses a single MongoDB aggregation on `state` (case-insensitive via `$toLower`+`$trim`) then buckets results in Python via a normalized variant lookup so we handle everything from "Wisconsin" to "WI" to "Wisc." in one pass.
+  - Public helper `region_for_state(raw)` → returns `{region_id, state_code, state_name}` or None. Reused by the Directory client filter.
+- **New page `pages/Regions.jsx`** (route `/regions`):
+  - Grand-total banner ("15 members across all regions · 1 member outside a region" — the unassigned warning highlighted in amber).
+  - 4 color-coded region cards with distinct gradient headers (blue/orange/green/purple) + region emoji (🌾 🌊 🌴 🏛️) + big total badge.
+  - Each state listed in a compact card with USPS code, member-count pill, and a MapPin icon. Zero-count states rendered greyed-out so admins see coverage gaps.
+  - Deep-link CTA "Filter members in this region →" that jumps into `/directory?region={region_id}`.
+- **`pages/Chapters.jsx`** — added a prominent "View Regions" primary button in the page header that links to `/regions`.
+- **`pages/Directory.jsx`** — new Region select in the filter row (populated dynamically from `/api/regions`, labels show total in parens). Deep-link `?region={id}` from the Regions page pre-fills the filter; the filter state is kept in sync with the URL via `setSearchParams` so refreshing or sharing the URL keeps the filter applied. Filter is applied client-side against a `stateToRegion` variant map (also built from `/api/regions`) so USPS codes and full state names both match. Clear-filters button also resets the region filter.
+- **App routing**: added `<Route path="/regions" element={<ProtectedRoute><Regions /></ProtectedRoute>} />`.
+- **Tests**: `tests/test_iteration134_regions.py` — 7/7 pass. Verifies endpoint returns all 4 regions in the expected order, each region's state list matches the user's spec exactly, changing a member's state moves them between region totals, USPS code + full name variants both count, an unknown state ("California") lands in `unassigned_count`, endpoint requires auth, and `region_for_state()` handles ISO/USPS/abbreviation/empty/unknown inputs.
+- **Combined regression (iter132+133+134)**: **22/22 passing**. Playwright verified the /regions page renders with correct counts (Central-East=2, Gulf Coast=9, Southeastern=3, Mid-Atlantic=1, unassigned=1), the deep-link `?region=gulf-coast` filters the Directory to exactly the 9 Gulf Coast members, and the new "View Regions" button on Chapters links correctly.
+
+
 ### Iteration 133 — Automatic Happy Birthday emails (2026-02-27) [FEATURE]
 User request: "When a member's birthday has arrived, send them a nice, encouraging email wishing them a HAPPY BIRTHDAY, and mention that Alpha Omega Phi celebrates with them."
 
