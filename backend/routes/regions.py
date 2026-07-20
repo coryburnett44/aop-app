@@ -398,6 +398,10 @@ def register(api, *, db, get_current_user, admin_tab_dep, public_user):
             "states": _normalize_states(body.states),
         }
         await db.app_regions.insert_one(doc)
+        # `insert_one` mutates `doc` by injecting a BSON ObjectId under `_id`,
+        # which is not JSON-serializable and causes FastAPI's response encoder
+        # to hang/error. Strip it before returning.
+        doc.pop("_id", None)
         return doc
 
     @api.put("/admin/regions/{region_id}")

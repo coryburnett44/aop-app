@@ -15,6 +15,12 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 135 — Admin Regions CRUD + interactive US map (2026-02-27, tests fixed 2026-02-28) [FEATURE]
+- Backend `routes/regions.py`: Mongo-backed `app_regions` collection (seeds the 4 defaults on first boot), full CRUD (`POST/PUT/DELETE /api/admin/regions`), governor assignment (`governor_user_id` on region, validated against `users`), per-member override (`PUT /api/admin/members/{user_id}/region`, empty string clears). `/api/regions` aggregation now subtracts overridden users from their state-derived region and adds them to their override region. Deleting a region also clears any member overrides pointing at it. Public helper `region_for_state` is async and reads latest DB state.
+- Frontend: `pages/Regions.jsx` interactive US SVG map (react-simple-maps + topojson-client) with per-region color fills + click-to-drill; `components/RegionsAdmin.jsx` admin CRUD UI.
+- Bug fix (2026-02-28): `POST /api/admin/regions` was hanging because `db.app_regions.insert_one(doc)` mutated `doc` in place with an ObjectId under `_id`, which then broke FastAPI's JSON response encoder. Fix: `doc.pop("_id", None)` before returning. All 7 tests in `test_iteration135_regions_admin.py` + 7 tests in `test_iteration134_regions.py` now pass.
+
+
 ### Iteration 134 — Regions page + members Region filter (2026-02-27) [FEATURE]
 User request: "In the Chapter page, make a Region page. Currently we have four regions [Central-East, Gulf Coast, Southeastern, Mid-Atlantic]. Just like the chapters shows how many members is in the state, the Region page will show how many members are in the region by state. Also, on the Members page, allow members to filter by Region."
 
