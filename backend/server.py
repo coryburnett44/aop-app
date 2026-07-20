@@ -162,6 +162,9 @@ def public_user(u: dict) -> dict:
         "tier_id": u.get("tier_id"),
         "is_lifetime_member": is_lifetime,
         "chapter_id": u.get("chapter_id"),
+        # Iter 135 — region override lets admins move members between
+        # regions regardless of their address state.
+        "region_override": u.get("region_override", "") or "",
         "membership_expires_at": None if is_lifetime else u.get("membership_expires_at"),
         "is_expired": is_expired,
         "within_grace": within_grace,
@@ -284,10 +287,10 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 # Admin sub-role permissions — UI tabs an admin can access.
 # "full" admin has access to everything.
 ADMIN_ROLE_TABS: dict[str, set[str]] = {
-    "full": {"dashboard", "members", "chapters", "tiers", "events", "hours", "awards", "gear", "causes", "reports", "email", "news", "pages", "documents", "recruitment"},
-    "membership_manager": {"dashboard", "members", "chapters", "tiers", "events", "awards", "reports", "email", "recruitment"},
-    "operations_manager": {"dashboard", "members", "chapters", "events", "hours", "causes", "reports", "news", "documents", "recruitment"},
-    "governor_manager": {"dashboard", "hours", "causes", "reports", "recruitment"},
+    "full": {"dashboard", "members", "chapters", "regions", "tiers", "events", "hours", "awards", "gear", "causes", "reports", "email", "news", "pages", "documents", "recruitment"},
+    "membership_manager": {"dashboard", "members", "chapters", "regions", "tiers", "events", "awards", "reports", "email", "recruitment"},
+    "operations_manager": {"dashboard", "members", "chapters", "regions", "events", "hours", "causes", "reports", "news", "documents", "recruitment"},
+    "governor_manager": {"dashboard", "hours", "causes", "reports", "recruitment", "regions"},
 }
 
 # Canonical list of every admin-console tab key — used for admin_can validation and
@@ -1217,6 +1220,10 @@ async def startup():
         send_bulk_email_fn=send_bulk_email,
     )
     asyncio.create_task(_routes_birthday.birthday_email_loop())
+
+    # Iter 135: seed the 4 default regions on first boot.
+    from routes import regions as _routes_regions_seed  # noqa: E402
+    await _routes_regions_seed.seed_default_regions_if_empty(db)
 
 async def seed_data():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@clubhaven.app")
@@ -3183,9 +3190,16 @@ from routes import birthday_emails as _routes_birthday_import  # noqa: E402
 _routes_birthday_import.register_routes(api, admin_tab_dep)
 
 # Iter 134: regions endpoint (Central-East / Gulf Coast / Southeastern /
-# Mid-Atlantic) with per-state member counts.
+# Mid-Atlantic) with per-state member counts. Iter 135 extended with
+# governor spotlight, admin CRUD, and per-member region overrides.
 from routes import regions as _routes_regions  # noqa: E402
-_routes_regions.register(api, db=db, get_current_user=get_current_user)
+_routes_regions.register(
+    api,
+    db=db,
+    get_current_user=get_current_user,
+    admin_tab_dep=admin_tab_dep,
+    public_user=public_user,
+)
 
 # Patch the back-compat _ensure_site_settings shim to delegate to the route module
 _ensure_site_settings = routes_site_settings.register.ensure

@@ -39,7 +39,13 @@ def test_regions_endpoint_returns_all_four_regions():
     assert r.status_code == 200
     body = r.json()
     ids = [r["id"] for r in body["regions"]]
-    assert ids == ["central-east", "gulf-coast", "southeastern", "mid-atlantic"]
+    # The 4 official regions must all be present (custom regions may
+    # coexist so we just check membership + ordering of the defaults).
+    for expected in ("central-east", "gulf-coast", "southeastern", "mid-atlantic"):
+        assert expected in ids, f"missing default region {expected!r}"
+    # Defaults keep their `order` values (1-4) so they appear first.
+    default_order = [i for i in ids if i in {"central-east", "gulf-coast", "southeastern", "mid-atlantic"}]
+    assert default_order == ["central-east", "gulf-coast", "southeastern", "mid-atlantic"]
 
 
 def test_region_state_lists_are_complete():
@@ -113,7 +119,9 @@ def test_usps_state_codes_and_full_names_both_count():
 
 
 def test_unknown_state_rolls_into_unassigned():
-    """A state we don't map (California) should show up in unassigned_count."""
+    """A state we don't map (Alaska is not in any default region) should
+    show up in unassigned_count. We use Alaska rather than California
+    since a test admin may have created a custom region containing CA."""
     admin = _login("admin@clubhaven.app", "Admin123!")
     members = admin.get(f"{BASE}/members?limit=5", timeout=15).json()
     if isinstance(members, dict):
@@ -127,7 +135,7 @@ def test_unknown_state_rolls_into_unassigned():
     try:
         admin.put(f"{BASE}/members/{uid}", json={"state": "Ohio"}, timeout=15)
         baseline_unassigned = unassigned()
-        admin.put(f"{BASE}/members/{uid}", json={"state": "California"}, timeout=15)
+        admin.put(f"{BASE}/members/{uid}", json={"state": "Alaska"}, timeout=15)
         after = unassigned()
         assert after == baseline_unassigned + 1
     finally:
@@ -140,15 +148,18 @@ def test_regions_endpoint_requires_auth():
 
 
 def test_region_for_state_helper():
+    import asyncio
     from routes.regions import region_for_state
-    # Full names, USPS codes, common abbreviations.
-    assert region_for_state("Texas")["region_id"] == "gulf-coast"
-    assert region_for_state("TX")["region_id"] == "gulf-coast"
-    assert region_for_state("Fla.")["region_id"] == "southeastern"
-    assert region_for_state("WASHINGTON, D.C.")["region_id"] == "mid-atlantic"
-    assert region_for_state("d.c.")["region_id"] == "mid-atlantic"
-    assert region_for_state("N.C.")["region_id"] == "southeastern"
-    # Unknown or blank.
-    assert region_for_state("California") is None
-    assert region_for_state("") is None
-    assert region_for_state(None) is None
+    async def _all():
+        # Full names, USPS codes, common abbreviations.
+        assert (await region_for_state("Texas"))["region_id"] == "gulf-coast"
+        assert (await region_for_state("TX"))["region_id"] == "gulf-coast"
+        assert (await region_for_state("Fla."))["region_id"] == "southeastern"
+        assert (await region_for_state("WASHINGTON, D.C."))["region_id"] == "mid-atlantic"
+        assert (await region_for_state("d.c."))["region_id"] == "mid-atlantic"
+        assert (await region_for_state("N.C."))["region_id"] == "southeastern"
+        # Unknown or blank — Alaska is intentionally not in any region.
+        assert (await region_for_state("Alaska")) is None
+        assert (await region_for_state("")) is None
+        assert (await region_for_state(None)) is None
+    asyncio.run(_all())

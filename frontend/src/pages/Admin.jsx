@@ -9,7 +9,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight, UserPlus, Download, Printer } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight, UserPlus, Download, Printer, Map } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
@@ -23,6 +23,7 @@ import AutomatedEmailsAdmin from "../components/AutomatedEmailsAdmin";
 import SiteSettingsAdmin from "../components/SiteSettingsAdmin";
 import SmsSettingsAdmin from "../components/SmsSettingsAdmin";
 import HoursRoleConfigAdmin from "../components/HoursRoleConfigAdmin";
+import RegionsAdmin from "../components/RegionsAdmin";
 import ProfileLayoutAdmin from "../components/ProfileLayoutAdmin";
 import PageBuilder from "../components/cms/PageBuilder";
 import BulkImportMembersDialog from "../components/BulkImportMembersDialog";
@@ -70,6 +71,7 @@ export default function Admin() {
                         {allowed("dashboard") && <TabsTrigger value="dashboard" className="rounded-full" data-testid="admin-tab-dashboard"><LayoutDashboard className="h-4 w-4 mr-1.5" />Dashboard</TabsTrigger>}
                         {allowed("members") && <TabsTrigger value="members" className="rounded-full" data-testid="admin-tab-members"><Users className="h-4 w-4 mr-1.5" />Members</TabsTrigger>}
                         {allowed("chapters") && <TabsTrigger value="chapters" className="rounded-full" data-testid="admin-tab-chapters"><Building2 className="h-4 w-4 mr-1.5" />Chapters</TabsTrigger>}
+                        {allowed("regions") && <TabsTrigger value="regions" className="rounded-full" data-testid="admin-tab-regions"><Map className="h-4 w-4 mr-1.5" />Regions</TabsTrigger>}
                         {allowed("tiers") && <TabsTrigger value="tiers" className="rounded-full" data-testid="admin-tab-tiers"><Layers className="h-4 w-4 mr-1.5" />Tiers</TabsTrigger>}
                         {allowed("events") && <TabsTrigger value="events" className="rounded-full" data-testid="admin-tab-events"><Calendar className="h-4 w-4 mr-1.5" />Events</TabsTrigger>}
                         {allowed("hours") && <TabsTrigger value="hours" className="rounded-full" data-testid="admin-tab-hours"><Clock className="h-4 w-4 mr-1.5" />Hours</TabsTrigger>}
@@ -88,6 +90,7 @@ export default function Admin() {
                 {allowed("dashboard") && <TabsContent value="dashboard" className="mt-6"><AdminDashboard scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
                 {allowed("members") && <TabsContent value="members" className="mt-6"><MembersAdmin /></TabsContent>}
                 {allowed("chapters") && <TabsContent value="chapters" className="mt-6"><ChaptersAdmin /></TabsContent>}
+                {allowed("regions") && <TabsContent value="regions" className="mt-6"><RegionsAdmin /></TabsContent>}
                 {allowed("tiers") && <TabsContent value="tiers" className="mt-6"><TiersAdmin /></TabsContent>}
                 {allowed("events") && <TabsContent value="events" className="mt-6"><EventsAdmin /></TabsContent>}
                 {allowed("hours") && <TabsContent value="hours" className="mt-6"><HoursAdmin scopedChapterId={perms.scoped_chapter_id} /></TabsContent>}
