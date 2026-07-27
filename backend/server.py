@@ -3031,7 +3031,7 @@ from routes import recruitment as routes_recruitment  # noqa: E402
 routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_ai.register(api, require_admin=require_admin)
-routes_news.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
+routes_news.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc, send_bulk_email=send_bulk_email, logger=logger)
 routes_chapters.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_tiers.register(api, db=db, admin_tab_dep=admin_tab_dep)
 routes_gear.register(

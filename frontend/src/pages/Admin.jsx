@@ -717,6 +717,8 @@ function NewsDialog({ article, onSaved, trigger }) {
         images: article?.images || [],
         template: article?.template || "classic",
     });
+    // Notify members via email on CREATE only (edits don't re-blast).
+    const [notify, setNotify] = useState(true);
     const [emailBusy, setEmailBusy] = useState(false);
     const [imgBusy, setImgBusy] = useState(false);
 
@@ -734,9 +736,13 @@ function NewsDialog({ article, onSaved, trigger }) {
             images: (form.images || []).filter(Boolean).slice(0, 5),
         };
         try {
-            if (article) await api.put(`/news/${article.id}`, payload);
-            else await api.post("/news", payload);
-            toast.success("Saved");
+            if (article) {
+                await api.put(`/news/${article.id}`, payload);
+                toast.success("Saved");
+            } else {
+                await api.post(`/news?notify=${notify ? "true" : "false"}`, payload);
+                toast.success(notify ? "Published — members are being notified by email." : "Published silently.");
+            }
             setOpen(false);
             onSaved();
         } catch (e) {
@@ -916,7 +922,23 @@ function NewsDialog({ article, onSaved, trigger }) {
                         )}
                     </div>
                 </div>
-                <DialogFooter><Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="news-save-btn">Save</Button></DialogFooter>
+                <DialogFooter className="flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
+                    {!article && (
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground mr-auto cursor-pointer select-none" data-testid="news-notify-label">
+                            <input
+                                type="checkbox"
+                                checked={notify}
+                                onChange={(e) => setNotify(e.target.checked)}
+                                className="h-4 w-4 rounded border-border accent-primary"
+                                data-testid="news-notify-toggle"
+                            />
+                            <span>Notify members via email</span>
+                        </label>
+                    )}
+                    <Button onClick={save} className="rounded-full bg-primary hover:bg-primary/90" data-testid="news-save-btn">
+                        {article ? "Save" : (notify ? "Publish & notify" : "Publish silently")}
+                    </Button>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );

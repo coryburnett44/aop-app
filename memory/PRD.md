@@ -15,6 +15,26 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 139 — News auto-announcement emails (2026-02-28) [FEATURE]
+**User request:** "When a news article or story is created, send an email to the members. Have the title in the email along with a small summary. Make sure they can click on the link to access it."
+
+**Backend (`routes/news.py`):**
+- `POST /api/news` now accepts a `notify` query flag (default `true`). When true, the create handler `asyncio.create_task`s a background sender that:
+  1. Selects every user with `status_override != deceased`, `email_opt_out != true`, `email_prefs.blasts != false`, and a non-empty email — the same audience the "active" blast segment uses.
+  2. Inserts a `email_blasts` log row up-front (`kind=news_announcement`, `news_id=<article>`, `recipient_count=<N>`) so admins see the entry in Email → History instantly.
+  3. Sends each recipient a personal `Hi {first_name},` greeting followed by a branded, table-based HTML card containing the title (`<h1>`), cover image (absolutized), summary, and a **"Read the full story →"** pill button that links to `{FRONTEND_URL}/news/{article_id}`.
+  4. Reuses the existing `send_bulk_email` helper, so List-Unsubscribe headers, unsubscribe footer, and Resend tags all come along for free — one-click unsubscribes work.
+  5. Patches `sent_count`/`failed_count` on the blast log when the loop completes.
+- Edits (`PUT /api/news`) intentionally do NOT re-blast.
+
+**Frontend (`Admin.jsx` → `NewsDialog`):**
+- New "Notify members via email" checkbox in the dialog footer, defaulted ON, visible only when creating a new article (edits get no toggle).
+- Save button label switches to **Publish & notify** when the toggle is on, **Publish silently** when off.
+- Toast confirms which path fired.
+
+**Tests:** `test_iteration139_news_auto_announce.py` — 3/3 pass (default create logs the blast + recipient count, `?notify=false` doesn't send/log, `PUT` never re-blasts).
+
+
 ### Iteration 138 — Rich text upgrades + mobile-safe email image delivery (2026-02-28) [FEATURE + P0 BUG FIX]
 **User request:** "For the admin email, ensure attachments/embedded images show up when viewed on mobile. Allow admins to change font color + background. For News, allow bold/italics/underline/rich text, font size + color, background edits." (Production issue.)
 
