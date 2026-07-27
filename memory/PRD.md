@@ -15,6 +15,25 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 143 — Email attachments + signature image reliability (2026-02-28) [FEATURE + BUG FIX]
+**User request:** "Allow admins to attach documents to emails. Ensure signature block's pictures are always visible and loading on every platform (Chrome, Safari, mobile, etc.)."
+
+**Attachments (new):**
+- `POST /api/email/upload-attachment` — accepts up to 20 MB per file (Resend hard-cap is ~40 MB, we keep headroom). Allowlist: PDF, DOC, DOCX, ODT, RTF, TXT, XLS, XLSX, ODS, CSV, PPT, PPTX, ODP, images, ZIP. Anything else returns 400 with the human list. Stored under `email/attachments/{admin_id}/{uuid}/{filename}` in `chat_files`.
+- `GET /api/email/attachments` — recent uploads by the current admin (for re-use across blasts).
+- `DELETE /api/email/attachments/{id}` — soft-delete; admin can only delete their own.
+- `EmailBlastIn.attachment_ids: List[str]` — passed through preview and send. At send-time, each attachment is fetched once via `get_object`, base64-encoded, and delivered by Resend as a real MIME attachment. Blast log records `attachments: [{id, filename, size}]` so admins can audit later.
+- Frontend `ComposeBlast`: new "Attachments" section under the body with an "Attach files" button and a list of pending attachments (each shows filename, size, content-type, and a remove ×). Autosave includes attachment_ids so pending attachments survive drafts.
+
+**Signature images (bug fix — always visible everywhere):**
+- Signatures now go through the same `_normalize_email_images` pipeline on **save AND read**:
+  - On `POST /email/signatures` and `PUT /email/signatures/{id}` — HTML is normalized before persisting.
+  - On `GET /email/signatures` — legacy rows (pre-Iter-143) are normalized on the fly.
+- Effect: any `<img src="/api/files/email/…">` is rewritten to `<img src="{FRONTEND_URL}/api/email/image/…">` (public, no-cookie), inline `display:block;max-width:100%;height:auto` is added, empty `alt=""` prevents broken-image icons while loading, `class="…"` attrs are stripped. Signature pictures now render identically in Chrome (desktop + Android), Safari (desktop + iOS), mobile Gmail/Apple Mail, and any mail-image proxy.
+
+**Tests:** `test_iteration143_attachments_signatures.py` — 8/8 pass (upload PDF, reject .exe, reject oversize, require admin auth, list+delete, preview with attachment, signature save normalizes, signature list normalizes on read). Full email/push/news/regions/attachment/signature suite: 53/53 green.
+
+
 ### Iteration 142 — Push composer takes emails, not user IDs (2026-02-28) [FEATURE]
 **User request:** "In the Admin Email Push section, the audience block does not make sense. Change it to where I can send it to email addresses, not user id."
 

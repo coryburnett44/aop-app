@@ -2155,6 +2155,7 @@ async def send_bulk_email(
     html_body: str,
     recipient_id: str,
     tags: Optional[List[dict]] = None,
+    attachments: Optional[List[dict]] = None,
 ) -> dict:
     """Send a bulk/marketing email with deliverability hygiene:
       - Multipart HTML + auto-derived plain-text fallback
@@ -2162,6 +2163,7 @@ async def send_bulk_email(
       - List-Unsubscribe + List-Unsubscribe-Post=One-Click headers
       - Precedence: bulk
       - Visible unsubscribe footer + org mailing address (CAN-SPAM)
+      - Optional file attachments (each dict: {filename, content, type})
     """
     if not RESEND_API_KEY:
         return {"ok": False, "skipped": "RESEND_API_KEY not set"}
@@ -2187,6 +2189,9 @@ async def send_bulk_email(
         "headers": headers,
         "tags": tags or [],
     }
+    if attachments:
+        # Resend expects [{filename, content (base64 or bytes), content_type}]
+        params["attachments"] = attachments
     return await asyncio.to_thread(resend_sdk.Emails.send, params)
 
 
@@ -3114,6 +3119,7 @@ routes_email.register(
     put_object=put_object,
     image_extensions=IMAGE_EXT,
     mime_by_ext=MIME_BY_EXT,
+    get_object=get_object,
     send_push_best_effort=routes_push.send_push_best_effort,
 )
 

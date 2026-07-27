@@ -4255,6 +4255,10 @@ function ComposeBlast() {
     const [busy, setBusy] = useState(false);
     const [drafts, setDrafts] = useState([]);
     const [draftStatus, setDraftStatus] = useState(""); // "saving" | "saved <time>" | ""
+    // Iter 143 — file attachments (PDF/docs/etc.) added to the outgoing blast.
+    const [attachments, setAttachments] = useState([]); // [{id, filename, size, content_type}]
+    const [attachBusy, setAttachBusy] = useState(false);
+    const attachInputRef = React.useRef(null);
     const dirtyRef = React.useRef(false);
     const autosaveTimer = React.useRef(null);
 
@@ -4288,6 +4292,7 @@ function ComposeBlast() {
             chapter_id: chapter_id || undefined,
             custom_user_ids: segment === "individual" ? individualIds : [],
             external_emails: externals,
+            attachment_ids: attachments.map((a) => a.id),
             is_autosave: true,
             ...extra,
         };
@@ -4317,7 +4322,7 @@ function ComposeBlast() {
         autosaveTimer.current = setTimeout(flushAutosave, 2000);
         return () => clearTimeout(autosaveTimer.current);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [subject, body_html, background_color, segment, tier_id, chapter_id, individualIds, externalEmails]);
+    }, [subject, body_html, background_color, segment, tier_id, chapter_id, individualIds, externalEmails, attachments]);
 
     useEffect(() => {
         const onVis = () => { if (document.visibilityState === "hidden") flushAutosave(); };
@@ -4331,7 +4336,7 @@ function ComposeBlast() {
             window.removeEventListener("pagehide", onBeforeUnload);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [subject, body_html, background_color, segment, tier_id, chapter_id, individualIds, externalEmails]);
+    }, [subject, body_html, background_color, segment, tier_id, chapter_id, individualIds, externalEmails, attachments]);
 
     function loadDraft(did) {
         const d = drafts.find((x) => x.id === did);
@@ -4406,12 +4411,43 @@ function ComposeBlast() {
             tier_id: tier_id || undefined,
             chapter_id: chapter_id || undefined,
             external_emails: externals,
+            attachment_ids: attachments.map((a) => a.id),
         };
         if (segment === "individual") {
             payload.segment = "custom";
             payload.custom_user_ids = individualIds;
         }
         return payload;
+    }
+
+    async function uploadAttachments(fileList) {
+        if (!fileList || fileList.length === 0) return;
+        setAttachBusy(true);
+        for (const file of Array.from(fileList)) {
+            try {
+                const fd = new FormData();
+                fd.append("file", file);
+                const { data } = await api.post("/email/upload-attachment", fd, {
+                    headers: { "Content-Type": "multipart/form-data" },
+                });
+                setAttachments((prev) => [...prev, data]);
+            } catch (e) {
+                toast.error(formatApiError(e.response?.data?.detail) || `Couldn't attach ${file.name}`);
+            }
+        }
+        setAttachBusy(false);
+    }
+
+    function removeAttachment(id) {
+        setAttachments((prev) => prev.filter((a) => a.id !== id));
+        api.delete(`/email/attachments/${id}`).catch(() => { /* best-effort cleanup */ });
+    }
+
+    function formatBytes(n) {
+        if (!n) return "0 B";
+        if (n < 1024) return `${n} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        return `${(n / (1024 * 1024)).toFixed(1)} MB`;
     }
 
     async function runPreview() {
@@ -4526,6 +4562,58 @@ function ComposeBlast() {
                         <RichEditor value={body_html} onChange={setBody} placeholder="Write your message — press Enter for new lines, use toolbar for images." minHeight={300} />
                     </div>
                     <div className="text-xs text-muted-foreground mt-1.5">Variables: <code>{"{{name}}"}</code>, <code>{"{{first_name}}"}</code>, <code>{"{{last_name}}"}</code>, <code>{"{{line_name}}"}</code>, <code>{"{{email}}"}</code></div>
+                </div>
+                {/* Attachments (Iter 143) — PDFs, DOCX, images, etc. */}
+                <div>
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                        <Label>Attachments</Label>
+                        <div className="flex items-center gap-2">
+                            <input
+                                ref={attachInputRef}
+                                type="file"
+                                multiple
+                                className="hidden"
+                                onChange={(e) => { uploadAttachments(e.target.files); e.target.value = ""; }}
+                                data-testid="email-attach-input"
+                            />
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="rounded-full"
+                                onClick={() => attachInputRef.current?.click()}
+                                disabled={attachBusy}
+                                data-testid="email-attach-btn"
+                            >
+                                <Upload className="h-4 w-4 mr-1.5" />
+                                {attachBusy ? "Uploading…" : "Attach files"}
+                            </Button>
+                        </div>
+                    </div>
+                    {attachments.length > 0 && (
+                        <div className="mt-2 rounded-2xl border border-border bg-muted/30 divide-y divide-border" data-testid="email-attachments-list">
+                            {attachments.map((a) => (
+                                <div key={a.id} className="flex items-center gap-3 px-3 py-2" data-testid={`email-attachment-${a.id}`}>
+                                    <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-medium truncate" title={a.filename}>{a.filename}</div>
+                                        <div className="text-xs text-muted-foreground">{formatBytes(a.size)} · {a.content_type}</div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => removeAttachment(a.id)}
+                                        className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-destructive"
+                                        title="Remove attachment"
+                                        data-testid={`email-attachment-remove-${a.id}`}
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    <div className="text-xs text-muted-foreground mt-1.5">
+                        Up to 20 MB per file. Supported: PDF, Word (.doc, .docx), Excel (.xls, .xlsx), PowerPoint (.ppt, .pptx), text, CSV, images, ZIP.
+                    </div>
                 </div>
                 <div className="grid sm:grid-cols-3 gap-3">
                     <div>

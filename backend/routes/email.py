@@ -58,6 +58,9 @@ class EmailBlastIn(BaseModel):
     also_push: bool = False
     push_body: Optional[str] = ""
     push_url: Optional[str] = ""
+    # Iter 143: attach documents (PDF, DOCX, images, etc.) — resolved to
+    # bytes via chat_files at send time.
+    attachment_ids: List[str] = []
 
 
 class EmailDraftIn(BaseModel):
@@ -71,6 +74,7 @@ class EmailDraftIn(BaseModel):
     custom_user_ids: List[str] = []
     external_emails: List[str] = []
     is_autosave: bool = False
+    attachment_ids: List[str] = []
 
 
 class EmailPreferencesIn(BaseModel):
@@ -305,6 +309,7 @@ def register(
     put_object,
     image_extensions,
     mime_by_ext,
+    get_object,
     send_push_best_effort=None,
 ):
 
@@ -459,6 +464,34 @@ def register(
         if not recipients:
             raise HTTPException(status_code=400, detail="Segment has no recipients")
 
+        # Load attachments ONCE (not per-recipient) — bytes are base64-encoded
+        # and passed to Resend which handles the actual MIME embedding.
+        resend_attachments: list[dict] = []
+        attachment_summary: list[dict] = []
+        if body.attachment_ids:
+            import base64
+            for aid in body.attachment_ids:
+                rec = await db.chat_files.find_one({
+                    "id": aid, "kind": "attachment", "is_deleted": {"$ne": True},
+                })
+                if not rec:
+                    continue
+                try:
+                    data_bytes, ctype = await asyncio.to_thread(get_object, rec["storage_path"])
+                except Exception as e:
+                    logger.warning(f"attachment {aid} fetch failed: {e}")
+                    continue
+                resend_attachments.append({
+                    "filename": rec.get("filename", "attachment"),
+                    "content": base64.b64encode(data_bytes).decode("ascii"),
+                    "content_type": rec.get("content_type") or ctype or "application/octet-stream",
+                })
+                attachment_summary.append({
+                    "id": aid,
+                    "filename": rec.get("filename"),
+                    "size": rec.get("size", 0),
+                })
+
         blast_id = str(uuid.uuid4())
         sent: List[dict] = []
         failed: List[dict] = []
@@ -480,6 +513,7 @@ def register(
                         {"name": "blast_id", "value": blast_id},
                         {"name": "type", "value": "blast"},
                     ],
+                    attachments=resend_attachments or None,
                 )
                 sent.append({"user_id": r.get("id"), "email": email, "resend_id": (res or {}).get("id") if isinstance(res, dict) else None})
             except Exception as e:
@@ -494,6 +528,7 @@ def register(
             "chapter_id": body.chapter_id,
             "test_only": body.test_only,
             "background_color": body.background_color or "",
+            "attachments": attachment_summary,
             "sent_count": len(sent),
             "failed_count": len(failed),
             "sent_to": [s["email"] for s in sent[:100]],
@@ -924,14 +959,30 @@ def register(
             {"_id": 0},
         ).sort([("kind", 1), ("created_at", -1)])
         items = await cursor.to_list(200)
-        return [_signature_out(s) for s in items]
+        # Normalize image URLs on read so previews render everywhere — even
+        # rows created before Iter 143 that still have `/api/files/email/…`.
+        out = []
+        for s in items:
+            row = _signature_out(s)
+            row["body_html"] = normalize_email_images(row.get("body_html") or "")
+            out.append(row)
+        return out
+
+    def _normalize_signature_html(html: str) -> str:
+        """Iter 143: rewrite `/api/files/email/*` → `/api/email/image/*` and
+        absolutize `src` at SAVE time so signature previews render correctly
+        outside of authenticated admin sessions (Safari with ITP, incognito,
+        webhook previews, etc.). This is the same helper `send_bulk_email`
+        applies at send time, but running it on save keeps the on-page
+        preview and the sent email in lockstep."""
+        return normalize_email_images(html or "")
 
     @api.post("/email/signatures")
     async def create_signature(body: SignatureIn, user: dict = Depends(admin_tab_dep("email"))):
         doc = {
             "id": str(uuid.uuid4()),
             "name": body.name,
-            "body_html": body.body_html,
+            "body_html": _normalize_signature_html(body.body_html),
             "kind": body.kind,
             "owner_id": user["id"],
             "created_at": iso(now_utc()),
@@ -947,6 +998,8 @@ def register(
         if s.get("kind") == "personal" and s.get("owner_id") != user["id"]:
             raise HTTPException(status_code=403, detail="Not allowed")
         updates = {k: v for k, v in body.model_dump().items() if v is not None}
+        if "body_html" in updates:
+            updates["body_html"] = _normalize_signature_html(updates["body_html"])
         if updates:
             await db.email_signatures.update_one({"id": sid}, {"$set": updates})
         s2 = await db.email_signatures.find_one({"id": sid}, {"_id": 0})
@@ -1011,3 +1064,89 @@ def register(
             "size": total,
             "content_type": content_type,
         }
+
+    # ============================================================
+    # Email attachments (docs — PDF, DOCX, XLSX, etc.)
+    # Stored under `email/attachments/*` in the same chat_files
+    # collection. Not exposed via a public URL; the bytes are pulled
+    # at send time, base64-encoded, and delivered by Resend.
+    # ============================================================
+    _ATTACHMENT_MAX_MB = 20  # Resend hard-cap is ~40MB per email; keep headroom.
+    _ATTACHMENT_ALLOWED_EXT = {
+        # docs
+        "pdf", "doc", "docx", "odt", "rtf", "txt",
+        # sheets
+        "xls", "xlsx", "ods", "csv",
+        # slides
+        "ppt", "pptx", "odp",
+        # images (in case an admin wants image-as-attachment vs inline)
+        "jpg", "jpeg", "png", "gif", "webp", "heic", "heif",
+        # bundles
+        "zip",
+    }
+
+    @api.post("/email/upload-attachment")
+    async def email_upload_attachment(file: UploadFile = File(...), user: dict = Depends(admin_tab_dep("email"))):
+        """Store a document that will be attached to the next email blast."""
+        chunks: list[bytes] = []
+        total = 0
+        max_bytes = _ATTACHMENT_MAX_MB * 1024 * 1024
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise HTTPException(status_code=413, detail=f"Attachment must be under {_ATTACHMENT_MAX_MB} MB")
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        fname = (file.filename or "attachment").replace("/", "_").replace("\\", "_")
+        ext = (fname.rsplit(".", 1)[-1] if "." in fname else "").lower()
+        if ext not in _ATTACHMENT_ALLOWED_EXT:
+            raise HTTPException(status_code=400, detail=f"File type .{ext or 'unknown'} isn't supported. Allowed: {', '.join(sorted(_ATTACHMENT_ALLOWED_EXT))}")
+        content_type = file.content_type or mime_by_ext.get(ext, "application/octet-stream")
+        file_id = str(uuid.uuid4())
+        storage_path = f"email/attachments/{user['id']}/{file_id}/{fname}"
+
+        def _put():
+            return put_object(storage_path, data, content_type)
+        await asyncio.to_thread(_put)
+
+        rec = {
+            "id": file_id,
+            "filename": fname,
+            "storage_path": storage_path,
+            "content_type": content_type,
+            "size": total,
+            "kind": "attachment",
+            "uploaded_by": user["id"],
+            "is_deleted": False,
+            "created_at": iso(now_utc()),
+        }
+        await db.chat_files.insert_one(rec)
+        return {
+            "id": file_id,
+            "filename": fname,
+            "size": total,
+            "content_type": content_type,
+        }
+
+    @api.get("/email/attachments")
+    async def list_recent_attachments(user: dict = Depends(admin_tab_dep("email"))):
+        """Recent attachments uploaded by the current admin (useful for
+        re-attaching the same file to multiple blasts)."""
+        items = await db.chat_files.find(
+            {"uploaded_by": user["id"], "kind": "attachment", "is_deleted": {"$ne": True}},
+            {"_id": 0, "id": 1, "filename": 1, "size": 1, "content_type": 1, "created_at": 1},
+        ).sort("created_at", -1).limit(50).to_list(50)
+        return items
+
+    @api.delete("/email/attachments/{attachment_id}")
+    async def delete_attachment(attachment_id: str, user: dict = Depends(admin_tab_dep("email"))):
+        rec = await db.chat_files.find_one({"id": attachment_id, "kind": "attachment"})
+        if not rec:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        if rec.get("uploaded_by") != user["id"]:
+            raise HTTPException(status_code=403, detail="You can only delete your own attachments")
+        await db.chat_files.update_one({"id": attachment_id}, {"$set": {"is_deleted": True}})
+        return {"ok": True}
