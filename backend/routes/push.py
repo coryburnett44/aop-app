@@ -48,11 +48,16 @@ class PushComposeIn(BaseModel):
     url: Optional[str] = None
     icon_url: Optional[str] = None
     # Audience: exactly one of these should be non-empty. If several are set,
-    # `user_ids` wins → then chapters/tiers/segments → then "everyone".
+    # `custom_emails` / `user_ids` win → then chapters/tiers/segments → then
+    # "everyone".
     segment: Literal["all", "active", "admins", "chapter", "tier", "custom"] = "active"
     chapter_id: Optional[str] = None
     tier_id: Optional[str] = None
     user_ids: list[str] = []
+    # Iter 142: accept email addresses in the custom segment. Admins know
+    # members by email, not by opaque Mongo user_id. Resolved to user_ids
+    # server-side. Missing addresses are surfaced back to the composer.
+    custom_emails: list[str] = []
     test_only: bool = False
 
 
@@ -116,17 +121,35 @@ async def _post_to_onesignal(payload: dict) -> dict:
 
 
 def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
-    async def _resolve_recipients(body: PushComposeIn, admin: dict) -> list[str]:
-        """Return the list of mongo user_ids that should receive the push.
-        Empty list means "broadcast to Subscribed Users segment"."""
+    async def _resolve_recipients(body: PushComposeIn, admin: dict) -> tuple[list[str], list[str], list[str]]:
+        """Return `(user_ids, matched_emails, unmatched_emails)`.
+        Empty user_ids means "broadcast to Subscribed Users segment"."""
         if body.test_only:
-            return [admin["id"]]
+            return [admin["id"]], [], []
         if body.segment == "custom":
-            return [uid for uid in (body.user_ids or []) if uid]
+            # 1) Direct user_ids (from an admin power-user path that already
+            # has ids), 2) resolve emails → ids, 3) surface anything unmatched
+            # so the UI can warn.
+            requested_emails = [e.strip().lower() for e in (body.custom_emails or []) if e and e.strip()]
+            user_ids: list[str] = list(dict.fromkeys(uid for uid in (body.user_ids or []) if uid))
+            matched: list[str] = []
+            unmatched: list[str] = []
+            if requested_emails:
+                async for u in db.users.find(
+                    {"email": {"$in": requested_emails}},
+                    {"_id": 0, "id": 1, "email": 1},
+                ):
+                    if u.get("id"):
+                        user_ids.append(u["id"])
+                        matched.append((u.get("email") or "").lower())
+                unmatched = [e for e in requested_emails if e not in matched]
+            # De-dup user_ids while preserving order.
+            user_ids = list(dict.fromkeys(user_ids))
+            return user_ids, matched, unmatched
         # Everyone-who-opted-in flows: rely on OneSignal's Subscribed Users
         # segment so we don't need to build a giant alias list.
         if body.segment == "all":
-            return []
+            return [], [], []
         q: dict = {"status_override": {"$ne": "deceased"}}
         if body.segment == "active":
             pass  # active is exactly the "not deceased" filter above
@@ -137,7 +160,7 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
         elif body.segment == "tier" and body.tier_id:
             q["tier_id"] = body.tier_id
         cursor = db.users.find(q, {"_id": 0, "id": 1}).limit(20000)
-        return [u["id"] async for u in cursor]
+        return [u["id"] async for u in cursor], [], []
 
     # ============================================================
     # Public config for the Web SDK (safe to expose the App ID).
@@ -186,7 +209,18 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
         if not is_configured():
             raise HTTPException(status_code=503, detail="OneSignal not configured (ONESIGNAL_APP_ID / REST key)")
         app_id, _rest = _env()
-        recipients = await _resolve_recipients(body, admin)
+        recipients, matched_emails, unmatched_emails = await _resolve_recipients(body, admin)
+        # If the admin picked "custom" and no email/id resolved to a real
+        # member, refuse before we hit OneSignal.
+        if body.segment == "custom" and not recipients:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "no_matching_recipients",
+                    "unmatched_emails": unmatched_emails,
+                    "message": "None of those emails match an active member.",
+                },
+            )
         payload = _build_target_payload(app_id=app_id, body=body, resolved_user_ids=recipients)
         result = await _post_to_onesignal(payload)
         log = {
@@ -199,6 +233,8 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
             "chapter_id": body.chapter_id or "",
             "tier_id": body.tier_id or "",
             "user_ids": recipients if body.segment == "custom" else [],
+            "custom_emails": matched_emails,
+            "unmatched_emails": unmatched_emails,
             "target_count": len(recipients) if recipients else None,  # None = broadcast segment
             "test_only": bool(body.test_only),
             "sent_by": admin["id"],
@@ -216,6 +252,8 @@ def register(api, *, db, admin_tab_dep, get_current_user, iso, now_utc, logger):
             "onesignal_id": log["onesignal_id"],
             "recipients": log["onesignal_recipients"],
             "target_count": log["target_count"],
+            "matched_emails": matched_emails,
+            "unmatched_emails": unmatched_emails,
         }
 
     @api.get("/admin/push/history")

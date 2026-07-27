@@ -15,6 +15,15 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 142 — Push composer takes emails, not user IDs (2026-02-28) [FEATURE]
+**User request:** "In the Admin Email Push section, the audience block does not make sense. Change it to where I can send it to email addresses, not user id."
+
+- Backend `PushComposeIn` gains `custom_emails: List[str]`. `_resolve_recipients` now returns `(user_ids, matched_emails, unmatched_emails)` and does a case-insensitive lookup against `db.users.email`. Legacy `user_ids` still accepted (used by auto-triggers) and is de-duped with the email-resolved set.
+- `POST /admin/push/send` returns `matched_emails` + `unmatched_emails` so the UI can surface which addresses couldn't be resolved. If ALL emails miss, returns `400 no_matching_recipients` with the offending list — prevents accidental empty-broadcast confusion.
+- Frontend `PushAdmin`: "Individual member(s)" → "**Specific member(s) by email**". Input is now a comma/semicolon/newline-separated email textarea. Warning toast when some emails don't match. Error toast when none match.
+- Tests: `test_iteration142_push_by_email.py` — 5/5 pass (exact match, partial match, all-invalid rejects, case-insensitive lookup, legacy user_ids still works). Full push/news/regressions suite: 15/15 green.
+
+
 ### Iteration 141 — Extend OneSignal push to every user-facing trigger (2026-02-28) [FEATURE]
 **User request:** "Ensure that every time a news article or story is created, a meeting has started in a chat, dues are due (30/15/5 days before), an award is received, hours are approved, or a chat message is sent — OneSignal sends a push notification."
 

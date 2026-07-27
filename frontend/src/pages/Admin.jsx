@@ -3824,7 +3824,9 @@ function PushAdmin() {
     /* Iter 140 — OneSignal admin composer.
      * Reuses the "email" admin permission so anyone who can send blasts
      * can also broadcast push notifications. Not a channel-replacement for
-     * email — sits alongside it. */
+     * email — sits alongside it.
+     * Iter 142 — audience "Individual member(s)" now takes email addresses
+     * (comma / newline separated) which the backend resolves to user_ids. */
     const [title, setTitle] = useState("");
     const [body, setBody] = useState("");
     const [url, setUrl] = useState("");
@@ -3832,7 +3834,7 @@ function PushAdmin() {
     const [segment, setSegment] = useState("active");
     const [chapterId, setChapterId] = useState("");
     const [tierId, setTierId] = useState("");
-    const [userIds, setUserIds] = useState("");
+    const [customEmails, setCustomEmails] = useState("");
     const [testOnly, setTestOnly] = useState(false);
     const [busy, setBusy] = useState(false);
     const [history, setHistory] = useState([]);
@@ -3864,6 +3866,15 @@ function PushAdmin() {
         }
         setBusy(true);
         try {
+            const parsedEmails = customEmails
+                .split(/[\s,;\n]+/)
+                .map((s) => s.trim())
+                .filter((s) => s.includes("@"));
+            if (segment === "custom" && parsedEmails.length === 0) {
+                toast.error("Enter at least one member email address.");
+                setBusy(false);
+                return;
+            }
             const payload = {
                 title: title.trim(),
                 body: body.trim(),
@@ -3872,18 +3883,28 @@ function PushAdmin() {
                 segment,
                 chapter_id: segment === "chapter" ? chapterId : null,
                 tier_id: segment === "tier" ? tierId : null,
-                user_ids: segment === "custom" ? userIds.split(",").map((s) => s.trim()).filter(Boolean) : [],
+                custom_emails: segment === "custom" ? parsedEmails : [],
                 test_only: testOnly,
             };
             const { data } = await api.post("/admin/push/send", payload);
-            toast.success(
-                testOnly
-                    ? "Test push sent to you — check your device."
-                    : `Push sent to ${data.recipients ?? "your subscribers"}.`
-            );
+            const unmatched = data.unmatched_emails || [];
+            if (unmatched.length > 0) {
+                toast.warning(`Push sent, but ${unmatched.length} email${unmatched.length === 1 ? "" : "s"} didn't match a member: ${unmatched.join(", ")}`);
+            } else {
+                toast.success(
+                    testOnly
+                        ? "Test push sent to you — check your device."
+                        : `Push sent to ${data.recipients ?? "your subscribers"}.`
+                );
+            }
             await loadAll();
         } catch (e) {
-            toast.error(formatApiError(e.response?.data?.detail) || "Push failed to send");
+            const detail = e.response?.data?.detail;
+            if (detail && typeof detail === "object" && detail.error === "no_matching_recipients") {
+                toast.error(`None of those emails match a member: ${(detail.unmatched_emails || []).join(", ")}`);
+            } else {
+                toast.error(formatApiError(detail) || "Push failed to send");
+            }
         }
         setBusy(false);
     }
@@ -3943,7 +3964,7 @@ function PushAdmin() {
                                 <SelectItem value="admins">Admins only</SelectItem>
                                 <SelectItem value="chapter">By chapter</SelectItem>
                                 <SelectItem value="tier">By tier</SelectItem>
-                                <SelectItem value="custom">Individual member(s)</SelectItem>
+                                <SelectItem value="custom">Specific member(s) by email</SelectItem>
                             </SelectContent>
                         </Select>
                         {segment === "chapter" && (
@@ -3963,7 +3984,18 @@ function PushAdmin() {
                             </Select>
                         )}
                         {segment === "custom" && (
-                            <Textarea className="mt-2" value={userIds} onChange={(e) => setUserIds(e.target.value)} placeholder="user_id_1, user_id_2, …" rows={3} data-testid="push-user-ids" />
+                            <div className="mt-2">
+                                <Textarea
+                                    value={customEmails}
+                                    onChange={(e) => setCustomEmails(e.target.value)}
+                                    placeholder="member1@example.com, member2@example.com&#10;or one per line"
+                                    rows={3}
+                                    data-testid="push-emails"
+                                />
+                                <div className="text-xs text-muted-foreground mt-1">
+                                    Enter one or more member email addresses (comma, space, semicolon, or newline separated). We'll resolve each to the right member and warn you if any don't match.
+                                </div>
+                            </div>
                         )}
                     </div>
                     <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer" data-testid="push-test-only-label">
