@@ -41,6 +41,7 @@ import Unsubscribed from "./pages/Unsubscribed";
 import { SiteSettingsProvider } from "./context/SiteSettingsContext";
 import PageActivityTracker from "./components/PageActivityTracker";
 import GlobalChatNotifier from "./components/GlobalChatNotifier";
+import OneSignalManager from "./components/OneSignalManager";
 
 function App() {
     return (
@@ -50,6 +51,7 @@ function App() {
                 <BrowserRouter>
                 <PageActivityTracker />
                 <GlobalChatNotifier />
+                <OneSignalManager />
                 <div className="min-h-screen flex flex-col">
                     <Navbar />
                     <main className="flex-1">

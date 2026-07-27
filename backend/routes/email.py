@@ -54,6 +54,10 @@ class EmailBlastIn(BaseModel):
     # malformed address is silently skipped during resolve_segment.
     external_emails: List[str] = []
     test_only: bool = False
+    # Iter 140: also fire a OneSignal push notification alongside the email.
+    also_push: bool = False
+    push_body: Optional[str] = ""
+    push_url: Optional[str] = ""
 
 
 class EmailDraftIn(BaseModel):
@@ -301,6 +305,7 @@ def register(
     put_object,
     image_extensions,
     mime_by_ext,
+    send_push_best_effort=None,
 ):
 
     # ---------- Helpers used by multiple routes (closure-captured deps) ----------
@@ -498,6 +503,17 @@ def register(
             "sent_at": iso(now_utc()),
         }
         await db.email_blasts.insert_one(log)
+        # Optional OneSignal companion push (best-effort, non-blocking).
+        if body.also_push and send_push_best_effort is not None and not body.test_only:
+            asyncio.create_task(send_push_best_effort(
+                db=db, logger=logger, iso=iso, now_utc=now_utc,
+                title=body.subject[:60] or "Alpha Omega Phi",
+                body=(body.push_body or "").strip()[:180] or "You have a new message from Alpha Omega Phi. Tap to read.",
+                url=(body.push_url or "").strip(),
+                user_ids=[r["id"] for r in recipients if r.get("id") and not r.get("_external")],
+                segment="custom",
+                trigger="email_blast",
+            ))
         return {"blast_id": blast_id, "sent": len(sent), "failed": len(failed)}
 
     # ============================================================

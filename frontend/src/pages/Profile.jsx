@@ -17,12 +17,13 @@ import { toast } from "sonner";
 import {
     Calendar, MapPin, Trophy, Clock, Medal, Star, Heart, GraduationCap, Sparkles,
     Award as AwardIcon, Building2, Lock, DollarSign, Activity, Phone, AtSign,
-    Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Download,
+    Facebook, Instagram, Linkedin, Twitter, Youtube, Globe, Download, Bell, BellOff,
 } from "lucide-react";
 import ZeffyCheckout from "../components/ZeffyCheckout";
 import MyOutstandingBalance from "../components/MyOutstandingBalance";
 import AvatarUploader from "../components/AvatarUploader";
 import { MaritalStatusField, LanguagesEditor, CivilianDegreesEditor } from "../components/ProfileExtrasEditor";
+import { requestPushPermission, optOutOfPush, optInToPush, readPushState } from "../lib/onesignal";
 import { MILITARY_BRANCHES } from "../lib/militaryBranches";
 
 const ICON_MAP = { medal: Medal, star: Star, heart: Heart, "graduation-cap": GraduationCap, sparkles: Sparkles, trophy: Trophy, award: AwardIcon };
@@ -493,6 +494,7 @@ export default function Profile() {
 
                 <TabsContent value="notifications" className="mt-6 space-y-6">
                     <NotificationPrefs user={user} onSaved={(updated) => setUser(updated)} />
+                    <PushPreferences />
                     <EmailPreferences user={user} onSaved={(updated) => setUser(updated)} />
                     <SmsPreferences user={user} onSaved={(updated) => setUser(updated)} />
                 </TabsContent>
@@ -731,6 +733,110 @@ function NotificationPrefs({ user, onSaved }) {
                 <Button onClick={save} disabled={busy} className="rounded-full bg-primary hover:bg-primary/90 shadow-warm" data-testid="notif-save-btn">
                     {busy ? "Saving…" : "Save"}
                 </Button>
+            </div>
+        </div>
+    );
+}
+
+function PushPreferences() {
+    // OneSignal state — read on mount + whenever the user toggles.
+    const [state, setState] = useState({ available: false });
+    const [busy, setBusy] = useState(false);
+
+    async function refresh() {
+        const s = await readPushState();
+        setState(s);
+    }
+
+    useEffect(() => { refresh(); }, []);
+
+    async function turnOn() {
+        setBusy(true);
+        // If the site permission was already denied at the browser level,
+        // requesting again won't re-prompt — surface an actionable hint.
+        const before = await readPushState();
+        if (before.permission === "denied") {
+            toast.error("Notifications are blocked in your browser. Open site settings and set Notifications → Allow, then reload.");
+            setBusy(false);
+            return;
+        }
+        const res = await requestPushPermission();
+        if (res.ok) {
+            // Ensure the user is opted in (browsers can grant permission but
+            // leave the subscription off if it was previously opted out).
+            await optInToPush();
+            toast.success("Push notifications enabled ✓");
+            await refresh();
+        } else if (res.reason === "onesignal_unavailable") {
+            toast.error("Push notifications aren't configured on this environment.");
+        } else {
+            toast.error("Could not enable notifications — please allow them in your browser.");
+        }
+        setBusy(false);
+    }
+
+    async function turnOff() {
+        setBusy(true);
+        const res = await optOutOfPush();
+        if (res.ok) {
+            toast.success("Push notifications turned off.");
+            await refresh();
+        } else if (res.reason === "onesignal_unavailable") {
+            toast.error("Push notifications aren't configured on this environment.");
+        } else {
+            toast.error("Could not update your preferences right now.");
+        }
+        setBusy(false);
+    }
+
+    if (!state.available) {
+        return (
+            <div className="rounded-2xl border border-dashed p-6 bg-muted/30" data-testid="push-prefs-unavailable">
+                <div className="flex items-start gap-3">
+                    <BellOff className="h-5 w-5 text-muted-foreground mt-0.5" />
+                    <div>
+                        <div className="font-semibold">Push notifications</div>
+                        <p className="text-sm text-muted-foreground mt-1">
+                            Push isn't available in this browser or environment. On mobile, open this site in Chrome (Android) or Safari (iOS 16.4+) and add it to your home screen to enable pushes.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const enabled = state.opted_in && state.permission === "granted";
+
+    return (
+        <div className="rounded-2xl border p-6 bg-card" data-testid="push-prefs-card">
+            <div className="flex items-start gap-3">
+                <Bell className={`h-5 w-5 mt-0.5 ${enabled ? "text-primary" : "text-muted-foreground"}`} />
+                <div className="flex-1">
+                    <div className="flex items-center justify-between gap-4">
+                        <div>
+                            <div className="font-semibold">Push notifications</div>
+                            <p className="text-sm text-muted-foreground mt-0.5">
+                                {enabled
+                                    ? "You'll get a heads-up on your device when a new story, event, or announcement is published."
+                                    : "Get instant alerts on this device for new stories, events, and announcements."}
+                            </p>
+                        </div>
+                        {enabled ? (
+                            <Button variant="outline" onClick={turnOff} disabled={busy} data-testid="push-turn-off">
+                                Turn off
+                            </Button>
+                        ) : (
+                            <Button onClick={turnOn} disabled={busy} data-testid="push-turn-on">
+                                {busy ? "Enabling…" : "Enable"}
+                            </Button>
+                        )}
+                    </div>
+                    {state.permission === "denied" && !enabled && (
+                        <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs px-3 py-2">
+                            Notifications are currently blocked in your browser. To re-enable them, click the padlock/settings icon next to the URL, set Notifications → Allow, and reload the page.
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

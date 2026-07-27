@@ -19,7 +19,7 @@ from fastapi import Depends, HTTPException
 from models import EventIn, EventUpdateIn
 
 
-def register(api, *, db, admin_tab_dep, event_out, iso, now_utc, resend_sdk=None, resend_api_key=None, resend_from=None, logger=None):
+def register(api, *, db, admin_tab_dep, event_out, iso, now_utc, resend_sdk=None, resend_api_key=None, resend_from=None, logger=None, send_push_best_effort=None):
 
     async def _send_cancellation_emails(event: dict, child_events: list = None):
         """Email every RSVP'd member (and their guests with emails) that this
@@ -113,6 +113,22 @@ def register(api, *, db, admin_tab_dep, event_out, iso, now_utc, resend_sdk=None
         doc["end_at"] = iso(doc["end_at"]) if doc.get("end_at") else None
         doc.update({"id": eid, "rsvp_count": 0, "created_at": iso(now_utc())})
         await db.events.insert_one(doc)
+        doc.pop("_id", None)
+        # Companion push notification — best-effort. Only fires for top-level
+        # events (skip sub-events under an umbrella so members don't get
+        # spammed once per child).
+        if send_push_best_effort is not None and not doc.get("parent_event_id"):
+            import os as _os
+            base_url = (_os.environ.get("FRONTEND_URL", "https://aop-app.org") or "").rstrip("/")
+            asyncio.create_task(send_push_best_effort(
+                db=db, logger=logger, iso=iso, now_utc=now_utc,
+                title=f"New event: {doc.get('title', '')}"[:60],
+                body=(doc.get("description") or doc.get("location") or "Tap for details.")[:180],
+                url=f"{base_url}/events/{eid}",
+                icon_url=(doc.get("cover_image") or "").strip(),
+                segment="active",
+                trigger="event_created",
+            ))
         return event_out(doc)
 
     @api.put("/events/{event_id}")

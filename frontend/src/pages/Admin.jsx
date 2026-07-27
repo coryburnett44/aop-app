@@ -9,7 +9,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight, UserPlus, Download, Printer, Map } from "lucide-react";
+import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight, UserPlus, Download, Printer, Map, Bell } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { formatCalendarDay } from "../lib/dateUtil";
@@ -3805,6 +3805,7 @@ function EmailBlastAdmin() {
                     <TabsTrigger value="test-send" className="rounded-full" data-testid="email-tab-test-send"><Send className="h-4 w-4 mr-1.5" />Test send</TabsTrigger>
                     <TabsTrigger value="automated" className="rounded-full" data-testid="email-tab-automated"><Clock className="h-4 w-4 mr-1.5" />Automated</TabsTrigger>
                     <TabsTrigger value="deliverability" className="rounded-full" data-testid="email-tab-deliverability"><Mail className="h-4 w-4 mr-1.5" />Deliverability</TabsTrigger>
+                    <TabsTrigger value="push" className="rounded-full" data-testid="email-tab-push"><Bell className="h-4 w-4 mr-1.5" />Push</TabsTrigger>
                 </TabsList>
             </div>
             <TabsContent value="compose" className="mt-6"><ComposeBlast /></TabsContent>
@@ -3814,7 +3815,193 @@ function EmailBlastAdmin() {
             <TabsContent value="test-send" className="mt-6"><EmailTestSend /></TabsContent>
             <TabsContent value="automated" className="mt-6"><AutomatedEmailsAdmin /></TabsContent>
             <TabsContent value="deliverability" className="mt-6"><EmailDeliverability /></TabsContent>
+            <TabsContent value="push" className="mt-6"><PushAdmin /></TabsContent>
         </Tabs>
+    );
+}
+
+function PushAdmin() {
+    /* Iter 140 — OneSignal admin composer.
+     * Reuses the "email" admin permission so anyone who can send blasts
+     * can also broadcast push notifications. Not a channel-replacement for
+     * email — sits alongside it. */
+    const [title, setTitle] = useState("");
+    const [body, setBody] = useState("");
+    const [url, setUrl] = useState("");
+    const [iconUrl, setIconUrl] = useState("");
+    const [segment, setSegment] = useState("active");
+    const [chapterId, setChapterId] = useState("");
+    const [tierId, setTierId] = useState("");
+    const [userIds, setUserIds] = useState("");
+    const [testOnly, setTestOnly] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [history, setHistory] = useState([]);
+    const [config, setConfig] = useState({ enabled: false });
+    const [chapters, setChapters] = useState([]);
+    const [tiers, setTiers] = useState([]);
+
+    async function loadAll() {
+        try {
+            const [c, h, ch, ti] = await Promise.all([
+                api.get("/push/config"),
+                api.get("/admin/push/history"),
+                api.get("/chapters"),
+                api.get("/tiers"),
+            ]);
+            setConfig(c.data);
+            setHistory(h.data || []);
+            setChapters(ch.data || []);
+            setTiers(ti.data || []);
+        } catch { /* ignore */ }
+    }
+
+    useEffect(() => { loadAll(); }, []);
+
+    async function send() {
+        if (!title.trim() || !body.trim()) {
+            toast.error("Title and body are required");
+            return;
+        }
+        setBusy(true);
+        try {
+            const payload = {
+                title: title.trim(),
+                body: body.trim(),
+                url: url.trim() || null,
+                icon_url: iconUrl.trim() || null,
+                segment,
+                chapter_id: segment === "chapter" ? chapterId : null,
+                tier_id: segment === "tier" ? tierId : null,
+                user_ids: segment === "custom" ? userIds.split(",").map((s) => s.trim()).filter(Boolean) : [],
+                test_only: testOnly,
+            };
+            const { data } = await api.post("/admin/push/send", payload);
+            toast.success(
+                testOnly
+                    ? "Test push sent to you — check your device."
+                    : `Push sent to ${data.recipients ?? "your subscribers"}.`
+            );
+            await loadAll();
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "Push failed to send");
+        }
+        setBusy(false);
+    }
+
+    if (!config.enabled) {
+        return (
+            <div className="rounded-2xl border border-dashed p-8 bg-muted/30" data-testid="push-admin-not-configured">
+                <div className="flex items-start gap-3">
+                    <Bell className="h-6 w-6 text-muted-foreground mt-0.5" />
+                    <div>
+                        <div className="font-semibold text-lg">Push notifications not configured</div>
+                        <p className="text-sm text-muted-foreground mt-1 max-w-xl">
+                            Set <code className="bg-muted px-1 rounded">ONESIGNAL_APP_ID</code> and <code className="bg-muted px-1 rounded">ONESIGNAL_REST_API_KEY</code> in your backend <code>.env</code> and redeploy to enable push notifications.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-6" data-testid="push-admin">
+            <div className="rounded-2xl border p-6 bg-card">
+                <div className="flex items-center gap-2 mb-4">
+                    <Bell className="h-5 w-5 text-primary" />
+                    <h3 className="text-lg font-semibold">Send a push notification</h3>
+                </div>
+                <div className="grid gap-4">
+                    <div>
+                        <Label>Title *</Label>
+                        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. New event this weekend!" maxLength={80} data-testid="push-title" />
+                        <div className="text-xs text-muted-foreground mt-1">{title.length}/80 · keep it snappy — this is what appears on the lock screen.</div>
+                    </div>
+                    <div>
+                        <Label>Body *</Label>
+                        <Textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} maxLength={180} placeholder="A short blurb that expands the title" data-testid="push-body" />
+                        <div className="text-xs text-muted-foreground mt-1">{body.length}/180</div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <Label>Deep link URL</Label>
+                            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://aop-app.org/news/…" data-testid="push-url" />
+                            <div className="text-xs text-muted-foreground mt-1">Where the notification takes the user when tapped.</div>
+                        </div>
+                        <div>
+                            <Label>Icon / thumbnail URL</Label>
+                            <Input value={iconUrl} onChange={(e) => setIconUrl(e.target.value)} placeholder="https://…jpg (square, 192px+)" data-testid="push-icon" />
+                        </div>
+                    </div>
+                    <div>
+                        <Label>Audience</Label>
+                        <Select value={segment} onValueChange={setSegment}>
+                            <SelectTrigger data-testid="push-segment"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">Everyone who's opted in (broadcast)</SelectItem>
+                                <SelectItem value="active">All active members</SelectItem>
+                                <SelectItem value="admins">Admins only</SelectItem>
+                                <SelectItem value="chapter">By chapter</SelectItem>
+                                <SelectItem value="tier">By tier</SelectItem>
+                                <SelectItem value="custom">Individual member(s)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        {segment === "chapter" && (
+                            <Select value={chapterId} onValueChange={setChapterId}>
+                                <SelectTrigger className="mt-2" data-testid="push-chapter"><SelectValue placeholder="Pick a chapter" /></SelectTrigger>
+                                <SelectContent>
+                                    {chapters.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        )}
+                        {segment === "tier" && (
+                            <Select value={tierId} onValueChange={setTierId}>
+                                <SelectTrigger className="mt-2" data-testid="push-tier"><SelectValue placeholder="Pick a tier" /></SelectTrigger>
+                                <SelectContent>
+                                    {tiers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        )}
+                        {segment === "custom" && (
+                            <Textarea className="mt-2" value={userIds} onChange={(e) => setUserIds(e.target.value)} placeholder="user_id_1, user_id_2, …" rows={3} data-testid="push-user-ids" />
+                        )}
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer" data-testid="push-test-only-label">
+                        <input type="checkbox" checked={testOnly} onChange={(e) => setTestOnly(e.target.checked)} className="h-4 w-4 accent-primary" data-testid="push-test-only" />
+                        Test send (only me — great for previewing before broadcasting)
+                    </label>
+                    <div className="flex justify-end">
+                        <Button onClick={send} disabled={busy} className="rounded-full" data-testid="push-send-btn">
+                            {busy ? "Sending…" : testOnly ? "Send test to me" : "Send push"}
+                        </Button>
+                    </div>
+                </div>
+            </div>
+
+            <div className="rounded-2xl border p-6 bg-card">
+                <h3 className="text-lg font-semibold mb-4">Recent pushes</h3>
+                {history.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">No pushes sent yet.</div>
+                ) : (
+                    <div className="space-y-3">
+                        {history.slice(0, 20).map((h) => (
+                            <div key={h.id} className="border-b last:border-b-0 pb-3 last:pb-0" data-testid={`push-history-${h.id}`}>
+                                <div className="flex items-baseline justify-between gap-3">
+                                    <div className="font-semibold">{h.title}</div>
+                                    <div className="text-xs text-muted-foreground whitespace-nowrap">
+                                        {h.onesignal_recipients ?? 0} devices · {new Date(h.sent_at).toLocaleString()}
+                                    </div>
+                                </div>
+                                <div className="text-sm text-muted-foreground mt-1 line-clamp-2">{h.body}</div>
+                                <div className="text-xs text-muted-foreground mt-1">
+                                    {h.kind || h.sent_by_name || "manual"} · segment: {h.segment}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
     );
 }
 

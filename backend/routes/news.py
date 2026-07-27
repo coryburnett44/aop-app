@@ -86,7 +86,7 @@ def _build_announcement_html(*, title: str, summary: str, cover_image: str, arti
     return "".join(parts)
 
 
-def register(api, *, db, admin_tab_dep, iso, now_utc, send_bulk_email=None, logger=None):
+def register(api, *, db, admin_tab_dep, iso, now_utc, send_bulk_email=None, logger=None, send_push_best_effort=None):
     async def _send_new_article_emails(*, article: dict) -> dict:
         """Fire-and-forget style: iterate every active, opted-in member and
         send them the announcement. Sequential (not gather) to stay under any
@@ -211,6 +211,18 @@ def register(api, *, db, admin_tab_dep, iso, now_utc, send_bulk_email=None, logg
             # Don't block the create response on the (potentially long) email
             # loop — kick it off as a background task and return immediately.
             asyncio.create_task(_send_new_article_emails(article=doc))
+            # Companion push notification (best-effort, non-blocking).
+            if send_push_best_effort is not None:
+                base_url = (os.environ.get("FRONTEND_URL", "https://aop-app.org") or "").rstrip("/")
+                asyncio.create_task(send_push_best_effort(
+                    db=db, logger=logger, iso=iso, now_utc=now_utc,
+                    title=doc.get("title") or "New from Alpha Omega Phi",
+                    body=(doc.get("summary") or "Tap to read the full story.")[:180],
+                    url=f"{base_url}/news/{doc['id']}",
+                    icon_url=(doc.get("cover_image") or "").strip(),
+                    segment="active",
+                    trigger="news_article",
+                ))
         return news_out(doc)
 
     @api.put("/news/{news_id}")

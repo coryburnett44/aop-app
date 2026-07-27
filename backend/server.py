@@ -3027,11 +3027,13 @@ from routes import donations as routes_donations  # noqa: E402
 from routes import awards as routes_awards  # noqa: E402
 from routes import email as routes_email  # noqa: E402
 from routes import recruitment as routes_recruitment  # noqa: E402
+from routes import push as routes_push  # noqa: E402
 
 routes_pages.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_site_settings.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_ai.register(api, require_admin=require_admin)
-routes_news.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc, send_bulk_email=send_bulk_email, logger=logger)
+routes_push.register(api, db=db, admin_tab_dep=admin_tab_dep, get_current_user=get_current_user, iso=iso, now_utc=now_utc, logger=logger)
+routes_news.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc, send_bulk_email=send_bulk_email, logger=logger, send_push_best_effort=routes_push.send_push_best_effort)
 routes_chapters.register(api, db=db, admin_tab_dep=admin_tab_dep, iso=iso, now_utc=now_utc)
 routes_tiers.register(api, db=db, admin_tab_dep=admin_tab_dep)
 routes_gear.register(
@@ -3110,6 +3112,7 @@ routes_email.register(
     put_object=put_object,
     image_extensions=IMAGE_EXT,
     mime_by_ext=MIME_BY_EXT,
+    send_push_best_effort=routes_push.send_push_best_effort,
 )
 
 # Automated email campaigns (broadcast + dues-reminder cadence). The seed +
@@ -3269,7 +3272,7 @@ routes_auth_email_flows.register(
 # bulk-import + apply-approval + resend-link paths keep working.
 _send_set_password_email._impl = routes_auth_email_flows.register.send_set_password_email
 
-routes_events.register(api, db=db, admin_tab_dep=admin_tab_dep, event_out=event_out, iso=iso, now_utc=now_utc, resend_sdk=resend_sdk, resend_api_key=RESEND_API_KEY, resend_from=RESEND_FROM, logger=logger)
+routes_events.register(api, db=db, admin_tab_dep=admin_tab_dep, event_out=event_out, iso=iso, now_utc=now_utc, resend_sdk=resend_sdk, resend_api_key=RESEND_API_KEY, resend_from=RESEND_FROM, logger=logger, send_push_best_effort=routes_push.send_push_best_effort)
 routes_photos.register(
     api,
     db=db,

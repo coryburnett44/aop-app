@@ -15,6 +15,40 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 140 — OneSignal push notifications (2026-02-28) [INTEGRATION]
+**User request:** "I want to use OneSignal for push notifications. Trigger on all events and target all audiences. Keep Brevo for emails — work alongside each other."
+
+**Environment (keys already added to `/app/backend/.env` and `/app/frontend/.env`):**
+- `ONESIGNAL_APP_ID=d992ad13-bd21-44c0-a124-192d90d599dd` (also exposed to frontend as `REACT_APP_ONESIGNAL_APP_ID`)
+- `ONESIGNAL_REST_API_KEY` (secret, backend only)
+- Site URL registered in OneSignal dashboard: `https://aop-app.org` (production only per user)
+
+**Backend (`routes/push.py` — new module):**
+- `GET /api/push/config` (public) — returns `{enabled, app_id, safari_web_id}` so the SDK can init on the client without leaking the REST key.
+- `POST /api/push/subscription` (member auth) — upserts `push_subscriptions` collection: `{user_id, subscription_id, opted_in, updated_at}`. Called by the frontend after `OneSignal.login()`.
+- `GET /api/push/me` (member auth) — reads current push subscription state.
+- `POST /api/admin/push/send` (admin: `email` tab scope) — ad-hoc composer. Targets: `all`, `active`, `admins`, `chapter`, `tier`, `custom` (list of user_ids), plus a `test_only` mode that sends to the calling admin only. Resolves internal user_ids and passes them as `include_aliases.external_id` to OneSignal's REST API.
+- `GET /api/admin/push/history` (admin: `email`) — last 100 sends with `onesignal_id`, recipient count, segment, trigger.
+- Shared helper `send_push_best_effort(...)` — used by news/email/events to fire a companion push without breaking the primary channel if OneSignal isn't configured or the request fails.
+
+**Auto-triggers alongside existing channels:**
+- **News article** created with `notify=true` → email + push. Push title = article title, body = summary, deep-link → `{FRONTEND_URL}/news/{id}`, icon = article cover image.
+- **Email blast** with `also_push: true` → email + push. Admin can override the push body/URL in the request; defaults to the email subject.
+- **Event** created (top-level, not sub-events) → push. Title = "New event: {title}", body = description or location, deep-link → `{FRONTEND_URL}/events/{id}`.
+- **Admin composer** — dedicated ad-hoc pushes for anything else (announcements, ceremonies, urgent alerts). Reuses the "email" admin permission.
+
+**Frontend:**
+- `react-onesignal@3.5.6` installed. Service-worker file `/public/OneSignalSDKWorker.js` importing OneSignal's v16 SDK.
+- `lib/onesignal.js` — helper module with `useOneSignal(user)` hook (idempotent init guarded via `window.__aopOneSignalReady`, auto-login/logout by `user.id`, backend subscription snapshot on change), plus imperative helpers `requestPushPermission`, `optInToPush`, `optOutOfPush`, `readPushState`.
+- `components/OneSignalManager.jsx` mounted once from `App.js`; drives the hook off `useAuth()`.
+- `pages/Profile.jsx` → Notifications tab now includes a `PushPreferences` card that opens the browser permission prompt on demand, shows browser-blocked recovery instructions, and lets users toggle off from inside the app.
+- `pages/Admin.jsx` → Email tab now has a **Push** sub-tab (`PushAdmin`) with title/body/deep-link/icon/audience selector (with chapter & tier dropdowns), test-send toggle, and a "Recent pushes" history table.
+
+**Tests:** `test_iteration140_push_onesignal.py` — 5/5 pass (public config exposes App ID but never REST key, subscription upsert & auth guard, admin test-send returns 200 + logs history, non-admin gets 401/403).
+
+**How to enable it for real users:** the user must add `https://aop-app.org` as an allowed origin in their OneSignal dashboard (they've done this), then redeploy production so the env keys ship. Members then hit Profile → Notifications → "Enable" and grant browser permission.
+
+
 ### Iteration 139 — News auto-announcement emails (2026-02-28) [FEATURE]
 **User request:** "When a news article or story is created, send an email to the members. Have the title in the email along with a small summary. Make sure they can click on the link to access it."
 
