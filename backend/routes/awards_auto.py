@@ -42,13 +42,14 @@ AUTO_GRANT_KIND_SERVICE = "service_ribbon"
 AUTO_GRANT_KIND_COMMUNITY = "community_service_ribbon"
 
 
-def register(*, db_ref, iso_fn, now_utc_fn, logger_ref):
+def register(*, db_ref, iso_fn, now_utc_fn, logger_ref, send_push_best_effort=None):
     """Bind module-level state. Called once from server.py at startup."""
     g = globals()
     g["db"] = db_ref
     g["iso"] = iso_fn
     g["now_utc"] = now_utc_fn
     g["logger"] = logger_ref
+    g["send_push_best_effort"] = send_push_best_effort
 
 
 # ============================================================
@@ -147,6 +148,22 @@ async def _grant(
     }
     await db.award_grants.insert_one(doc)
     logger.info(f"[auto-grant] {award['name']} → {user.get('name','?')} ({user['id']}) — {reason}")
+    # Companion OneSignal push — best-effort, non-blocking.
+    if globals().get("send_push_best_effort") is not None:
+        import os as _os
+        _frontend = (_os.environ.get("FRONTEND_URL", "https://aop-app.org") or "").rstrip("/")
+        try:
+            await globals()["send_push_best_effort"](
+                db=db, logger=logger, iso=iso, now_utc=now_utc,
+                title=f"🏆 New award: {award['name']}",
+                body=(reason or f"You've been recognized with the {award['name']}.")[:180],
+                url=f"{_frontend}/awards",
+                user_ids=[user["id"]],
+                segment="custom",
+                trigger="award_auto_granted",
+            )
+        except Exception as _push_e:
+            logger.warning(f"[auto-grant] push failed for {user['id']}: {_push_e}")
     return doc
 
 

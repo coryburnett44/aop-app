@@ -1242,7 +1242,7 @@ async def startup():
     # Iter 120: automatic award grants (Alpha Omega Phi Ribbon on join, Service
     # Ribbon on anniversary, Community Service Ribbon on Dec 31).
     from routes import awards_auto as _routes_awards_auto  # noqa: E402
-    _routes_awards_auto.register(db_ref=db, iso_fn=iso, now_utc_fn=now_utc, logger_ref=logger)
+    _routes_awards_auto.register(db_ref=db, iso_fn=iso, now_utc_fn=now_utc, logger_ref=logger, send_push_best_effort=routes_push.send_push_best_effort)
     asyncio.create_task(_routes_awards_auto.auto_grant_daily_loop())
 
     # Iter 133: automatic Happy Birthday emails on each member's MM/DD.
@@ -3063,6 +3063,7 @@ routes_chat.register(
     send_sms=send_sms,
     frontend_url=(os.environ.get("FRONTEND_URL", "") or "").rstrip("/"),
     logger=logger,
+    send_push_best_effort=routes_push.send_push_best_effort,
 )
 routes_donations.register(
     api,
@@ -3092,6 +3093,7 @@ routes_awards.register(
     admin_role_of=admin_role_of,
     iso=iso,
     now_utc=now_utc,
+    send_push_best_effort=routes_push.send_push_best_effort,
 )
 routes_email.register(
     api,
@@ -3131,6 +3133,7 @@ routes_automated_emails.register(
     resend_reply_to=RESEND_REPLY_TO,
     send_bulk_email=send_bulk_email,
     send_sms=send_sms,
+    send_push_best_effort=routes_push.send_push_best_effort,
 )
 
 # Admin member CRUD + bulk-import (iter 89.4 extraction). RESEND_API_KEY is
@@ -3328,6 +3331,7 @@ routes_hours.register(
     period_to_range=_period_to_range,
     iso=iso,
     now_utc=now_utc,
+    send_push_best_effort=routes_push.send_push_best_effort,
 )
 routes_reports.register(
     api,

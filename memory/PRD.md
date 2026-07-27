@@ -15,6 +15,25 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 141 — Extend OneSignal push to every user-facing trigger (2026-02-28) [FEATURE]
+**User request:** "Ensure that every time a news article or story is created, a meeting has started in a chat, dues are due (30/15/5 days before), an award is received, hours are approved, or a chat message is sent — OneSignal sends a push notification."
+
+**Triggers wired via `send_push_best_effort` (all best-effort, non-blocking):**
+| Event | Where | Recipient | Title / body |
+|---|---|---|---|
+| News article created | `routes/news.py` (Iter 140, already live) | All active opted-in members | Title = article title, body = summary, deep-link = `/news/{id}` |
+| Chat message sent | `routes/chat.py::send_message` | All other members of the conversation | Title = `💬 {sender}`, body = message preview (or attachment count), deep-link = `/chat/{cid}` |
+| Video meeting started in chat | `routes/chat.py::start_video_meeting` | All non-starter members of the conversation | Title = `📹 {starter} started a meeting`, body = "Tap to join {conv}", deep-link = `/chat/{cid}` |
+| Dues due in 30 / 15 / 5 days | `routes/automated_emails.py::_send_dues_reminders` | The specific member with dues due | Title varies per stage (30/15/final), body includes expiry date, deep-link = `/profile` |
+| Award granted (manual) | `routes/awards.py::grant_award` | The recipient | Title = `🏆 New award: {name}`, body = reason (or default congrats), deep-link = `/awards` |
+| Award auto-granted (streak / anniversary / join) | `routes/awards_auto.py::_grant` | The recipient | Same as above, trigger = `award_auto_granted` |
+| Hours approved | `routes/hours.py::review_hours` + `admin_edit_hours` | The submitting member (only when status flips FROM non-approved TO approved) | Title = `✅ Volunteer hours approved`, body = "Your {N}-hour {activity} submission has been approved.", deep-link = `/hours` |
+
+**Wiring**: every register() call now accepts `send_push_best_effort=routes_push.send_push_best_effort`. Registrations that happen at startup (awards_auto) pull the same helper — routes/push.py is imported at module load, before startup runs. No changes needed to the OneSignal helper itself; it already de-dupes at OneSignal level via `idempotency_key`.
+
+**Tests:** `test_iteration141_push_triggers.py` — 5/5 pass. Verifies award grant, hours approval, chat message, meeting start, and news article each log a matching `push_notifications` row via the helper. Full suite: 26/26 pass across iters 135, 138, 139, 140, 141.
+
+
 ### Iteration 140 — OneSignal push notifications (2026-02-28) [INTEGRATION]
 **User request:** "I want to use OneSignal for push notifications. Trigger on all events and target all audiences. Keep Brevo for emails — work alongside each other."
 

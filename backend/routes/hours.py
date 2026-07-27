@@ -87,6 +87,7 @@ def register(
     period_to_range,
     iso,
     now_utc,
+    send_push_best_effort=None,
 ):
 
     # Iter 122: Only Full Access + Operations Manager can log hours for
@@ -637,6 +638,26 @@ def register(
             update_doc["event_type"] = body.event_type
         await db.volunteer_hours.update_one({"id": hours_id}, {"$set": update_doc})
         h = await db.volunteer_hours.find_one({"id": hours_id}, {"_id": 0})
+        # Companion OneSignal push — only when status flips from something
+        # else to "approved" (never on re-approval or rejection).
+        if (
+            body.status == "approved"
+            and existing.get("status") != "approved"
+            and send_push_best_effort is not None
+        ):
+            import os as _os_h
+            import asyncio as _asyncio_h
+            frontend_url = (_os_h.environ.get("FRONTEND_URL", "https://aop-app.org") or "").rstrip("/")
+            hours_val = float(update_doc.get("hours", existing.get("hours", 0)) or 0)
+            _asyncio_h.create_task(send_push_best_effort(
+                db=db, logger=None, iso=iso, now_utc=now_utc,
+                title="✅ Volunteer hours approved",
+                body=f"Your {hours_val:g}-hour submission for {existing.get('activity', 'volunteering')} has been approved.",
+                url=f"{frontend_url}/hours",
+                user_ids=[existing["user_id"]],
+                segment="custom",
+                trigger="hours_approved",
+            ))
         return hours_out(h)
 
     @api.put("/hours/{hours_id}")
@@ -691,6 +712,25 @@ def register(
         if update_doc:
             await db.volunteer_hours.update_one({"id": hours_id}, {"$set": update_doc})
         h = await db.volunteer_hours.find_one({"id": hours_id}, {"_id": 0})
+        # Same approval-push as /review — only fires on status flip TO approved.
+        if (
+            update_doc.get("status") == "approved"
+            and existing.get("status") != "approved"
+            and send_push_best_effort is not None
+        ):
+            import os as _os_h2
+            import asyncio as _asyncio_h2
+            frontend_url = (_os_h2.environ.get("FRONTEND_URL", "https://aop-app.org") or "").rstrip("/")
+            hours_val = float(update_doc.get("hours", existing.get("hours", 0)) or 0)
+            _asyncio_h2.create_task(send_push_best_effort(
+                db=db, logger=None, iso=iso, now_utc=now_utc,
+                title="✅ Volunteer hours approved",
+                body=f"Your {hours_val:g}-hour submission for {existing.get('activity', 'volunteering')} has been approved.",
+                url=f"{frontend_url}/hours",
+                user_ids=[existing["user_id"]],
+                segment="custom",
+                trigger="hours_approved",
+            ))
         return hours_out(h)
 
     @api.delete("/hours/{hours_id}")

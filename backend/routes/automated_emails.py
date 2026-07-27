@@ -48,6 +48,7 @@ RESEND_FROM: str = ""
 RESEND_REPLY_TO: str = ""
 send_bulk_email = None  # callable injected from server.py
 send_sms = None  # callable injected from server.py (Brevo/Twilio unified sender)
+send_push_best_effort = None  # callable injected — OneSignal push helper
 
 
 # ---------- Constants ----------
@@ -584,6 +585,28 @@ async def _send_dues_reminders(campaign: dict) -> int:
                 })
                 total_sent += 1
                 logger.info(f"Dues reminder '{stage}' sent to {email} (exp {expires[:10]})")
+                # Companion OneSignal push — targets the exact member, so
+                # they get a device-level nudge in addition to the email/SMS.
+                if send_push_best_effort is not None:
+                    _push_titles = {
+                        "before_30": "AOP dues renew in 30 days",
+                        "before_15": "AOP dues due in 15 days",
+                        "before_5":  "Final reminder: dues due in 5 days",
+                        "grace_1":   "AOP dues have lapsed",
+                    }
+                    frontend_url = (os.environ.get("FRONTEND_URL", "https://aop-app.org") or "").rstrip("/")
+                    try:
+                        await send_push_best_effort(
+                            db=db, logger=logger, iso=iso, now_utc=now_utc,
+                            title=_push_titles.get(stage, "AOP dues reminder"),
+                            body=f"Renew now to keep your membership active. Expires {expires[:10]}.",
+                            url=f"{frontend_url}/profile",
+                            user_ids=[u["id"]],
+                            segment="custom",
+                            trigger=f"dues_{stage}",
+                        )
+                    except Exception as push_e:
+                        logger.warning(f"Dues reminder push {stage} failed for {u['id']}: {push_e}")
             except Exception as e:
                 logger.warning(f"Dues reminder {stage} failed/skipped for {email}: {e}")
     if total_sent > 0:
@@ -736,6 +759,7 @@ def register(
     resend_reply_to: str,
     send_bulk_email,
     send_sms=None,
+    send_push_best_effort=None,
 ):
     """Bind module-level state and register the admin endpoints."""
     # Bind module-level injected state so the helpers above can read fresh
@@ -751,6 +775,7 @@ def register(
     g["RESEND_REPLY_TO"] = resend_reply_to
     g["send_bulk_email"] = send_bulk_email
     g["send_sms"] = send_sms
+    g["send_push_best_effort"] = send_push_best_effort
 
     @api.get("/automated-emails")
     async def list_automated_emails(_: dict = Depends(admin_tab_dep("email"))):

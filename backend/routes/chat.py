@@ -118,6 +118,7 @@ def register(
     send_sms,
     frontend_url,
     logger,
+    send_push_best_effort=None,
 ):
     """Wire chat REST + WebSocket endpoints onto the supplied `api` router /
     `app` FastAPI instance. WebSocket lives on `app` (not the prefixed router)
@@ -475,6 +476,29 @@ def register(
             await queue_chat_notifications(c, doc, user)
         except Exception as e:
             logger.warning(f"queue_chat_notifications failed: {e}")
+        # Companion OneSignal push — targets every other member of the
+        # conversation (skip the sender). Best-effort, fire-and-forget.
+        if send_push_best_effort is not None:
+            recipients = [uid for uid in (c.get("member_ids") or []) if uid != user["id"]]
+            if recipients:
+                sender_name = user.get("name", "Someone")
+                preview_body = body.body.strip() or (
+                    f"📎 Sent {len(body.attachments)} attachment"
+                    + ("s" if len(body.attachments) != 1 else "")
+                )
+                deep_link = f"{(frontend_url or '').rstrip('/')}/chat/{cid}" if frontend_url else ""
+                try:
+                    await send_push_best_effort(
+                        db=db, logger=logger, iso=iso, now_utc=now_utc,
+                        title=f"💬 {sender_name}",
+                        body=preview_body[:180],
+                        url=deep_link,
+                        user_ids=recipients,
+                        segment="custom",
+                        trigger="chat_message",
+                    )
+                except Exception as e:
+                    logger.warning(f"chat message push failed: {e}")
         return payload
 
     @api.delete("/messages/{mid}")
@@ -675,6 +699,23 @@ def register(
                     logger.info(f"video-meeting SMS skipped for {r.get('name','?')} ({r.get('phone','?')}) — provider unavailable or invalid number")
         except Exception as e:
             logger.warning(f"video meeting SMS fan-out failed: {e}")
+
+        # Companion OneSignal push — instant device notification so the meet
+        # message doesn't rely on the member currently having the tab open.
+        if send_push_best_effort is not None and recipients_push:
+            deep_link = f"{(frontend_url or '').rstrip('/')}/chat/{cid}" if frontend_url else meeting_url
+            try:
+                await send_push_best_effort(
+                    db=db, logger=logger, iso=iso, now_utc=now_utc,
+                    title=f"📹 {starter_name} started a meeting",
+                    body=f"Tap to join {conv_name} — the call is happening now.",
+                    url=deep_link,
+                    user_ids=recipients_push,
+                    segment="custom",
+                    trigger="meeting_started",
+                )
+            except Exception as e:
+                logger.warning(f"video meeting push fan-out failed: {e}")
 
         return payload
 

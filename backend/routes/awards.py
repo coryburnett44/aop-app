@@ -94,6 +94,7 @@ def register(
     admin_role_of,
     iso,
     now_utc,
+    send_push_best_effort=None,
 ):
 
     @api.get("/awards")
@@ -221,6 +222,23 @@ def register(
         await db.award_grants.insert_one(doc)
         out = dict(doc)
         out.pop("_id", None)
+        # Companion OneSignal push — celebrate the member on-device.
+        if send_push_best_effort is not None:
+            import os as _os
+            import asyncio as _asyncio
+            frontend_url = (_os.environ.get("FRONTEND_URL", "https://aop-app.org") or "").rstrip("/")
+            _asyncio.create_task(send_push_best_effort(
+                db=db,
+                logger=None,
+                iso=iso,
+                now_utc=now_utc,
+                title=f"🏆 New award: {award['name']}",
+                body=(body.reason or f"Congrats — you've been recognized with the {award['name']}.")[:180],
+                url=f"{frontend_url}/awards",
+                user_ids=[body.user_id],
+                segment="custom",
+                trigger="award_granted",
+            ))
         return out
 
     @api.delete("/awards/grants/{grant_id}")
