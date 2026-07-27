@@ -412,6 +412,8 @@ class NewsIn(BaseModel):
     title: str
     summary: str = ""
     body: str
+    body_html: Optional[str] = ""
+    background_color: Optional[str] = ""
     cover_image: str = ""
     tags: List[str] = []
     images: List[str] = Field(default_factory=list, max_length=5)
@@ -425,6 +427,8 @@ class NewsUpdateIn(BaseModel):
     title: Optional[str] = None
     summary: Optional[str] = None
     body: Optional[str] = None
+    body_html: Optional[str] = None
+    background_color: Optional[str] = None
     cover_image: Optional[str] = None
     tags: Optional[List[str]] = None
     images: Optional[List[str]] = Field(default=None, max_length=5)

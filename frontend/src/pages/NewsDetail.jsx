@@ -14,7 +14,9 @@ export default function NewsDetail() {
     if (!item) return <div className="max-w-3xl mx-auto p-12"><div className="h-96 bg-muted rounded-2xl animate-pulse" /></div>;
     const tpl = item.template || "classic";
     const images = (item.images || []).filter(Boolean);
+    const wrapperStyle = item.background_color ? { backgroundColor: item.background_color } : undefined;
     return (
+        <div style={wrapperStyle} data-testid="news-article-wrapper">
         <article className={tpl === "hero" || tpl === "gallery" ? "max-w-5xl mx-auto px-6 lg:px-10 py-10" : "max-w-4xl mx-auto px-6 lg:px-10 py-10"} data-testid={`news-article-${tpl}`}>
             <Link to="/news" className="text-sm text-muted-foreground hover:text-primary inline-flex items-center gap-1" data-testid="back-to-news">
                 <ArrowLeft className="h-4 w-4" /> All news
@@ -37,14 +39,65 @@ export default function NewsDetail() {
                 </div>
             )}
 
-            <TemplateBody template={tpl} body={item.body} images={images} title={item.title} />
+            <TemplateBody template={tpl} body={item.body} bodyHtml={item.body_html} images={images} title={item.title} />
         </article>
+        </div>
     );
 }
 
-function TemplateBody({ template, body, images, title }) {
+function TemplateBody({ template, body, bodyHtml, images, title }) {
+    // Prefer the rich HTML body when the admin authored it; fall back to the
+    // legacy paragraph-split plain text for older articles.
+    const hasHtml = bodyHtml && bodyHtml.trim().length > 0;
     const paragraphs = (body || "").split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
-    const bodyText = <div className="text-base leading-relaxed whitespace-pre-wrap text-foreground/85">{body}</div>;
+    const bodyRich = hasHtml ? (
+        <div
+            className="tiptap prose prose-sm sm:prose-base max-w-none text-foreground/85 leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: bodyHtml }}
+        />
+    ) : (
+        <div className="text-base leading-relaxed whitespace-pre-wrap text-foreground/85">{body}</div>
+    );
+
+    // When a rich-HTML body is present we always render it in a single column
+    // to preserve formatting; multi-column templates below still surface any
+    // image gallery underneath so the layout picker keeps its effect.
+    if (hasHtml) {
+        if (template === "image_left" || template === "image_right") {
+            const isLeft = template === "image_left";
+            return (
+                <div className="mt-8 grid md:grid-cols-5 gap-8 items-start" data-testid={`tpl-${template}`}>
+                    <div className={`md:col-span-2 ${isLeft ? "md:order-1" : "md:order-2"}`}>
+                        {images.slice(0, 3).map((src, i) => (
+                            <img key={i} src={mediaUrl(src)} alt={`${title} — ${i + 1}`} className="w-full h-auto object-cover rounded-2xl mb-4" />
+                        ))}
+                    </div>
+                    <div className={`md:col-span-3 ${isLeft ? "md:order-2" : "md:order-1"}`}>
+                        {bodyRich}
+                    </div>
+                    {images.length > 3 && (
+                        <div className="md:col-span-5 grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                            {images.slice(3).map((src, i) => (
+                                <img key={i} src={mediaUrl(src)} alt={`${title} — extra ${i + 1}`} className="w-full h-40 object-cover rounded-2xl" />
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+        return (
+            <div className="mt-8" data-testid={`tpl-${template}`}>
+                {bodyRich}
+                {images.length > 0 && (
+                    <div className="mt-8 grid grid-cols-2 md:grid-cols-3 gap-4" data-testid="tpl-image-grid">
+                        {images.map((src, i) => (
+                            <img key={i} src={mediaUrl(src)} alt={`${title} — ${i + 1}`} className="w-full h-56 object-cover rounded-2xl" />
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    }
 
     if (template === "two_col") {
         return (

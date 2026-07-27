@@ -44,6 +44,7 @@ class EmailBlastIn(BaseModel):
     template_id: Optional[str] = None
     subject: str
     body_html: str
+    background_color: Optional[str] = ""
     segment: Literal["all", "active", "lifetime", "alumni", "admins", "tier", "chapter", "custom"] = "active"
     tier_id: Optional[str] = None
     chapter_id: Optional[str] = None
@@ -59,6 +60,7 @@ class EmailDraftIn(BaseModel):
     name: str = ""
     subject: str = ""
     body_html: str = ""
+    background_color: Optional[str] = ""
     segment: str = "active"
     tier_id: Optional[str] = None
     chapter_id: Optional[str] = None
@@ -414,12 +416,27 @@ def register(
     # ============================================================
     # Preview & blast send
     # ============================================================
+    def _wrap_with_background(html: str, bg: str) -> str:
+        """Wrap the message body in a mobile-safe container that sets the
+        background color (email clients strip <style>, so we inline it)."""
+        color = (bg or "").strip()
+        if not color:
+            return html
+        # Email-client-safe wrapper — table for Outlook, div fallback.
+        return (
+            f'<div style="background-color:{color};padding:24px 12px;">'
+            f'<div style="max-width:640px;margin:0 auto;background-color:{color};">'
+            f'{html}'
+            f'</div></div>'
+        )
+
     @api.post("/email/preview")
     async def email_preview(body: EmailBlastIn, user: dict = Depends(admin_tab_dep("email"))):
         """Render the blast for the current admin user as preview (no send)."""
         recipients = await resolve_segment(body)
         sample = recipients[0] if recipients else user
         html = normalize_email_images(render_variables(body.body_html, sample))
+        html = _wrap_with_background(html, body.background_color or "")
         return {
             "subject": body.subject.replace("{{name}}", sample.get("name", "")),
             "html": html,
@@ -447,10 +464,12 @@ def register(
                 failed.append({"user_id": r.get("id"), "reason": "no email"})
                 continue
             try:
+                rendered_html = render_variables(body.body_html, r)
+                wrapped_html = _wrap_with_background(rendered_html, body.background_color or "")
                 res = await send_bulk_email(
                     to_email=email,
                     subject=body.subject.replace("{{name}}", r.get("name", "")),
-                    html_body=render_variables(body.body_html, r),
+                    html_body=wrapped_html,
                     recipient_id=r.get("id", ""),
                     tags=[
                         {"name": "blast_id", "value": blast_id},
@@ -469,6 +488,7 @@ def register(
             "tier_id": body.tier_id,
             "chapter_id": body.chapter_id,
             "test_only": body.test_only,
+            "background_color": body.background_color or "",
             "sent_count": len(sent),
             "failed_count": len(failed),
             "sent_to": [s["email"] for s in sent[:100]],
@@ -971,7 +991,7 @@ def register(
         return {
             "id": file_id,
             "filename": fname,
-            "url": f"/api/files/{storage_path}",
+            "url": f"/api/email/image/{storage_path}",
             "size": total,
             "content_type": content_type,
         }

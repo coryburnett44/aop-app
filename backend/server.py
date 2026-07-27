@@ -780,6 +780,41 @@ async def reconcile_pending_set_password():
 
 
 # ---------- File proxy (serves both photos and documents) ----------
+@api.get("/email/image/{storage_path:path}")
+async def download_email_image(storage_path: str, request: Request):
+    """PUBLIC endpoint — serves images that were uploaded through the email
+    composer so they load inside mailbox providers' image proxies (Gmail,
+    iOS Mail, Outlook) which strip cookies before fetching. Scoped strictly
+    to `email/*` storage paths so it can't be abused as a generic file leak."""
+    if not storage_path.startswith("email/"):
+        raise HTTPException(status_code=404, detail="File not found")
+    rec = await db.chat_files.find_one({
+        "storage_path": storage_path,
+        "kind": "image",
+        "is_deleted": {"$ne": True},
+    })
+    if not rec:
+        raise HTTPException(status_code=404, detail="File not found")
+    etag = f'W/"{storage_path}"'
+    if request.headers.get("if-none-match") == etag:
+        return FastResponse(status_code=304, headers={
+            "ETag": etag,
+            "Cache-Control": "public, max-age=31536000, immutable",
+        })
+    try:
+        data, content_type = await asyncio.to_thread(get_object, storage_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found in storage")
+    return FastResponse(
+        content=data,
+        media_type=rec.get("content_type", content_type),
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": etag,
+        },
+    )
+
+
 @api.get("/files/{storage_path:path}")
 async def download_file(
     storage_path: str,
@@ -2050,6 +2085,8 @@ def _normalize_email_images(html: str) -> str:
     """Rewrite <img> tags for email-client compatibility:
       • Resolve relative /api/... URLs to absolute (FRONTEND_URL) so the image
         loads outside the app's origin (Gmail/Outlook proxies need absolute).
+      • Rewrite /api/files/email/* → /api/email/image/* so mailbox image
+        proxies (which strip cookies) can still fetch the bytes.
       • Strip `class=` attributes — email clients (Gmail in particular) drop
         most CSS classes, so any styling must be inline.
       • Ensure inline style sets max-width:100% and height:auto so wide images
@@ -2060,6 +2097,11 @@ def _normalize_email_images(html: str) -> str:
     if not html:
         return html
     base = (os.environ.get("FRONTEND_URL", "") or "").rstrip("/")
+
+    # First pass: rewrite /api/files/email/* -> /api/email/image/* (public,
+    # no-cookie endpoint) everywhere in the HTML, whether relative or already
+    # absolutized against FRONTEND_URL / any preview host.
+    html = re.sub(r"/api/files/email/", "/api/email/image/", html)
 
     def fix(match: "re.Match[str]") -> str:
         tag = match.group(0)
@@ -2082,6 +2124,8 @@ def _normalize_email_images(html: str) -> str:
                 additions.append("max-width:100%")
             if "height" not in existing.lower():
                 additions.append("height:auto")
+            if "display" not in existing.lower():
+                additions.append("display:block")
             if additions:
                 new_style = existing.rstrip(";").strip()
                 if new_style:
@@ -2092,9 +2136,13 @@ def _normalize_email_images(html: str) -> str:
         else:
             tag = tag.replace(
                 "<img",
-                '<img style="max-width:100%;height:auto;display:inline-block"',
+                '<img style="max-width:100%;height:auto;display:block"',
                 1,
             )
+        # Ensure alt="" so mobile clients don't render broken-image icon while
+        # loading; keep any existing alt.
+        if not re.search(r'\balt\s*=', tag):
+            tag = tag.replace("<img", '<img alt=""', 1)
         return tag
 
     return re.sub(r"<img\b[^>]*>", fix, html)

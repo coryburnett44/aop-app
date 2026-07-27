@@ -96,11 +96,14 @@ def test_normalize_idempotent():
 
 
 def test_normalize_rewrites_relative_api_urls_to_absolute():
+    """Iter 138: /api/files/email/* is remapped to the public,
+    cookie-free /api/email/image/* endpoint so mobile mail-image proxies
+    can fetch the bytes."""
     os.environ["FRONTEND_URL"] = "https://aop-app.org"
     try:
         html = '<img src="/api/files/email/u1/abc/photo.jpg" alt="x">'
         out = _normalize_email_images(html)
-        assert 'src="https://aop-app.org/api/files/email/u1/abc/photo.jpg"' in out
+        assert 'src="https://aop-app.org/api/email/image/u1/abc/photo.jpg"' in out
     finally:
         # don't pollute other tests
         pass

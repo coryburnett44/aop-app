@@ -15,6 +15,28 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 138 — Rich text upgrades + mobile-safe email image delivery (2026-02-28) [FEATURE + P0 BUG FIX]
+**User request:** "For the admin email, ensure attachments/embedded images show up when viewed on mobile. Allow admins to change font color + background. For News, allow bold/italics/underline/rich text, font size + color, background edits." (Production issue.)
+
+**Bug fix — Mobile email images (P0):**
+- Root cause: uploaded email images were served from `GET /api/files/{path}` which requires a session cookie via `get_current_user`. Mailbox providers (Gmail iOS/Android, Apple Mail, Outlook) fetch `<img src>` through their own image-proxy IPs which do NOT carry the admin's cookies → 401 → broken image on mobile.
+- Fix: new public, no-auth endpoint `GET /api/email/image/{storage_path:path}` scoped strictly to `email/*` prefixes in `chat_files`. Emits `Cache-Control: public, immutable`, ETag short-circuits, and 404s any non-email storage path so it can't be abused as a generic file leak.
+- `POST /api/email/upload-image` now returns `/api/email/image/{path}` (was `/api/files/{path}`).
+- `_normalize_email_images` (called by both preview and send) rewrites any existing `/api/files/email/*` → `/api/email/image/*` for old drafts, absolutizes against `FRONTEND_URL`, injects `display:block`, and adds an empty `alt=""` when missing (mobile no longer renders broken-image icons while loading).
+
+**Rich editor enhancements (used by Email composer, News, Templates, and Signatures):**
+- Added TipTap extensions: `TextStyle`, `FontSize`, `Color`, `Highlight` (multicolor), `Underline`.
+- Toolbar gains: **Font color** picker (24 curated swatches + native custom picker + clear), **Highlight / text-background** picker (12 pastels + custom + clear), **Font size** dropdown (Small/Normal/Medium/Large/Huge/Display + reset), dedicated **Underline** button.
+- Email composer + News dialog both add a "Background color" swatch — the message body is wrapped at send/preview time with a mobile-safe `<div style="background-color:...;padding:24px 12px;">` wrapper (email clients strip `<style>`, so inline styling is used).
+
+**News body upgrade:**
+- Backend: `NewsIn`/`NewsUpdateIn`/`news_out` gain `body_html` + `background_color`. Plain-text `body` is preserved as a fallback for search + legacy templates.
+- Frontend `NewsDialog`: plain `<Textarea>` swapped for `<RichEditor>` bound to `body_html`. Legacy plain-text articles are auto-converted to `<p>` blocks on first edit. AI "Draft as email" now writes both HTML and plain text.
+- `NewsDetail.jsx`: renders `body_html` via `dangerouslySetInnerHTML` when present (single-column layout to preserve formatting) with any per-article background color applied to the outer wrapper; falls back to legacy paragraph-split templates otherwise.
+
+**Tests:** `test_iteration138_email_public_image.py` — 6/6 pass (upload returns public URL, anonymous fetch works, non-email paths reject, background wraps preview, `/api/files/email/*` rewrite in preview, news accepts body_html + background). Updated 2 legacy tests (`test_iteration64_*`) to assert the new URL. All 29 email + 6 iter-138 tests green.
+
+
 ### Iteration 135 — Admin Regions CRUD + interactive US map (2026-02-27, tests fixed 2026-02-28) [FEATURE]
 - Backend `routes/regions.py`: Mongo-backed `app_regions` collection (seeds the 4 defaults on first boot), full CRUD (`POST/PUT/DELETE /api/admin/regions`), governor assignment (`governor_user_id` on region, validated against `users`), per-member override (`PUT /api/admin/members/{user_id}/region`, empty string clears). `/api/regions` aggregation now subtracts overridden users from their state-derived region and adds them to their override region. Deleting a region also clears any member overrides pointing at it. Public helper `region_for_state` is async and reads latest DB state.
 - Frontend: `pages/Regions.jsx` interactive US SVG map (react-simple-maps + topojson-client) with per-region color fills + click-to-drill; `components/RegionsAdmin.jsx` admin CRUD UI.

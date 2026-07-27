@@ -135,7 +135,10 @@ def test_admin_upload_image(admin):
     assert r.status_code == 200, r.text
     data = r.json()
     assert "url" in data
-    assert "/api/files/" in data["url"]
+    # Iter 138: the composer now returns the public, cookie-free
+    # /api/email/image/... URL so mobile mail proxies can fetch the image
+    # without needing the admin's session cookie.
+    assert "/api/email/image/" in data["url"]
 
 
 # ---------------------------------------------------

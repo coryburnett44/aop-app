@@ -18,6 +18,8 @@ def news_out(n: dict) -> dict:
         "title": n["title"],
         "summary": n.get("summary", ""),
         "body": n.get("body", ""),
+        "body_html": n.get("body_html", "") or "",
+        "background_color": n.get("background_color", "") or "",
         "cover_image": n.get("cover_image", ""),
         "images": n.get("images", []) or [],
         "template": n.get("template", "classic"),
@@ -42,6 +44,7 @@ def register(api, *, db, admin_tab_dep, iso, now_utc):
                     {"title": {"$regex": safe, "$options": "i"}},
                     {"summary": {"$regex": safe, "$options": "i"}},
                     {"body": {"$regex": safe, "$options": "i"}},
+                    {"body_html": {"$regex": safe, "$options": "i"}},
                     {"tags": {"$regex": safe, "$options": "i"}},
                 ],
             }

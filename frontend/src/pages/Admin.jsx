@@ -656,6 +656,22 @@ function EventDialog({ event, onSaved, trigger }) {
 }
 
 /* -------- News -------- */
+function escapeHtml(s) {
+    return String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function htmlToPlainText(html) {
+    if (!html) return "";
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html;
+    return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
+}
+
 function NewsAdmin() {
     const [items, setItems] = useState([]);
     const load = () => api.get("/news").then(({ data }) => setItems(data));
@@ -694,6 +710,8 @@ function NewsDialog({ article, onSaved, trigger }) {
         title: article?.title || "",
         summary: article?.summary || "",
         body: article?.body || "",
+        body_html: article?.body_html || (article?.body ? article.body.split(/\n{2,}/).map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br/>")}</p>`).join("") : ""),
+        background_color: article?.background_color || "",
         cover_image: article?.cover_image || "",
         tags: (article?.tags || []).join(", "),
         images: article?.images || [],
@@ -703,8 +721,15 @@ function NewsDialog({ article, onSaved, trigger }) {
     const [imgBusy, setImgBusy] = useState(false);
 
     async function save() {
+        // Keep `body` as a plain-text fallback for search + templates that
+        // still split paragraphs. Derive it from the HTML if the admin edited
+        // via the rich editor.
+        const plain = htmlToPlainText(form.body_html || "") || form.body || "";
         const payload = {
             ...form,
+            body: plain,
+            body_html: form.body_html || "",
+            background_color: form.background_color || "",
             tags: form.tags.split(",").map((s) => s.trim()).filter(Boolean),
             images: (form.images || []).filter(Boolean).slice(0, 5),
         };
@@ -724,7 +749,8 @@ function NewsDialog({ article, onSaved, trigger }) {
         setEmailBusy(true);
         try {
             const { data } = await api.post("/ai/draft-email", { subject: form.title, goal: form.summary || form.title, tone: "warm" });
-            setForm({ ...form, body: data.text });
+            const html = (data.text || "").split(/\n{2,}/).map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br/>")}</p>`).join("");
+            setForm({ ...form, body: data.text, body_html: html });
             toast.success("Email drafted ✨");
         } catch (e) {
             toast.error(formatApiError(e.response?.data?.detail) || "AI failed");
@@ -795,13 +821,43 @@ function NewsDialog({ article, onSaved, trigger }) {
                         <p className="text-xs text-muted-foreground mt-1.5">Body paragraphs (separated by blank lines) will be split across columns when a multi-column template is chosen.</p>
                     </div>
                     <div className="bg-secondary/20 rounded-2xl p-4 border border-secondary/40">
-                        <div className="flex items-center justify-between mb-2">
-                            <Label className="inline-flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-primary" /> Body (AI email-draft available)</Label>
-                            <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={aiEmail} disabled={emailBusy} data-testid="ai-email-btn">
-                                {emailBusy ? "Drafting…" : "Draft as email"}
-                            </Button>
+                        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                            <Label className="inline-flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-primary" /> Body (rich text · AI email-draft available)</Label>
+                            <div className="flex items-center gap-3">
+                                <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    Background
+                                    <input
+                                        type="color"
+                                        value={form.background_color || "#ffffff"}
+                                        onChange={(e) => setForm({ ...form, background_color: e.target.value })}
+                                        className="h-7 w-9 cursor-pointer rounded border border-border bg-transparent"
+                                        data-testid="news-bg-color"
+                                        title="Article background color"
+                                    />
+                                    {form.background_color && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setForm({ ...form, background_color: "" })}
+                                            className="text-xs text-muted-foreground hover:text-primary underline"
+                                            data-testid="news-bg-color-clear"
+                                        >
+                                            Clear
+                                        </button>
+                                    )}
+                                </label>
+                                <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={aiEmail} disabled={emailBusy} data-testid="ai-email-btn">
+                                    {emailBusy ? "Drafting…" : "Draft as email"}
+                                </Button>
+                            </div>
                         </div>
-                        <Textarea rows={10} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} className="rounded-xl" data-testid="news-body-input" />
+                        <div style={form.background_color ? { backgroundColor: form.background_color, borderRadius: 16, padding: 6 } : undefined}>
+                            <RichEditor
+                                value={form.body_html}
+                                onChange={(html) => setForm((f) => ({ ...f, body_html: html }))}
+                                placeholder="Write your article — use the toolbar to format, add images, colors, etc."
+                                minHeight={280}
+                            />
+                        </div>
                     </div>
                     <div className="grid sm:grid-cols-2 gap-4">
                         <div>
@@ -3942,6 +3998,7 @@ function EmailTestSend() {
 function ComposeBlast() {
     const [subject, setSubject] = useState("");
     const [body_html, setBody] = useState("<p>Hello {{first_name}},</p><p>Write your message here. Use the toolbar — bold, lists, images, links — no code needed.</p><p>— Alpha Omega Phi</p>");
+    const [background_color, setBackgroundColor] = useState("");
     const [segment, setSegment] = useState("active");
     const [tier_id, setTierId] = useState("");
     const [chapter_id, setChapterId] = useState("");
@@ -3984,6 +4041,7 @@ function ComposeBlast() {
             name: "",
             subject,
             body_html,
+            background_color: background_color || "",
             segment: segment === "individual" ? "custom" : segment,
             tier_id: tier_id || undefined,
             chapter_id: chapter_id || undefined,
@@ -4018,7 +4076,7 @@ function ComposeBlast() {
         autosaveTimer.current = setTimeout(flushAutosave, 2000);
         return () => clearTimeout(autosaveTimer.current);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [subject, body_html, segment, tier_id, chapter_id, individualIds, externalEmails]);
+    }, [subject, body_html, background_color, segment, tier_id, chapter_id, individualIds, externalEmails]);
 
     useEffect(() => {
         const onVis = () => { if (document.visibilityState === "hidden") flushAutosave(); };
@@ -4032,13 +4090,14 @@ function ComposeBlast() {
             window.removeEventListener("pagehide", onBeforeUnload);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [subject, body_html, segment, tier_id, chapter_id, individualIds, externalEmails]);
+    }, [subject, body_html, background_color, segment, tier_id, chapter_id, individualIds, externalEmails]);
 
     function loadDraft(did) {
         const d = drafts.find((x) => x.id === did);
         if (!d) return;
         setSubject(d.subject || "");
         setBody(d.body_html || "");
+        setBackgroundColor(d.background_color || "");
         if (d.custom_user_ids?.length || (d.external_emails || []).length) {
             setSegment("individual");
             setIndividualIds(d.custom_user_ids || []);
@@ -4101,6 +4160,7 @@ function ComposeBlast() {
         const payload = {
             subject,
             body_html,
+            background_color: background_color || "",
             segment,
             tier_id: tier_id || undefined,
             chapter_id: chapter_id || undefined,
@@ -4197,8 +4257,31 @@ function ComposeBlast() {
                     <Input value={subject} onChange={(e) => setSubject(e.target.value)} className="rounded-xl mt-1.5" placeholder="Hi {{first_name}}, news from your chapter" data-testid="email-subject" />
                 </div>
                 <div>
-                    <Label>Body *</Label>
-                    <div className="mt-1.5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                        <Label>Body *</Label>
+                        <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                            Email background
+                            <input
+                                type="color"
+                                value={background_color || "#ffffff"}
+                                onChange={(e) => setBackgroundColor(e.target.value)}
+                                className="h-7 w-9 cursor-pointer rounded border border-border bg-transparent"
+                                data-testid="email-bg-color"
+                                title="Email background color"
+                            />
+                            {background_color && (
+                                <button
+                                    type="button"
+                                    onClick={() => setBackgroundColor("")}
+                                    className="text-xs text-muted-foreground hover:text-primary underline"
+                                    data-testid="email-bg-color-clear"
+                                >
+                                    Clear
+                                </button>
+                            )}
+                        </label>
+                    </div>
+                    <div className="mt-1.5" style={background_color ? { backgroundColor: background_color, padding: 6, borderRadius: 16 } : undefined}>
                         <RichEditor value={body_html} onChange={setBody} placeholder="Write your message — press Enter for new lines, use toolbar for images." minHeight={300} />
                     </div>
                     <div className="text-xs text-muted-foreground mt-1.5">Variables: <code>{"{{name}}"}</code>, <code>{"{{first_name}}"}</code>, <code>{"{{last_name}}"}</code>, <code>{"{{line_name}}"}</code>, <code>{"{{email}}"}</code></div>
