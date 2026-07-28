@@ -158,6 +158,38 @@ def _translate(params: dict) -> dict:
     if params.get("scheduled_at"):
         payload["scheduledAt"] = params["scheduled_at"]
 
+    # Attachments — resend-style: [{filename, content (b64 or bytes), content_type}]
+    # Brevo v3 shape: "attachment": [{"name": "...", "content": "<base64>"}]
+    # (singular "attachment", key "name", content MUST be base64 string).
+    attachments = params.get("attachments") or params.get("attachment") or []
+    if attachments:
+        import base64 as _b64
+        out_att: list[dict] = []
+        for a in attachments:
+            if not isinstance(a, dict):
+                continue
+            name = a.get("filename") or a.get("name")
+            content = a.get("content")
+            url = a.get("url")
+            if url and name:
+                # Brevo also supports remote URLs — pass through.
+                out_att.append({"url": url, "name": name})
+                continue
+            if not (name and content is not None):
+                continue
+            if isinstance(content, (bytes, bytearray)):
+                content = _b64.b64encode(bytes(content)).decode("ascii")
+            elif isinstance(content, str):
+                # Assume already base64 unless it clearly isn't. We accept
+                # both because callers historically passed base64 strings.
+                content = content
+            else:
+                # Skip anything we can't serialize.
+                continue
+            out_att.append({"name": name, "content": content})
+        if out_att:
+            payload["attachment"] = out_att
+
     return payload
 
 

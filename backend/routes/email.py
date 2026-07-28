@@ -311,6 +311,8 @@ def register(
     mime_by_ext,
     get_object,
     send_push_best_effort=None,
+    wrap_email_document=None,
+    extract_preheader=None,
 ):
 
     # ---------- Helpers used by multiple routes (closure-captured deps) ----------
@@ -447,6 +449,11 @@ def register(
         sample = recipients[0] if recipients else user
         html = normalize_email_images(render_variables(body.body_html, sample))
         html = _wrap_with_background(html, body.background_color or "")
+        # Also apply the professional email wrapper so the preview matches
+        # exactly what the recipient's inbox will render.
+        if wrap_email_document:
+            preheader = extract_preheader(html) if extract_preheader else ""
+            html = wrap_email_document(html, subject=body.subject, preheader=preheader)
         return {
             "subject": body.subject.replace("{{name}}", sample.get("name", "")),
             "html": html,
@@ -1039,11 +1046,17 @@ def register(
                 """
             )
         try:
+            # Wrap in the professional inbox-safe document so test sends
+            # look identical to what real blasts render as.
+            html_full = html_body
+            if wrap_email_document:
+                preheader = extract_preheader(html_body) if extract_preheader else ""
+                html_full = wrap_email_document(html_body, subject=subject, preheader=preheader)
             resp = await asyncio.to_thread(resend_sdk.Emails.send, {
                 "from": resend_from,
                 "to": [to_email],
                 "subject": subject,
-                "html": html_body,
+                "html": html_full,
                 "tags": [{"name": "type", "value": "test_send"}],
             })
             message_id = ""

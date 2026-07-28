@@ -2068,6 +2068,129 @@ def _bulk_email_text_footer(unsubscribe_url: str) -> str:
     )
 
 
+def _extract_preheader(html_body: str) -> str:
+    """Pull the first ~120 chars of visible text from the email body — used as
+    the hidden preheader that shows next to the subject line in most inbox
+    clients (Gmail, Apple Mail, Outlook Web). Improves open rates and looks
+    professional."""
+    if not html_body:
+        return ""
+    text = _html_to_text(html_body)
+    # Trim to a single line, cap at 120 chars.
+    text = text.replace("\n", " ").strip()
+    if len(text) > 120:
+        text = text[:117].rstrip() + "…"
+    # Escape a handful of characters so it doesn't break the HTML wrapper.
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _wrap_email_document(inner_html: str, subject: str, preheader: str = "") -> str:
+    """Wrap an email body in a professional, inbox-safe HTML document.
+
+    Why: bare `<div>...</div>` fragments score badly in spam filters and
+    render inconsistently across Outlook, Gmail, Apple Mail, and mobile
+    clients. This wrapper:
+      • Adds a full HTML5 doctype + <html lang> + charset — required by
+        strict spam scanners (SpamAssassin gives ~+0.5 for missing).
+      • Sets the Outlook-friendly viewport and MSO conditional comments.
+      • Provides a hidden preheader (the text preview shown next to the
+        subject in the inbox list).
+      • Uses a bulletproof table-based container that renders identically
+        in Outlook 2007-2021 and modern webmail.
+      • Applies safe font stacks, dark-mode-aware colors, and generous
+        padding so the email always looks intentionally designed.
+      • Ensures every image inherits max-width:100%.
+
+    Idempotent: if `inner_html` already starts with `<!DOCTYPE` or `<html`
+    we return it unchanged so we don't double-wrap saved templates.
+    """
+    if not inner_html:
+        return inner_html
+    stripped = inner_html.lstrip()[:32].lower()
+    if stripped.startswith("<!doctype") or stripped.startswith("<html"):
+        return inner_html
+
+    import html as _h
+    safe_subject = _h.escape(subject or "Alpha Omega Phi")
+    safe_preheader = preheader or ""
+
+    # Hidden preheader — the leading spaces + zero-width chars pad it out so
+    # Gmail doesn't concatenate junk from later in the email into the preview.
+    preheader_block = (
+        f'<div style="display:none;font-size:1px;color:#f8f5ef;line-height:1px;'
+        f'max-height:0px;max-width:0px;opacity:0;overflow:hidden;">'
+        f'{safe_preheader}'
+        f'&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;'
+        f'&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;'
+        f'</div>'
+    )
+
+    return (
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" '
+        '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'
+        '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">'
+        '<head>'
+        '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />'
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+        '<meta http-equiv="X-UA-Compatible" content="IE=edge" />'
+        '<meta name="color-scheme" content="light only" />'
+        '<meta name="supported-color-schemes" content="light only" />'
+        f'<title>{safe_subject}</title>'
+        '<!--[if mso]>'
+        '<style type="text/css">'
+        'table,td,div,h1,p{font-family:Arial,Helvetica,sans-serif !important;}'
+        '</style>'
+        '<![endif]-->'
+        '<style type="text/css">'
+        # Reset + defensive rules that survive Gmail's <style> stripping when
+        # inlined by ESPs. Keep small — most styling is inline below.
+        'body{margin:0;padding:0;width:100% !important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;background-color:#f4f1ea;}'
+        'img{border:0;line-height:100%;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;max-width:100%;height:auto;display:block;}'
+        'table{border-collapse:collapse !important;mso-table-lspace:0pt;mso-table-rspace:0pt;}'
+        'a{color:#C8102E;text-decoration:underline;}'
+        '@media only screen and (max-width:620px){'
+        '.email-container{width:100% !important;max-width:100% !important;}'
+        '.email-body{padding:20px !important;}'
+        '}'
+        '</style>'
+        '</head>'
+        '<body style="margin:0;padding:0;background-color:#f4f1ea;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;color:#1a1a1a;">'
+        f'{preheader_block}'
+        '<center style="width:100%;background-color:#f4f1ea;">'
+        '<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#f4f1ea" style="border-collapse:collapse;background-color:#f4f1ea;">'
+        '<tr>'
+        '<td align="center" valign="top" style="padding:24px 12px;">'
+        '<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" class="email-container" style="width:100%;max-width:600px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">'
+        '<tr>'
+        # Slim brand strip so recipients recognise the sender at a glance.
+        '<td align="center" valign="middle" bgcolor="#0A2463" style="background-color:#0A2463;padding:14px 24px;">'
+        '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;line-height:1;letter-spacing:0.04em;color:#ffffff;font-weight:600;">'
+        'Alpha <span style="color:#f4c542;">Omega</span> Phi'
+        '</div>'
+        '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;font-size:10px;line-height:1;color:#c9d0e0;letter-spacing:0.12em;text-transform:uppercase;margin-top:4px;">'
+        'Military Fraternity &amp; Sorority, Inc.'
+        '</div>'
+        '</td>'
+        '</tr>'
+        '<tr>'
+        '<td class="email-body" align="left" valign="top" style="padding:32px 32px 24px 32px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;font-size:16px;line-height:1.6;color:#1a1a1a;background-color:#ffffff;">'
+        f'{inner_html}'
+        '</td>'
+        '</tr>'
+        '</table>'
+        '</td>'
+        '</tr>'
+        '</table>'
+        '</center>'
+        '</body>'
+        '</html>'
+    )
+
+
 def _normalize_email_images(html: str) -> str:
     """Rewrite <img> tags for email-client compatibility:
       • Resolve relative /api/... URLs to absolute (FRONTEND_URL) so the image
@@ -2157,7 +2280,15 @@ async def send_bulk_email(
 
     unsub_url = _unsubscribe_url_for(recipient_id)
     safe_html = _normalize_email_images(html_body)
-    html_full = safe_html + _bulk_email_html_footer(unsub_url)
+    body_and_footer = safe_html + _bulk_email_html_footer(unsub_url)
+    # Wrap in a professional inbox-safe HTML document (doctype, table
+    # container, brand strip, hidden preheader). Idempotent — if the caller
+    # already wrapped, this is a no-op.
+    html_full = _wrap_email_document(
+        body_and_footer,
+        subject=subject,
+        preheader=_extract_preheader(safe_html),
+    )
     text_full = _html_to_text(safe_html) + _bulk_email_text_footer(unsub_url)
 
     headers = {
@@ -3102,6 +3233,8 @@ routes_email.register(
     org_mailing_address=ORG_MAILING_ADDRESS,
     send_bulk_email=send_bulk_email,
     normalize_email_images=_normalize_email_images,
+    wrap_email_document=_wrap_email_document,
+    extract_preheader=_extract_preheader,
     verify_unsubscribe_token=_verify_unsubscribe_token,
     put_object=put_object,
     image_extensions=IMAGE_EXT,
