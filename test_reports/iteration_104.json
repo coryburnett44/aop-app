@@ -1,0 +1,65 @@
+{
+  "verdict": "not_fixed",
+  "user_reported_bug": "The email still goes to junk mail. The attachments are not attached in the emails. See if you can wrap the email in \"something\" that ensures my pictures, embedded pictures, and attachments show up and display. I need professional emails to end up in inboxes.",
+  "summary": "No relevant testing skill found. Focused verification found the deliverability/test-send Resend copy fix, Brevo attachment translation, full HTML wrapper, test-send, preview, and blast paths mostly working; however legacy embedded image URLs using /api/files/email/... are rewritten to an invalid public URL and return 404, so the embedded-picture portion of the user bug is not fully fixed. Live DNS check confirms junk-mail risk is still registrar-side for aop-app.org (SPF missing spf.brevo.com, DKIM missing, DMARC p=none, Return-Path missing).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/email/preview and send_bulk_email/_normalize_email_images",
+        "issue": "Legacy embedded image URLs like /api/files/email/{...} are rewritten to /api/email/image/{...} instead of /api/email/image/email/{...}; the public image route requires storage_path to start with email/, so these rewritten images return 404 in email previews/sent mail.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Admin email composer / preview / sent email embedded images",
+        "issue": "Newly uploaded inline images using /api/email/image/email/... display and fetch publicly, but older saved content/signatures/templates with /api/files/email/... are normalized to a broken URL and will not display in mailbox clients.",
+        "affected_selectors": [
+          "[data-testid=\"email-preview-btn\"]",
+          "[data-testid=\"deliverability-panel\"]"
+        ]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/verify_email_bug_iteration104.py",
+    "/app/test_reports/check_email_images_iteration104.py",
+    "/app/test_reports/check_attachments_live_iteration104.py",
+    "/app/test_reports/check_dns_iteration104.py",
+    "/app/backend/tests/test_iteration145_brevo_only.py",
+    "/app/backend/tests/test_iteration146_wrapper_and_attachments.py"
+  ],
+  "action_items": [
+    "Fix _normalize_email_images so /api/files/email/... becomes /api/email/image/email/... and add a regression test that fetches the rewritten URL without auth.",
+    "After code fix, retest preview and sent/test-only blast with both current /api/email/image/email/... images and legacy /api/files/email/... images.",
+    "User still needs to update IONOS DNS for aop-app.org: include spf.brevo.com in SPF, add Brevo DKIM TXT, change DMARC to quarantine/reject, and add bounces CNAME."
+  ],
+  "critical_code_review_comments": [
+    "Admin.jsx deliverability panel and test-send toast/result copy no longer show Resend; browser verification found no Resend text in the deliverability panel or test-send toast/result.",
+    "brevo_sdk._translate correctly emits Brevo singular attachment with name/content and base64 encodes raw bytes; live test-only blast with an uploaded txt attachment succeeded and recorded the attachment in email_blasts history.",
+    "_wrap_email_document produces doctype/html/head/charset/preheader/MSO/table container, and /api/email/test-send returned a Brevo mailin.fr message id.",
+    "Current inline image upload returns /api/email/image/email/... and the public image URL fetches 200 without auth; only the legacy /api/files/email/... normalization path is broken."
+  ],
+  "updated_files": [
+    "/app/test_reports/verify_email_bug_iteration104.py",
+    "/app/test_reports/check_email_images_iteration104.py",
+    "/app/test_reports/check_attachments_live_iteration104.py",
+    "/app/test_reports/check_dns_iteration104.py",
+    "/app/test_reports/bug_verification_104.json",
+    "/app/test_reports/iteration_104.json"
+  ],
+  "success_rate": {
+    "backend": "88%",
+    "frontend": "100% for requested Resend-copy UI checks"
+  },
+  "seed_data_creation": "Uploaded a 75-byte QA PNG inline image and an 18-byte qa-attachment.txt via admin email routes; sent test-only Brevo emails to admin/delivery-check addresses for verification.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run /app/test_reports/verify_email_bug_iteration104.py after fixing _normalize_email_images. Also repeat browser verification of Admin > Email > Deliverability and Test send to confirm no Resend copy in panel/toast. DNS will still fail until the user updates IONOS records, which is not code-fixable.",
+  "rca_of_the_issue": "The app replaced '/api/files/email/' with '/api/email/image/' in _normalize_email_images, dropping the required 'email/' storage_path prefix. The public route /api/email/image/{storage_path:path} explicitly rejects storage paths not starting with email/, causing rewritten legacy embedded image URLs to 404. This blocks the user's embedded-picture display requirement for older saved content even though attachments and the professional HTML wrapper are working."
+}

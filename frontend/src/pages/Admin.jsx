@@ -4117,7 +4117,7 @@ function EmailDeliverability() {
                 </div>
                 <p className="text-xs text-muted-foreground mb-4">
                     Log in to your domain registrar (the place you bought <code>{data.sending_domain || "your domain"}</code>)
-                    and confirm these records exist. Values are for <strong>{providerLabel}</strong>. If you previously used Resend, delete those old records to avoid conflicts.
+                    and confirm these records exist. Values are for <strong>{providerLabel}</strong>. Remove any conflicting records from previous email providers to avoid authentication failures.
                 </p>
                 <div className="space-y-3">
                     {data.dns_checklist.map((row, i) => (
