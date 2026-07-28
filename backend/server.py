@@ -1956,7 +1956,7 @@ async def seed_phase_b():
 
 
 # ============================================================
-# PHASE C — PayPal payments + Resend email blasts
+# PHASE C — PayPal payments + Brevo email blasts
 # ============================================================
 import httpx
 import asyncio
@@ -1964,44 +1964,31 @@ import asyncio
 # Email provider — Brevo (formerly Sendinblue). We import our thin shim which
 # exposes the same `.Emails.send({...})` shape as the old `resend` SDK, so
 # every call site downstream (`resend_sdk.Emails.send(...)`) keeps working
-# unchanged. To roll back to Resend, set EMAIL_PROVIDER=resend and add
-# `import resend as resend_sdk` in place of the shim import below.
-_email_provider = os.environ.get("EMAIL_PROVIDER", "brevo").lower()
-if _email_provider == "resend":
-    import resend as resend_sdk  # noqa: E402  (legacy fallback)
-else:
-    import brevo_sdk as resend_sdk  # noqa: E402  (default — see brevo_sdk.py)
+# unchanged. Resend is no longer supported — Brevo is the only email
+# transport. The `resend_sdk` alias is retained solely to avoid a large
+# rename across 20+ modules.
+_email_provider = "brevo"
+import brevo_sdk as resend_sdk  # noqa: E402  (see brevo_sdk.py)
 
 PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox").lower()
 PAYPAL_BASE = "https://api-m.paypal.com" if PAYPAL_MODE == "live" else "https://api-m.sandbox.paypal.com"
 PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "")
 PAYPAL_SECRET = os.environ.get("PAYPAL_SECRET", "")
 
-# Prefer Brevo credentials, fall back to legacy RESEND_* env vars so existing
-# infra keeps booting even if only the old vars are set. `resend_sdk.api_key`
-# resolves to the shim's singleton when we're using Brevo; the shim also
-# reads BREVO_API_KEY from the environment as a safety net.
-RESEND_API_KEY = (
-    os.environ.get("BREVO_API_KEY", "") if _email_provider == "brevo"
-    else os.environ.get("RESEND_API_KEY", "")
-)
-RESEND_FROM = (
-    os.environ.get("BREVO_FROM", "") if _email_provider == "brevo"
-    else os.environ.get("RESEND_FROM", "")
-) or os.environ.get("RESEND_FROM", "Alpha Omega Phi <onboarding@resend.dev>")
-RESEND_REPLY_TO = os.environ.get("RESEND_REPLY_TO", "info@aop-app.org")
+# Brevo credentials. The internal variable name `RESEND_API_KEY` is kept for
+# backwards compatibility with 20+ existing call sites — but it ALWAYS holds
+# the Brevo API key. Same for RESEND_FROM.
+RESEND_API_KEY = os.environ.get("BREVO_API_KEY", "")
+RESEND_FROM = os.environ.get("BREVO_FROM", "") or "Alpha Omega Phi <info@aop-app.org>"
+RESEND_REPLY_TO = os.environ.get("BREVO_REPLY_TO") or os.environ.get("RESEND_REPLY_TO", "info@aop-app.org")
 ORG_MAILING_ADDRESS = os.environ.get(
     "ORG_MAILING_ADDRESS",
     "Alpha Omega Phi Military Fraternity & Sorority, Inc."
 )
 UNSUBSCRIBE_SECRET = os.environ.get("UNSUBSCRIBE_SECRET") or os.environ.get("JWT_SECRET", "")
 if RESEND_API_KEY:
-    # For the Brevo shim this sets the singleton's api_key; for the legacy
-    # Resend SDK it sets the module-level api_key attribute.
-    if _email_provider == "brevo":
-        resend_sdk.Brevo.api_key = RESEND_API_KEY
-    else:
-        resend_sdk.api_key = RESEND_API_KEY
+    # Sets the singleton's api_key on the Brevo shim.
+    resend_sdk.Brevo.api_key = RESEND_API_KEY
 
 
 # ---------- Deliverability helpers ----------
@@ -2166,7 +2153,7 @@ async def send_bulk_email(
       - Optional file attachments (each dict: {filename, content, type})
     """
     if not RESEND_API_KEY:
-        return {"ok": False, "skipped": "RESEND_API_KEY not set"}
+        return {"ok": False, "skipped": "BREVO_API_KEY not set"}
 
     unsub_url = _unsubscribe_url_for(recipient_id)
     safe_html = _normalize_email_images(html_body)
@@ -2190,7 +2177,7 @@ async def send_bulk_email(
         "tags": tags or [],
     }
     if attachments:
-        # Resend expects [{filename, content (base64 or bytes), content_type}]
+        # Brevo expects [{filename, content (base64 or bytes), content_type}]
         params["attachments"] = attachments
     return await asyncio.to_thread(resend_sdk.Emails.send, params)
 

@@ -465,7 +465,7 @@ def register(
             raise HTTPException(status_code=400, detail="Segment has no recipients")
 
         # Load attachments ONCE (not per-recipient) — bytes are base64-encoded
-        # and passed to Resend which handles the actual MIME embedding.
+        # and passed to Brevo which handles the actual MIME embedding.
         resend_attachments: list[dict] = []
         attachment_summary: list[dict] = []
         if body.attachment_ids:
@@ -517,7 +517,7 @@ def register(
                 )
                 sent.append({"user_id": r.get("id"), "email": email, "resend_id": (res or {}).get("id") if isinstance(res, dict) else None})
             except Exception as e:
-                logger.error(f"Resend send failed for {email}: {e}")
+                logger.error(f"Brevo send failed for {email}: {e}")
                 failed.append({"user_id": r.get("id"), "email": email, "reason": str(e)[:200]})
 
         log = {
@@ -825,21 +825,170 @@ def register(
         m = re.search(r"<([^>]+)>", resend_from)
         addr = m.group(1) if m else resend_from
         domain = addr.split("@", 1)[1] if "@" in addr else ""
+        provider = (os.environ.get("EMAIL_PROVIDER", "brevo") or "brevo").lower()
+        # Iter 144 — DNS checklist reflects the ACTUAL sender in use (Brevo by
+        # default). If someone flips EMAIL_PROVIDER back to Resend, the
+        # checklist follows.
+        if provider == "brevo":
+            dns_checklist = [
+                {
+                    "record": "SPF (TXT)",
+                    "host": "@",
+                    "value": "v=spf1 include:spf.brevo.com ~all",
+                    "note": "If you already have an SPF record, ADD `include:spf.brevo.com` to it — you may only have ONE SPF record per domain.",
+                },
+                {
+                    "record": "DKIM (TXT)",
+                    "host": "mail._domainkey",
+                    "value": "Brevo dashboard → Senders → Domains → your domain → Authenticate → copy the exact TXT value shown there.",
+                    "note": "Brevo provides a 1024-bit RSA key. The record MUST match theirs byte-for-byte or Gmail/Yahoo will fail authentication.",
+                },
+                {
+                    "record": "DMARC (TXT)",
+                    "host": "_dmarc",
+                    "value": f"v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain or 'yourdomain.com'}; pct=100; adkim=s; aspf=s",
+                    "note": "Quarantine (not reject) at first so you can review any false positives. Move to p=reject after 2 weeks of clean reports.",
+                },
+                {
+                    "record": "Return-Path / Bounce (CNAME)",
+                    "host": f"bounces.{domain or 'yourdomain.com'}",
+                    "value": "bounces.brevo.com",
+                    "note": "Aligns the envelope sender so SPF authenticates in the eyes of every mailbox provider. Required by Yahoo/Gmail's 2024 bulk-sender rules.",
+                },
+                {
+                    "record": "MX (optional, only for inbound)",
+                    "host": "@",
+                    "value": "Leave your existing MX records (Google Workspace, Microsoft 365, etc.) as-is. Brevo does NOT require MX for outbound. Only add Brevo MX if you specifically want Brevo Conversations / inbound parsing.",
+                    "note": "Point 10 in.brevo-mail.com. is used ONLY when Brevo Conversations is enabled. Skip otherwise.",
+                },
+                {
+                    "record": "BIMI (optional, for logo in inbox)",
+                    "host": "default._bimi",
+                    "value": f"v=BIMI1; l=https://{domain or 'yourdomain.com'}/bimi-logo.svg",
+                    "note": "Requires a Verified Mark Certificate (VMC) from DigiCert or Entrust plus a properly-formatted SVG. DMARC must be p=quarantine or p=reject first.",
+                },
+            ]
+        else:  # legacy Resend path — only relevant if someone flips EMAIL_PROVIDER
+            dns_checklist = [
+                {"record": "SPF (TXT)", "host": "@", "value": "v=spf1 include:_spf.resend.com ~all"},
+                {"record": "DKIM (CNAME)", "host": "resend._domainkey + 2 more", "value": "Resend dashboard → Domains → your domain → copy the 3 DKIM CNAME records and add to DNS"},
+                {"record": "DMARC (TXT)", "host": "_dmarc", "value": f"v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain or 'yourdomain.com'}; pct=100"},
+            ]
         return {
+            "provider": provider,
+            "provider_label": "Brevo" if provider == "brevo" else "Resend",
+            # `resend_configured` name kept for backwards compat with the UI
+            # even though the underlying key is now BREVO_API_KEY.
             "resend_configured": bool(resend_api_key),
+            "provider_configured": bool(resend_api_key),
             "from": resend_from,
             "reply_to": resend_reply_to,
             "sending_domain": domain,
-            "is_resend_sandbox": "resend.dev" in domain,
+            "is_resend_sandbox": provider == "resend" and "resend.dev" in domain,
+            "is_provider_sandbox": ("resend.dev" in domain) or ("brevo.com" in domain),
             "org_mailing_address": org_mailing_address,
             "opt_out_count": opt_out_count,
             "total_with_email": total_with_email,
-            "dns_checklist": [
-                {"record": "SPF (TXT)", "value": "Include Resend in your existing SPF or add 'v=spf1 include:_spf.resend.com ~all'", "host": "@"},
-                {"record": "DKIM (CNAME/TXT)", "value": "Resend dashboard → Domains → your domain → copy the 3 DKIM CNAME records and add to DNS", "host": "resend._domainkey + 2 more"},
-                {"record": "DMARC (TXT)", "value": "v=DMARC1; p=quarantine; rua=mailto:dmarc@" + (domain or "yourdomain.com") + "; pct=100", "host": "_dmarc"},
-                {"record": "MX (TXT, optional)", "value": "feedback-loop with Resend for bounce/complaint tracking — configure in Resend dashboard", "host": "@"},
-            ],
+            "dns_checklist": dns_checklist,
+        }
+
+    @api.get("/email/deliverability/check-dns")
+    async def check_deliverability_dns(_: dict = Depends(admin_tab_dep("email"))):
+        """Iter 144 — live DNS lookups for SPF / DKIM / DMARC / Return-Path.
+        Reports pass/fail per record with the exact value we found in DNS so
+        the admin can diff it against what Brevo expects."""
+        import dns.resolver
+        m = re.search(r"<([^>]+)>", resend_from)
+        addr = m.group(1) if m else resend_from
+        domain = addr.split("@", 1)[1] if "@" in addr else ""
+        if not domain or "brevo.com" in domain or "resend.dev" in domain:
+            return {
+                "domain": domain,
+                "note": "Set FROM to a real domain you own (not the provider's sandbox) to run DNS checks.",
+                "records": [],
+            }
+        provider = (os.environ.get("EMAIL_PROVIDER", "brevo") or "brevo").lower()
+
+        def _lookup(qname: str, rtype: str) -> list[str]:
+            try:
+                # 3-second timeout keeps the check snappy in the UI.
+                resolver = dns.resolver.Resolver()
+                resolver.lifetime = 3.0
+                resolver.timeout = 3.0
+                answers = resolver.resolve(qname, rtype)
+                out = []
+                for a in answers:
+                    if rtype == "TXT":
+                        # dnspython joins the multi-string TXT parts already.
+                        val = b"".join(a.strings).decode("utf-8", errors="replace") if hasattr(a, "strings") else str(a).strip('"')
+                        out.append(val)
+                    else:
+                        out.append(str(a).rstrip("."))
+                return out
+            except Exception:
+                return []
+
+        expected_spf_token = "spf.brevo.com" if provider == "brevo" else "_spf.resend.com"
+        expected_bounce_cname = "bounces.brevo.com" if provider == "brevo" else None
+        dkim_hosts = ["mail._domainkey"] if provider == "brevo" else ["resend._domainkey"]
+
+        # SPF (must be TXT on the apex).
+        spf_records = [r for r in await asyncio.to_thread(_lookup, domain, "TXT") if r.lower().startswith("v=spf1")]
+        spf_value = spf_records[0] if spf_records else ""
+        spf_ok = bool(spf_value) and expected_spf_token in spf_value.lower()
+
+        # DKIM.
+        dkim_status = []
+        for host in dkim_hosts:
+            qname = f"{host}.{domain}"
+            txt = await asyncio.to_thread(_lookup, qname, "TXT")
+            cname = await asyncio.to_thread(_lookup, qname, "CNAME")
+            found = txt or cname
+            dkim_status.append({
+                "host": qname,
+                "ok": bool(found),
+                "type": "TXT" if txt else ("CNAME" if cname else "missing"),
+                "value": (found[0] if found else "")[:400],
+            })
+        dkim_ok = all(d["ok"] for d in dkim_status) if dkim_status else False
+
+        # DMARC.
+        dmarc_records = await asyncio.to_thread(_lookup, f"_dmarc.{domain}", "TXT")
+        dmarc_value = next((r for r in dmarc_records if r.lower().startswith("v=dmarc1")), "")
+        dmarc_ok = bool(dmarc_value) and ("p=quarantine" in dmarc_value.lower() or "p=reject" in dmarc_value.lower())
+
+        # Return-Path / bounces subdomain (Brevo only).
+        bounce_status = None
+        if expected_bounce_cname:
+            qname = f"bounces.{domain}"
+            cname = await asyncio.to_thread(_lookup, qname, "CNAME")
+            found = cname[0] if cname else ""
+            bounce_status = {
+                "host": qname,
+                "ok": found.lower().rstrip(".") == expected_bounce_cname,
+                "type": "CNAME" if found else "missing",
+                "value": found,
+                "expected": expected_bounce_cname,
+            }
+
+        # MX — for informational display only (we don't require it for
+        # outbound). Show whatever the user has so they can sanity-check.
+        mx_records = await asyncio.to_thread(_lookup, domain, "MX")
+
+        records = [
+            {"name": "SPF", "ok": spf_ok, "value": spf_value, "expected": f"contains include:{expected_spf_token}"},
+            {"name": "DKIM", "ok": dkim_ok, "details": dkim_status},
+            {"name": "DMARC", "ok": dmarc_ok, "value": dmarc_value, "expected": "starts with v=DMARC1 and policy is quarantine or reject"},
+            {"name": "MX (informational)", "ok": None, "value": ", ".join(mx_records) or "none set"},
+        ]
+        if bounce_status:
+            records.insert(3, {"name": "Return-Path / Bounces", **bounce_status})
+
+        return {
+            "domain": domain,
+            "provider": provider,
+            "all_pass": bool(spf_ok and dkim_ok and dmarc_ok and (not bounce_status or bounce_status["ok"])),
+            "records": records,
         }
 
     @api.post("/email/test-send")
@@ -850,7 +999,7 @@ def register(
         if not to_email or "@" not in to_email:
             raise HTTPException(status_code=400, detail="A valid recipient email is required.")
         if not resend_api_key:
-            raise HTTPException(status_code=503, detail="Resend API key not configured on the server (RESEND_API_KEY).")
+            raise HTTPException(status_code=503, detail="Brevo API key not configured on the server (BREVO_API_KEY).")
         subject = (body.subject or "").strip()
         html_body = (body.body_html or "").strip()
         template_name = ""
@@ -925,8 +1074,8 @@ def register(
             }
 
     @api.post("/email/webhook")
-    async def resend_webhook(request: Request):
-        """Accept Resend webhook events for opens, deliveries, bounces."""
+    async def email_webhook(request: Request):
+        """Accept Brevo webhook events for opens, deliveries, bounces."""
         try:
             payload = await request.json()
         except Exception:
@@ -1069,9 +1218,9 @@ def register(
     # Email attachments (docs — PDF, DOCX, XLSX, etc.)
     # Stored under `email/attachments/*` in the same chat_files
     # collection. Not exposed via a public URL; the bytes are pulled
-    # at send time, base64-encoded, and delivered by Resend.
+    # at send time, base64-encoded, and delivered by Brevo.
     # ============================================================
-    _ATTACHMENT_MAX_MB = 20  # Resend hard-cap is ~40MB per email; keep headroom.
+    _ATTACHMENT_MAX_MB = 20  # Brevo hard-cap is ~10MB per email; keep headroom.
     _ATTACHMENT_ALLOWED_EXT = {
         # docs
         "pdf", "doc", "docx", "odt", "rtf", "txt",

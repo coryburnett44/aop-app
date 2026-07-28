@@ -15,6 +15,30 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 145 — Brevo-only email (removed Resend references) (2026-02-28) [BUG FIX]
+**User request:** "It is still saying Resend accepted the test email, and the email has not arrived to my inbox. Get rid of Resend. Resend should not be sending emails."
+
+**Root cause of user's confusion:** Backend was actually sending via Brevo (through a `brevo_sdk` shim that mimics the old Resend SDK), but the frontend UI still labeled the transport as "Resend" (toasts, banners, result cards, disclaimers). The `EMAIL_PROVIDER=resend` fallback path in `server.py` and `RESEND_API_KEY`/`RESEND_FROM` in `.env` were also holdovers that could theoretically route through Resend if misconfigured.
+
+**Root cause of email not arriving (unrelated to the labels):** DNS on `aop-app.org` still points at IONOS for SPF, no DKIM record for Brevo (`mail._domainkey`), DMARC set to `p=none`, and no `bounces.aop-app.org` CNAME. Brevo accepts the send (queued), but receiving mail servers spam/reject due to failed authentication.
+
+**Changes:**
+- Frontend `Admin.jsx`: all user-visible "Resend" brand strings replaced with "Brevo" — toasts (`toast.success/error`), the test-send result card ("Brevo accepted/rejected the test."), the deliverability panel disclaimer, the welcome-email warning, and the bulk resend-set-password warning.
+- Backend `server.py`: hardcoded `_email_provider = "brevo"`, removed the `if _email_provider == "resend"` branch and the `import resend as resend_sdk` fallback, so Brevo is now the only possible transport. Internal variable names `RESEND_API_KEY`/`RESEND_FROM`/`resend_sdk` retained (they alias to Brevo) to avoid renaming 20+ call sites.
+- Backend `routes/email.py`: user-visible error message updated ("Brevo API key not configured on the server (BREVO_API_KEY)."), Resend comments/log messages replaced with Brevo, `resend_webhook` route function renamed to `email_webhook`, attachment-limit comment corrected to Brevo's ~10 MB cap.
+- `backend/.env`: removed `RESEND_API_KEY`, `RESEND_FROM`, and the now-unused `EMAIL_PROVIDER` toggle.
+- Regression: `tests/test_iteration145_brevo_only.py` — verifies (1) `/email/test-send` returns `Test email accepted by Brevo.` with a Brevo `mailin.fr` message-id, (2) `/email/deliverability` reports `provider_label == "Brevo"` with `spf.brevo.com` in the checklist and zero `resend.com` references, (3) `Admin.jsx` contains none of the offending Resend brand strings, (4) `.env` has no `RESEND_*` keys. All 4 tests pass.
+
+**What the user still needs to do — Brevo DNS setup (this is why emails aren't arriving):**
+Go to IONOS DNS (aop-app.org) and update:
+1. **SPF (TXT @)** — replace `v=spf1 include:_spf-us.ionos.com ~all` with `v=spf1 include:spf.brevo.com include:_spf-us.ionos.com ~all` (or just Brevo if you no longer use IONOS mail).
+2. **DKIM (TXT `mail._domainkey`)** — copy the exact TXT value from Brevo → Senders → Domains → aop-app.org → Authenticate.
+3. **DMARC (TXT `_dmarc`)** — change `v=DMARC1; p=none;` to `v=DMARC1; p=quarantine; rua=mailto:dmarc@aop-app.org; pct=100; adkim=s; aspf=s`.
+4. **Return-Path (CNAME `bounces.aop-app.org`)** — point to `bounces.brevo.com`.
+Then Admin → Deliverability → **Run live DNS check** — all rows should turn green.
+
+
+## Implemented
 ### Iteration 143 — Email attachments + signature image reliability (2026-02-28) [FEATURE + BUG FIX]
 **User request:** "Allow admins to attach documents to emails. Ensure signature block's pictures are always visible and loading on every platform (Chrome, Safari, mobile, etc.)."
 

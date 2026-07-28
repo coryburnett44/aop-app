@@ -1057,7 +1057,7 @@ function ApplicationsPanel({ onApproved }) {
                 if (data?.welcome_email_sent) {
                     toast.success("Approved — Welcome email delivered to the applicant.");
                 } else {
-                    toast.warning(`Approved, but welcome email did NOT send: ${data?.welcome_email_detail || "unknown error"}. Check Resend domain config.`, { duration: 8000 });
+                    toast.warning(`Approved, but welcome email did NOT send: ${data?.welcome_email_detail || "unknown error"}. Check Brevo domain config.`, { duration: 8000 });
                 }
             } else {
                 toast.success("Application rejected");
@@ -1213,7 +1213,7 @@ function MembersAdmin() {
         try {
             const { data } = await api.post(`/admin/members/${m.id}/resend-set-password`);
             if (data?.sent) toast.success(`Set-password email sent to ${m.email}`);
-            else toast.warning("Token created but the email failed to send. Check Resend logs.");
+            else toast.warning("Token created but the email failed to send. Check Brevo logs.");
         } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || "Failed to resend"); }
     }
     async function bulkResendSetPassword() {
@@ -3791,7 +3791,7 @@ function emptyCause() {
     return { title: "", description: "", goal_amount: 0, cover_image: "", category: "general", is_active: true, payment_processor: "zeffy", zeffy_url: "" };
 }
 
-/* -------- Email Blast Admin (Resend) -------- */
+/* -------- Email Blast Admin (Brevo) -------- */
 function EmailBlastAdmin() {
     const [view, setView] = useState("compose");
     return (
@@ -4040,6 +4040,8 @@ function PushAdmin() {
 function EmailDeliverability() {
     const [data, setData] = useState(null);
     const [error, setError] = useState("");
+    const [dnsCheck, setDnsCheck] = useState(null);
+    const [dnsBusy, setDnsBusy] = useState(false);
 
     useEffect(() => {
         api.get("/email/deliverability")
@@ -4047,35 +4049,47 @@ function EmailDeliverability() {
             .catch((err) => setError(formatApiError(err.response?.data?.detail) || "Could not load deliverability info"));
     }, []);
 
+    async function runDnsCheck() {
+        setDnsBusy(true);
+        setDnsCheck(null);
+        try {
+            const { data: res } = await api.get("/email/deliverability/check-dns");
+            setDnsCheck(res);
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "DNS check failed");
+        }
+        setDnsBusy(false);
+    }
+
     if (error) return <div className="bg-card border border-border rounded-2xl p-6 text-red-700" data-testid="deliverability-error">{error}</div>;
     if (!data) return <div className="text-muted-foreground">Loading…</div>;
 
-    const sandboxWarn = data.is_resend_sandbox;
-    const notConfigured = !data.resend_configured;
+    const sandboxWarn = data.is_provider_sandbox ?? data.is_resend_sandbox;
+    const notConfigured = !(data.provider_configured ?? data.resend_configured);
+    const providerLabel = data.provider_label || "Brevo";
 
     return (
         <div className="space-y-5 max-w-3xl" data-testid="deliverability-panel">
             <div className="bg-card border border-border rounded-2xl p-5">
                 <h3 className="font-heading text-xl font-bold mb-1">Email deliverability</h3>
                 <p className="text-sm text-muted-foreground">
-                    Stop emails from landing in members' junk folders. The app already attaches the
-                    headers and unsubscribe link that Gmail/Yahoo bulk-sender rules require — but DNS
-                    authentication on your sending domain (SPF, DKIM, DMARC) is the other half. Verify
-                    those below.
+                    Stop emails from landing in members' junk folders. This app sends through <strong>{providerLabel}</strong>. Verify your DNS records match what {providerLabel} expects — that's what stops Gmail / Yahoo / Outlook from routing you to spam.
                 </p>
             </div>
 
             {(sandboxWarn || notConfigured) && (
                 <div className="rounded-2xl border-2 border-red-300 bg-red-50 p-4 text-sm" data-testid="deliverability-warning">
                     <div className="font-bold text-red-800 mb-1">⚠ Action required</div>
-                    {notConfigured && <div>Resend API key is not configured on the server. Emails won't send at all.</div>}
-                    {sandboxWarn && <div>You're sending from <code>{data.from}</code> — that's the Resend sandbox address and <strong>guarantees</strong> spam folder placement. Switch <code>RESEND_FROM</code> to your verified domain.</div>}
+                    {notConfigured && <div>{providerLabel} API key is not configured on the server. Emails won't send at all.</div>}
+                    {sandboxWarn && <div>You're sending from <code>{data.from}</code> — that's the {providerLabel} sandbox address and <strong>guarantees</strong> spam folder placement. Switch the FROM environment variable to your verified domain (<code>info@aop-app.org</code> or similar).</div>}
                 </div>
             )}
 
             <div className="grid sm:grid-cols-2 gap-3" data-testid="deliverability-stats">
                 <div className="rounded-2xl border border-border bg-card p-4">
-                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Sender</div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Provider</div>
+                    <div className="font-mono text-sm mt-1">{providerLabel}</div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mt-3">Sender</div>
                     <div className="font-mono text-sm mt-1 break-all">{data.from}</div>
                     <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mt-3">Reply-To</div>
                     <div className="font-mono text-sm mt-1 break-all">{data.reply_to}</div>
@@ -4089,27 +4103,74 @@ function EmailDeliverability() {
             </div>
 
             <div className="rounded-2xl border border-border bg-card p-5">
-                <h4 className="font-heading text-lg font-bold mb-1">DNS records to verify</h4>
+                <div className="flex items-center justify-between gap-4 flex-wrap mb-2">
+                    <h4 className="font-heading text-lg font-bold">DNS records to verify at your registrar</h4>
+                    <Button
+                        onClick={runDnsCheck}
+                        disabled={dnsBusy}
+                        variant="outline"
+                        className="rounded-full"
+                        data-testid="deliverability-dns-check-btn"
+                    >
+                        {dnsBusy ? "Checking…" : "Run live DNS check"}
+                    </Button>
+                </div>
                 <p className="text-xs text-muted-foreground mb-4">
                     Log in to your domain registrar (the place you bought <code>{data.sending_domain || "your domain"}</code>)
-                    and confirm these records exist. Without them, Gmail/Yahoo/Outlook will route your
-                    mail straight to spam — no exceptions.
+                    and confirm these records exist. Values are for <strong>{providerLabel}</strong>. If you previously used Resend, delete those old records to avoid conflicts.
                 </p>
                 <div className="space-y-3">
                     {data.dns_checklist.map((row, i) => (
                         <div key={i} className="rounded-xl border border-border bg-muted/30 p-3" data-testid={`dns-row-${i}`}>
-                            <div className="flex items-center gap-2 mb-1">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
                                 <span className="inline-block text-[10px] font-bold uppercase tracking-wider rounded-full px-2 py-0.5 bg-primary/10 text-primary">{row.record}</span>
                                 <span className="text-xs text-muted-foreground">Host: <code className="bg-card px-1 py-0.5 rounded">{row.host}</code></span>
                             </div>
                             <div className="text-xs leading-relaxed font-mono break-all bg-card border border-border rounded p-2">{row.value}</div>
+                            {row.note && <div className="text-[11px] text-muted-foreground mt-2 leading-relaxed">{row.note}</div>}
                         </div>
                     ))}
                 </div>
+
+                {dnsCheck && (
+                    <div className="mt-5 rounded-xl border-2 border-primary/40 bg-primary/5 p-4" data-testid="deliverability-dns-result">
+                        <div className="flex items-center gap-2 mb-3">
+                            <span className={`inline-block text-xs font-bold rounded-full px-3 py-1 ${dnsCheck.all_pass ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                                {dnsCheck.all_pass ? "✓ All records pass" : "⚠ Some records need fixing"}
+                            </span>
+                            <span className="text-xs text-muted-foreground">Live lookup for <code>{dnsCheck.domain}</code></span>
+                        </div>
+                        {dnsCheck.note && <div className="text-xs text-muted-foreground mb-3">{dnsCheck.note}</div>}
+                        <div className="space-y-2">
+                            {(dnsCheck.records || []).map((rec, i) => (
+                                <div key={i} className="text-xs bg-card border border-border rounded-lg p-3" data-testid={`dns-check-${i}`}>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className={`inline-block w-2 h-2 rounded-full ${rec.ok === true ? "bg-emerald-500" : rec.ok === false ? "bg-red-500" : "bg-slate-400"}`}></span>
+                                        <span className="font-bold">{rec.name}</span>
+                                        {rec.ok === true && <span className="text-emerald-700">pass</span>}
+                                        {rec.ok === false && <span className="text-red-700">fail</span>}
+                                    </div>
+                                    {rec.value && <div className="font-mono text-[11px] break-all mt-1 bg-muted/40 rounded p-1.5">{rec.value}</div>}
+                                    {rec.expected && <div className="text-[11px] text-muted-foreground mt-1">Expected: {rec.expected}</div>}
+                                    {rec.details && (
+                                        <div className="mt-2 space-y-1">
+                                            {rec.details.map((d, j) => (
+                                                <div key={j} className="text-[11px]">
+                                                    <span className={d.ok ? "text-emerald-700" : "text-red-700"}>{d.ok ? "✓" : "✗"}</span> <code>{d.host}</code> <span className="text-muted-foreground">({d.type})</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 <div className="mt-4 text-xs text-muted-foreground leading-relaxed">
-                    After updating DNS, run a deliverability check:&nbsp;
+                    After updating DNS, wait 15-30 minutes for propagation, then re-run the check above. You can also send yourself a test from the <strong>Test send</strong> tab to&nbsp;
                     <a href="https://www.mail-tester.com/" target="_blank" rel="noopener noreferrer" className="text-primary font-semibold hover:underline">mail-tester.com</a>
-                    {" "}— send a test from the <strong>Test send</strong> tab to the address they give you, then click their "Check your score". Aim for 9/10 or higher.
+                    {" "}and aim for 9/10 or higher.
                 </div>
             </div>
 
@@ -4156,9 +4217,9 @@ function EmailTestSend() {
             const { data } = await api.post("/email/test-send", payload);
             setLastResult(data);
             if (data.ok) {
-                toast.success(`Test email accepted by Resend (to ${data.to}).`);
+                toast.success(`Test email accepted by Brevo (to ${data.to}).`);
             } else {
-                toast.error(`Resend rejected the test: ${data.detail || "unknown error"}`, { duration: 10000 });
+                toast.error(`Brevo rejected the test: ${data.detail || "unknown error"}`, { duration: 10000 });
             }
         } catch (e) {
             const detail = formatApiError(e.response?.data?.detail) || "Failed to send test email";
@@ -4172,7 +4233,7 @@ function EmailTestSend() {
         <div className="max-w-xl space-y-5" data-testid="email-test-send-panel">
             <div className="bg-card border border-border rounded-2xl p-5">
                 <h3 className="font-heading text-xl font-bold mb-1">Send a test email</h3>
-                <p className="text-sm text-muted-foreground">Validate that Resend is configured and your verified sending domain is reaching inboxes — without having to approve a real applicant or queue a blast.</p>
+                <p className="text-sm text-muted-foreground">Validate that Brevo is configured and your verified sending domain is reaching inboxes — without having to approve a real applicant or queue a blast.</p>
             </div>
             <div>
                 <Label>Recipient email *</Label>
@@ -4223,7 +4284,7 @@ function EmailTestSend() {
                     className={`rounded-2xl border p-4 text-sm ${lastResult.ok ? "border-green-300 bg-green-50 text-green-900" : "border-red-300 bg-red-50 text-red-900"}`}
                     data-testid="test-email-result"
                 >
-                    <div className="font-semibold mb-1">{lastResult.ok ? "Resend accepted the test." : "Resend rejected the test."}</div>
+                    <div className="font-semibold mb-1">{lastResult.ok ? "Brevo accepted the test." : "Brevo rejected the test."}</div>
                     <div className="text-xs leading-relaxed">{lastResult.detail}</div>
                     {lastResult.template_name && <div className="text-xs mt-2 opacity-80">Template: <code>{lastResult.template_name}</code></div>}
                     {lastResult.subject && <div className="text-xs opacity-80">Subject: <code>{lastResult.subject}</code></div>}
@@ -4774,7 +4835,7 @@ function EmailTemplates() {
         try {
             const { data } = await api.post("/email/test-send", { template_id: t.id });
             if (data.ok) toast.success(`Test "${t.name}" sent to ${data.to || "you"} — check your inbox`);
-            else toast.error(`Resend rejected: ${formatApiError(data.detail) || "unknown error"}`, { duration: 10000 });
+            else toast.error(`Brevo rejected: ${formatApiError(data.detail) || "unknown error"}`, { duration: 10000 });
         } catch (e) {
             toast.error(formatApiError(e.response?.data?.detail) || "Test send failed");
         } finally {
