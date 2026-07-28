@@ -2208,10 +2208,14 @@ def _normalize_email_images(html: str) -> str:
         return html
     base = (os.environ.get("FRONTEND_URL", "") or "").rstrip("/")
 
-    # First pass: rewrite /api/files/email/* -> /api/email/image/* (public,
+    # First pass: rewrite /api/files/email/* -> /api/email/image/email/* (public,
     # no-cookie endpoint) everywhere in the HTML, whether relative or already
-    # absolutized against FRONTEND_URL / any preview host.
-    html = re.sub(r"/api/files/email/", "/api/email/image/", html)
+    # absolutized against FRONTEND_URL / any preview host. The `email/` prefix
+    # MUST be preserved because the public /api/email/image endpoint scopes
+    # itself to storage paths starting with `email/` (defense-in-depth to
+    # prevent it being abused as a generic file leak). Idempotent: the regex
+    # only matches `/api/files/email/` so already-rewritten URLs pass through.
+    html = re.sub(r"/api/files/email/", "/api/email/image/email/", html)
 
     def fix(match: "re.Match[str]") -> str:
         tag = match.group(0)

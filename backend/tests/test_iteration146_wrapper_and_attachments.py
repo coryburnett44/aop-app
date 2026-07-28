@@ -151,3 +151,32 @@ def test_wrap_email_document_escapes_subject():
     # The raw script tag must not appear inside <title>
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_normalize_preserves_email_prefix_in_legacy_urls():
+    """Regression: legacy `/api/files/email/{path}` URLs must be rewritten
+    to `/api/email/image/email/{path}` — the `email/` prefix is required by
+    the public image endpoint which is scoped to `email/*` storage paths.
+    Previously the code dropped the prefix, causing 404s in delivered mail.
+    """
+    from server import _normalize_email_images
+
+    html = '<p><img src="/api/files/email/blast/abc/photo.png" alt=""></p>'
+    out = _normalize_email_images(html)
+    # New public URL — must retain the email/ prefix
+    assert "/api/email/image/email/blast/abc/photo.png" in out
+    # Must NOT have dropped the prefix
+    assert "/api/email/image/blast/abc/photo.png" not in out
+    # And must not have the old files/email path anymore
+    assert "/api/files/email/" not in out
+
+
+def test_normalize_idempotent_on_already_public_url():
+    """Already-public `/api/email/image/email/...` URLs must NOT be
+    double-rewritten to `/api/email/image/email/email/...`."""
+    from server import _normalize_email_images
+
+    html = '<img src="/api/email/image/email/blast/abc/photo.png" alt="">'
+    out = _normalize_email_images(html)
+    assert out.count("/api/email/image/email/") == 1
+    assert "/api/email/image/email/email/" not in out

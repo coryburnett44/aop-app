@@ -1131,8 +1131,8 @@ def register(
         return out
 
     def _normalize_signature_html(html: str) -> str:
-        """Iter 143: rewrite `/api/files/email/*` → `/api/email/image/*` and
-        absolutize `src` at SAVE time so signature previews render correctly
+        """Iter 143: rewrite `/api/files/email/*` → `/api/email/image/email/*`
+        and absolutize `src` at SAVE time so signature previews render correctly
         outside of authenticated admin sessions (Safari with ITP, incognito,
         webhook previews, etc.). This is the same helper `send_bulk_email`
         applies at send time, but running it on save keeps the on-page
