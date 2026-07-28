@@ -15,6 +15,33 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 146 — Professional email wrapper + Brevo attachment fix + legacy image URL fix (2026-02-28) [BUG FIX]
+**User request:** "The email still goes to junk mail. The attachments are not attached in the emails. See if you can wrap the email in 'something' that ensures my pictures, embedded pictures, and attachments show up and display. I need professional emails to end up in inboxes."
+
+**Three code bugs found & fixed:**
+
+1. **Attachments were being silently dropped.** The Brevo shim (`brevo_sdk.py`) received Resend-style `attachments: [{filename, content, content_type}]` but the `_translate()` function completely ignored the key. Brevo v3 requires **singular** `attachment: [{name, content}]` — so every blast with attached files went out with zero attachments. Fixed: shim now translates the resend shape → Brevo shape, auto-base64-encodes raw bytes, and passes remote-URL attachments through.
+
+2. **Emails were bare HTML fragments (spam-scored badly).** Outbound HTML had no DOCTYPE, no `<html>/<head>`, no charset meta, no preheader, no Outlook conditional comments. Added a new `_wrap_email_document(inner_html, subject, preheader)` helper in `server.py` that produces a bulletproof HTML5 document with:
+    - Full XHTML doctype + `<html lang="en">` + charset + viewport meta
+    - Hidden preheader block (auto-extracted from body, 120-char cap) so Gmail/Apple Mail show a compelling preview next to the subject
+    - Outlook `<!--[if mso]>` conditional CSS block for consistent Outlook rendering
+    - Bulletproof table-based 600px container with brand strip ("Alpha Omega Phi · Military Fraternity & Sorority, Inc.")
+    - Font stack, safe colors, mobile @media breakpoint
+    - Idempotent (calling twice never double-wraps).
+   Applied at three call sites: `send_bulk_email`, `POST /api/email/preview`, `POST /api/email/test-send`.
+
+3. **Legacy embedded image URLs were 404'ing in delivered mail.** `_normalize_email_images` rewrote `/api/files/email/{path}` → `/api/email/image/{path}` but dropped the required `email/` storage-path prefix — the public image endpoint scopes itself to `email/*` for security, so all rewritten images returned 404 in mailbox image proxies. Fixed: regex now substitutes with `/api/email/image/email/{path}`, preserving the prefix. Idempotent (already-public URLs aren't matched).
+
+**Regression coverage:**
+- `tests/test_iteration146_wrapper_and_attachments.py` — 9 offline unit tests (all pass): Brevo attachment translation (dict-with-filename, raw bytes → base64, URL passthrough), wrapper produces full doc, wrapper is idempotent, subject is HTML-escaped, preheader stripping+capping, legacy image URL preserves `email/` prefix, no double-rewrite.
+- Bug testing agent (iteration_105) — verdict: `fixed`, 100% backend success rate. Uploaded a real PNG + PDF, verified public no-cookie image fetch returns 200, Brevo attachment shape verified with a monkey-patched shim, test-only blast accepted by Brevo with `sent=1, failed=0`.
+
+**Not code-fixable — user action required for inbox placement on production:**
+DNS at IONOS for `aop-app.org` still fails Brevo authentication (SPF missing `include:spf.brevo.com`, DKIM `mail._domainkey` missing, DMARC still `p=none`, no `bounces.aop-app.org` CNAME). Even with the code fixes above, receiving mail servers spam-fold emails from unauthenticated domains. The user must update these records at their registrar for emails to consistently land in inboxes.
+
+
+## Implemented
 ### Iteration 145 — Brevo-only email (removed Resend references) (2026-02-28) [BUG FIX]
 **User request:** "It is still saying Resend accepted the test email, and the email has not arrived to my inbox. Get rid of Resend. Resend should not be sending emails."
 
