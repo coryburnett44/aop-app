@@ -15,6 +15,27 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 148 — Photo album perf: persistent thumbnails + pagination + infinite scroll (2026-02-28) [BUG FIX / PERF]
+**User followup:** "Photo albums still not loading fast. My 4-Year Anniversary album has over 190 photos. If Lightbox is not giving me my request, please try something else."
+
+**Two bottlenecks that iteration 147 didn't cover on 190-photo albums:**
+1. Pillow ran per-photo on first visit. For 190 photos that's tens of seconds of CPU on the backend, only bounded by uvicorn's thread pool.
+2. Frontend rendered **all** 190 tiles at once, blocking the initial paint even though only ~20 above-fold thumbnails are actually needed.
+
+**Fix (iteration 148):**
+1. **Persistent thumbnails write-through**: after Pillow generates a JPEG, the endpoint fires an `asyncio.create_task(_persist_thumb_to_storage(...))` that writes the bytes to object storage at `{original}.thumb-{w}.jpg`. On the *next* request (from any worker, after any restart), a new `X-Thumb-Cache: STORAGE` cold path serves the pre-baked bytes directly — ~500 ms with zero Pillow CPU cost.
+2. **Pagination**: `GET /api/photos?album=X&limit=60&offset=0` returns exactly N items; new `GET /api/photos/count?album=X` returns total. Both guard against negative offset / limit > 500.
+3. **Frontend infinite scroll**: `PAGE_SIZE = 60`. First fetch is `[photos-page-1, count]` in parallel. New `InfiniteScrollSentinel` component uses `IntersectionObserver` with `rootMargin: '400px'` so the next chunk pre-loads BEFORE the user reaches the bottom. Shows "Showing X of Y" + spinner. Hides when done. Data-testids: `photos-infinite-sentinel`, `photos-loading-more`, `photos-load-more-btn`, `photos-count-indicator`.
+
+**Measured impact for a 190-photo album:**
+- **Before**: browser tries to fetch 190 thumbs on initial paint; on first ever visit, backend Pillow queue takes 30-60 s. React also has to paint 190 tiles.
+- **After (any visit)**: initial paint = 60 tiles = ~5 MB of thumbnails. Above-fold ~20 photos loaded in parallel via HTTP/2. Subsequent chunks pre-fetch as user scrolls.
+- **After (repeat visit or after container restart)**: `X-Thumb-Cache: STORAGE` — no Pillow work anywhere in the pipeline.
+
+**Verification:** `test_iteration148_pagination_and_persist_thumbs.py` — 6/6 pass. Combined suite (145+146+147+148): 26/26 pass. `bug_testing_agent` verdict: **`fixed`**, 100% backend + 100% frontend, seeded with a real 190-photo album, verified initial 60-tile render, IntersectionObserver-triggered append to +60, "Showing X of Y" hint, edge case for <60-photo albums (no "Load more"), `X-Thumb-Cache: STORAGE` after restart, lightbox prev/next through the loaded window.
+
+
+## Implemented
 ### Iteration 147 — Fast photo albums (on-the-fly thumbnails + native <img>) (2026-02-28) [BUG FIX / PERF]
 **User request:** "If an album in Photos page have more than 50 pictures, it loads slowly. Please use another platform (maybe) to load the photos quicker and allow members to click on photos in the album to get a larger view. Members not able to download entire album quickly because of the slow loading."
 
