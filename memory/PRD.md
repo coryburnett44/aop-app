@@ -15,6 +15,34 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 147 — Fast photo albums (on-the-fly thumbnails + native <img>) (2026-02-28) [BUG FIX / PERF]
+**User request:** "If an album in Photos page have more than 50 pictures, it loads slowly. Please use another platform (maybe) to load the photos quicker and allow members to click on photos in the album to get a larger view. Members not able to download entire album quickly because of the slow loading."
+
+**Root cause:** `PhotoTile` and `PhotoLightbox` both fetched every image via `axios.get(path, {responseType: 'blob'})` + `URL.createObjectURL(blob)`. For a 50-photo album that meant 50 serialised XHR downloads of the *full-resolution originals* (2-8MB per phone photo — 200-400MB total) through the JS thread, defeating HTTP/2 multiplexing, viewport-based lazy-load, and progressive decode.
+
+**Fix (no external CDN — used built-in Pillow):**
+1. New `GET /api/photos/thumb/{storage_path:path}?w=400` backend endpoint — generates a JPEG q=82 thumbnail with Pillow, respects EXIF orientation (portraits from iPhone don't come out rotated), auth-required, in-memory LRU cache (500 items), ETag-based 304 short-circuit. Width whitelist `{200,320,400,600,800,1200}` snaps arbitrary widths to prevent cache-flood DoS.
+2. `photo_out()` returns both `url` (full-res) and `thumb_url` (fast grid).
+3. `/api/photos/albums` returns `cover_thumb_url` for fast album cards.
+4. `PhotoTile` swapped blob-fetch → native `<img src={mediaUrl(photo.thumb_url)} loading="lazy">` — browser handles fetch, cache, parallel HTTP/2, and lazy-load natively.
+5. `PhotoLightbox` uses native `<img>` on the full-res URL and prefetches adjacent (prev/next) photos via `new Image()` so arrow-navigation feels instant.
+6. `AlbumCard` uses `cover_thumb_url` for the card image.
+
+**Measured impact (curl):**
+- Original: 4.33 MB, 706 ms per photo
+- Thumbnail (first hit / MISS): 80 KB (54× smaller), 717 ms (includes Pillow work)
+- Thumbnail (cache HIT): 80 KB, **120 ms**
+- ETag 304 revalidation: 0 bytes, 125 ms
+
+For a 50-photo album:
+- **Before:** ~200-400 MB serialised through JS, 30-60 s
+- **After (first visit):** ~4 MB parallel HTTP/2, ~2-3 s
+- **After (repeat visit):** near-instant (browser ETag revalidation)
+
+**Regression:** `tests/test_iteration147_photo_thumbnails.py` — 7/7 pass. Full-suite (145+146+147) 20/20 pass. `testing_agent` (iteration 148) verified end-to-end via Playwright: grid uses `/api/photos/thumb/` with native `<img>` + lazy-load, lightbox uses `/api/files/` full-res, no `blob:` URLs remain in the DOM. Verdict: **100% pass, both backend and frontend**.
+
+
+## Implemented
 ### Iteration 146 — Professional email wrapper + Brevo attachment fix + legacy image URL fix (2026-02-28) [BUG FIX]
 **User request:** "The email still goes to junk mail. The attachments are not attached in the emails. See if you can wrap the email in 'something' that ensures my pictures, embedded pictures, and attachments show up and display. I need professional emails to end up in inboxes."
 
