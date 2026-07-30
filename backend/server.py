@@ -864,6 +864,34 @@ def _generate_thumbnail(raw_bytes: bytes, width: int) -> bytes:
         return raw_bytes
 
 
+def _thumb_storage_key(storage_path: str, width: int) -> str:
+    """Persisted-thumbnail key: `{original}.thumb-{w}.jpg`. Kept alongside the
+    original so garbage-collection is trivial (both keys share a prefix)."""
+    return f"{storage_path}.thumb-{width}.jpg"
+
+
+async def _fetch_thumb_from_storage(storage_path: str, width: int) -> "bytes | None":
+    """Try to load a pre-generated thumbnail from object storage. Returns
+    None if the object doesn't exist yet (first visit)."""
+    key = _thumb_storage_key(storage_path, width)
+    try:
+        data, _ct = await asyncio.to_thread(get_object, key)
+        return data
+    except Exception:
+        return None
+
+
+async def _persist_thumb_to_storage(storage_path: str, width: int, thumb_bytes: bytes) -> None:
+    """Best-effort: write the thumbnail to object storage so next time we
+    can skip Pillow entirely. Errors are swallowed — we still served the
+    thumb from RAM, so persistence is a nice-to-have, not a hard requirement."""
+    try:
+        key = _thumb_storage_key(storage_path, width)
+        await asyncio.to_thread(put_object, key, thumb_bytes, "image/jpeg")
+    except Exception as e:
+        logger.warning(f"thumb persist failed for {storage_path} w={width}: {e}")
+
+
 @api.get("/photos/thumb/{storage_path:path}")
 async def get_photo_thumbnail(
     storage_path: str,
@@ -872,12 +900,16 @@ async def get_photo_thumbnail(
     user: dict = Depends(get_current_user),
 ):
     """Serve a resized JPEG thumbnail. Auth-required (same rules as
-    `/files/*`). Pillow work is done once per (path, width) then served
-    from memory. Browser short-circuits on ETag for subsequent visits."""
+    `/files/*`). Three cache layers:
+      1. Browser ETag → 304 (fastest, ~0 bytes on the wire).
+      2. In-memory LRU (~120ms cache hit).
+      3. Object storage (`{path}.thumb-{w}.jpg`) — persists across restarts
+         and worker instances, ~200-300ms.
+      4. Cold path: pull original from storage + Pillow resize (~700ms), then
+         warm layers 2 & 3 for next time.
+    """
     if w not in _THUMB_ALLOWED_WIDTHS:
-        # Snap to the nearest allowed width — prevents DoS-by-cache-flood
-        # (an attacker requesting every integer 1..2000 would blow the
-        # cache). We whitelist a handful of sensible sizes.
+        # Snap to the nearest allowed width — prevents DoS-by-cache-flood.
         w = min(_THUMB_ALLOWED_WIDTHS, key=lambda x: abs(x - w))
     rec = await db.photos.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
     if not rec:
@@ -900,12 +932,30 @@ async def get_photo_thumbnail(
                 "X-Thumb-Cache": "HIT",
             },
         )
+    # Try the persisted storage variant next — orders of magnitude faster
+    # than Pillow because it's just a byte copy.
+    persisted = await _fetch_thumb_from_storage(storage_path, w)
+    if persisted is not None:
+        _put_thumb_cache(key, persisted)
+        return FastResponse(
+            content=persisted,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "private, max-age=31536000, immutable",
+                "ETag": etag,
+                "X-Thumb-Cache": "STORAGE",
+            },
+        )
+    # Cold path — generate the thumbnail synchronously (~700ms) then persist
+    # to storage in the background so we never do it twice.
     try:
         raw, _ctype = await asyncio.to_thread(get_object, storage_path)
     except Exception:
         raise HTTPException(status_code=404, detail="Photo not found in storage")
     thumb = await asyncio.to_thread(_generate_thumbnail, raw, w)
     _put_thumb_cache(key, thumb)
+    # Fire-and-forget storage write.
+    asyncio.create_task(_persist_thumb_to_storage(storage_path, w, thumb))
     return FastResponse(
         content=thumb,
         media_type="image/jpeg",

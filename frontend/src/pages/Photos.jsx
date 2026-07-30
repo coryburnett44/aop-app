@@ -39,6 +39,8 @@ export default function Photos() {
     const [albums, setAlbums] = useState([]);
     const [activeAlbum, setActiveAlbum] = useState(null);
     const [photos, setPhotos] = useState([]);
+    const [photosTotal, setPhotosTotal] = useState(0);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [creatingAlbum, setCreatingAlbum] = useState(false);
     const [editingAlbum, setEditingAlbum] = useState(null);
     const [uploading, setUploading] = useState(false);
@@ -50,6 +52,11 @@ export default function Photos() {
     // Lightbox state — index into the currently-visible `photos` array. `null`
     // means closed. Kept at parent level so prev/next can walk the whole album.
     const [lightboxIndex, setLightboxIndex] = useState(null);
+
+    // Page size for infinite scroll. 60 tiles = ~5MB of thumbnails at
+    // 400px JPEG q=82. That's enough for the first paint on any album,
+    // even one with 200+ photos.
+    const PAGE_SIZE = 60;
 
     function openAlbum(album) {
         // Drive the active album from the URL so a hard refresh keeps the
@@ -70,10 +77,36 @@ export default function Photos() {
     async function loadPhotos(albumName) {
         setLoadingPhotos(true);
         try {
-            const { data } = await api.get(`/photos?album=${encodeURIComponent(albumName)}`);
-            setPhotos(data || []);
-        } catch { setPhotos([]); }
+            // Fetch the first page + total count in parallel so the grid
+            // can render immediately and know when to stop scrolling.
+            const [page, count] = await Promise.all([
+                api.get(`/photos?album=${encodeURIComponent(albumName)}&limit=${PAGE_SIZE}&offset=0`),
+                api.get(`/photos/count?album=${encodeURIComponent(albumName)}`),
+            ]);
+            setPhotos(page.data || []);
+            setPhotosTotal(count.data?.total || (page.data || []).length);
+        } catch {
+            setPhotos([]);
+            setPhotosTotal(0);
+        }
         setLoadingPhotos(false);
+    }
+
+    async function loadMorePhotos() {
+        if (!activeAlbum || loadingMore) return;
+        if (photos.length >= photosTotal) return;
+        setLoadingMore(true);
+        try {
+            const { data } = await api.get(
+                `/photos?album=${encodeURIComponent(activeAlbum.name)}&limit=${PAGE_SIZE}&offset=${photos.length}`,
+            );
+            // De-dupe by id in case a photo was uploaded while paging (shift
+            // would otherwise cause a repeat at page boundaries).
+            const existing = new Set(photos.map((p) => p.id));
+            const fresh = (data || []).filter((p) => !existing.has(p.id));
+            setPhotos((prev) => [...prev, ...fresh]);
+        } catch { /* ignore — user can retry by scrolling again */ }
+        setLoadingMore(false);
     }
 
     // Initial album load
@@ -239,22 +272,31 @@ export default function Photos() {
                         <p className="text-sm text-slate-500">Click "Upload photos" above to start the memories.</p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4" data-testid="photo-grid">
-                        {photos.map((p, i) => (
-                            <PhotoTile
-                                key={p.id}
-                                photo={p}
-                                currentUser={user}
-                                onDelete={removePhoto}
-                                onSetCover={(albumCanEdit) => albumCanEdit ? setAsCover(p.id) : null}
-                                albumCanEdit={user && (user.role === "admin" || activeAlbum?.created_by === user.id)}
-                                selectMode={selectMode}
-                                selected={selectedIds.includes(p.id)}
-                                onToggleSelect={() => toggleSelect(p.id)}
-                                onOpenLightbox={() => setLightboxIndex(i)}
-                            />
-                        ))}
-                    </div>
+                    <>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4" data-testid="photo-grid">
+                            {photos.map((p, i) => (
+                                <PhotoTile
+                                    key={p.id}
+                                    photo={p}
+                                    currentUser={user}
+                                    onDelete={removePhoto}
+                                    onSetCover={(albumCanEdit) => albumCanEdit ? setAsCover(p.id) : null}
+                                    albumCanEdit={user && (user.role === "admin" || activeAlbum?.created_by === user.id)}
+                                    selectMode={selectMode}
+                                    selected={selectedIds.includes(p.id)}
+                                    onToggleSelect={() => toggleSelect(p.id)}
+                                    onOpenLightbox={() => setLightboxIndex(i)}
+                                />
+                            ))}
+                        </div>
+                        <InfiniteScrollSentinel
+                            hasMore={photos.length < photosTotal}
+                            loading={loadingMore}
+                            onLoadMore={loadMorePhotos}
+                            shown={photos.length}
+                            total={photosTotal}
+                        />
+                    </>
                 )}
             </section>
 
@@ -270,6 +312,64 @@ export default function Photos() {
         </div>
     );
 }
+
+/**
+ * Bottom-of-grid sentinel that triggers `onLoadMore` via IntersectionObserver
+ * whenever the grid reaches 400px from the bottom of the viewport. That
+ * pre-loads the next chunk of photos BEFORE the user actually reaches the
+ * bottom, so scrolling feels seamless on a 190-photo album.
+ *
+ * Also renders a "Showing X of Y" hint + spinner while more photos are
+ * being fetched. Hides itself completely when all photos are loaded.
+ */
+function InfiniteScrollSentinel({ hasMore, loading, onLoadMore, shown, total }) {
+    const ref = useRef(null);
+    useEffect(() => {
+        if (!hasMore || !ref.current) return;
+        const el = ref.current;
+        const io = new IntersectionObserver(
+            (entries) => {
+                if (entries.some((e) => e.isIntersecting)) onLoadMore();
+            },
+            { rootMargin: "400px" },
+        );
+        io.observe(el);
+        return () => io.disconnect();
+    }, [hasMore, onLoadMore, shown]);
+
+    if (!hasMore && total === 0) return null;
+    return (
+        <div
+            ref={ref}
+            className="mt-6 flex flex-col items-center gap-2 text-sm text-slate-500"
+            data-testid="photos-infinite-sentinel"
+        >
+            {hasMore && (
+                loading ? (
+                    <div className="flex items-center gap-2" data-testid="photos-loading-more">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Loading more photos…</span>
+                    </div>
+                ) : (
+                    <button
+                        type="button"
+                        onClick={onLoadMore}
+                        className="text-primary hover:underline"
+                        data-testid="photos-load-more-btn"
+                    >
+                        Load more
+                    </button>
+                )
+            )}
+            {total > 0 && (
+                <div className="text-xs text-slate-400" data-testid="photos-count-indicator">
+                    Showing {shown} of {total}
+                </div>
+            )}
+        </div>
+    );
+}
+
 
 function CategoryFilter({ value, onChange, counts, total }) {
     const all = ["all", ...Object.keys(CATEGORY_LABELS)];

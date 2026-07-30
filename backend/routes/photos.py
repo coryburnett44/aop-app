@@ -48,13 +48,40 @@ def register(
 ):
     # ---------- List photos ----------
     @api.get("/photos")
-    async def list_photos(album: Optional[str] = None):
+    async def list_photos(
+        album: Optional[str] = None,
+        limit: int = 500,
+        offset: int = 0,
+    ):
+        """Return photos, most-recent first. Supports optional pagination via
+        `?limit=60&offset=0` — the frontend uses this for infinite-scroll on
+        big albums (a 190-photo album loads the first page instantly and
+        pulls +60 more each time the user scrolls near the bottom)."""
         query = {"is_deleted": {"$ne": True}}
         if album:
             query["album"] = album
-        cursor = db.photos.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
-        items = await cursor.to_list(500)
+        # Guardrails
+        limit = max(1, min(limit, 500))
+        offset = max(0, offset)
+        cursor = (
+            db.photos.find(query, {"_id": 0})
+            .sort("created_at", -1)
+            .skip(offset)
+            .limit(limit)
+        )
+        items = await cursor.to_list(limit)
         return [photo_out(p) for p in items]
+
+    @api.get("/photos/count")
+    async def count_photos(album: Optional[str] = None):
+        """Total number of visible photos in the album (or across the whole
+        chapter if `album` is omitted). The frontend uses this to render the
+        'Showing X of Y' hint and to decide when to stop scrolling."""
+        query = {"is_deleted": {"$ne": True}}
+        if album:
+            query["album"] = album
+        total = await db.photos.count_documents(query)
+        return {"total": total}
 
     # ---------- Albums ----------
     @api.get("/photos/albums")
