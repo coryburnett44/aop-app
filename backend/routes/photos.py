@@ -79,10 +79,15 @@ def register(
         out = []
         for a in albums:
             cover = a.get("cover_url") or ""
+            cover_thumb = ""
             if not cover:
                 fp = first_photos.get(a["name"])
                 if fp:
                     cover = f"/api/files/{fp}"
+                    cover_thumb = f"/api/photos/thumb/{fp}?w=600"
+            elif cover.startswith("/api/files/"):
+                # Derive thumb URL from the existing cover storage path.
+                cover_thumb = "/api/photos/thumb/" + cover[len("/api/files/"):] + "?w=600"
             out.append({
                 "id": a.get("id"),
                 "name": a["name"],
@@ -92,6 +97,9 @@ def register(
                 "created_by_name": a.get("created_by_name", ""),
                 "category": a.get("category", auto_categorize_album(a["name"])),
                 "cover_url": cover,
+                # Small preview for album cards (600px is enough for the
+                # 4:3 card at 2x retina).
+                "cover_thumb_url": cover_thumb or cover,
             })
         return out
 

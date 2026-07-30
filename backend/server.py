@@ -653,6 +653,11 @@ def photo_out(p: dict) -> dict:
         "album": p.get("album", "general"),
         "storage_path": p["storage_path"],
         "url": f"/api/files/{p['storage_path']}",
+        # Small on-the-fly thumbnail for grid tiles. 400px wide is enough for
+        # 2x retina on a 200px CSS tile. Full-res `url` is used by the
+        # lightbox / download. Keeping both as separate URLs lets the
+        # browser cache them independently.
+        "thumb_url": f"/api/photos/thumb/{p['storage_path']}?w=400",
         "uploaded_by": p.get("uploaded_by"),
         "uploaded_by_name": p.get("uploaded_by_name", ""),
         "created_at": p.get("created_at"),
@@ -813,6 +818,105 @@ async def download_email_image(storage_path: str, request: Request):
             "ETag": etag,
         },
     )
+
+
+# ---------- Thumbnail endpoint (fast photo grid) ----------
+# In-memory cache for resized thumbnail bytes. 500 entries × ~40KB avg =
+# ~20MB — well within budget. Keyed by (storage_path, width). Populated on
+# the first hit; browsers then short-circuit on ETag anyway. This eliminates
+# the slow-album-load bug where every grid tile downloaded the 3-8MB
+# full-resolution original just to render a 200×200 tile.
+import io as _io_thumb
+
+_THUMB_ALLOWED_WIDTHS = {200, 320, 400, 600, 800, 1200}
+_THUMB_CACHE: "dict[tuple[str, int], bytes]" = {}
+_THUMB_CACHE_MAX = 500
+
+
+def _put_thumb_cache(key: tuple, value: bytes) -> None:
+    if len(_THUMB_CACHE) >= _THUMB_CACHE_MAX:
+        # Drop the oldest entry (dict preserves insertion order).
+        oldest = next(iter(_THUMB_CACHE))
+        _THUMB_CACHE.pop(oldest, None)
+    _THUMB_CACHE[key] = value
+
+
+def _generate_thumbnail(raw_bytes: bytes, width: int) -> bytes:
+    """Resize `raw_bytes` down to `width` pixels wide, keeping aspect ratio,
+    and re-encode as JPEG q=82. Falls back to the original bytes if PIL
+    cannot decode (e.g. animated GIF frame skipping)."""
+    try:
+        from PIL import Image, ImageOps
+    except Exception:
+        return raw_bytes
+    try:
+        img = Image.open(_io_thumb.BytesIO(raw_bytes))
+        img = ImageOps.exif_transpose(img)  # respect iPhone orientation
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        # generous max-height so tall panoramas stay readable
+        img.thumbnail((width, width * 3), Image.LANCZOS)
+        buf = _io_thumb.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True, progressive=True)
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"thumbnail generation failed for w={width}: {e}")
+        return raw_bytes
+
+
+@api.get("/photos/thumb/{storage_path:path}")
+async def get_photo_thumbnail(
+    storage_path: str,
+    request: Request,
+    w: int = 400,
+    user: dict = Depends(get_current_user),
+):
+    """Serve a resized JPEG thumbnail. Auth-required (same rules as
+    `/files/*`). Pillow work is done once per (path, width) then served
+    from memory. Browser short-circuits on ETag for subsequent visits."""
+    if w not in _THUMB_ALLOWED_WIDTHS:
+        # Snap to the nearest allowed width — prevents DoS-by-cache-flood
+        # (an attacker requesting every integer 1..2000 would blow the
+        # cache). We whitelist a handful of sensible sizes.
+        w = min(_THUMB_ALLOWED_WIDTHS, key=lambda x: abs(x - w))
+    rec = await db.photos.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    etag = f'W/"thumb-{w}-{storage_path}"'
+    if request.headers.get("if-none-match") == etag:
+        return FastResponse(status_code=304, headers={
+            "ETag": etag,
+            "Cache-Control": "private, max-age=31536000, immutable",
+        })
+    key = (storage_path, w)
+    cached = _THUMB_CACHE.get(key)
+    if cached is not None:
+        return FastResponse(
+            content=cached,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "private, max-age=31536000, immutable",
+                "ETag": etag,
+                "X-Thumb-Cache": "HIT",
+            },
+        )
+    try:
+        raw, _ctype = await asyncio.to_thread(get_object, storage_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Photo not found in storage")
+    thumb = await asyncio.to_thread(_generate_thumbnail, raw, w)
+    _put_thumb_cache(key, thumb)
+    return FastResponse(
+        content=thumb,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "ETag": etag,
+            "X-Thumb-Cache": "MISS",
+        },
+    )
+
+
 
 
 @api.get("/files/{storage_path:path}")

@@ -329,7 +329,7 @@ function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
         >
             <div className="aspect-[4/3] bg-gradient-to-br from-primary/15 to-primary/5 grid place-items-center relative overflow-hidden">
                 {album.cover_url ? (
-                    <img src={mediaUrl(album.cover_url)} alt={album.name} loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" data-testid={`album-cover-${album.name}`} />
+                    <img src={mediaUrl(album.cover_thumb_url || album.cover_url)} alt={album.name} loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" data-testid={`album-cover-${album.name}`} />
                 ) : (
                     <ImageIcon className="h-12 w-12 text-primary/40" />
                 )}
@@ -385,23 +385,13 @@ function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
 }
 
 function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, selectMode, selected, onToggleSelect, onOpenLightbox }) {
-    const [src, setSrc] = useState("");
-
-    useEffect(() => {
-        let revoked = null;
-        (async () => {
-            try {
-                const path = photo.url.startsWith("/api") ? photo.url.slice(4) : photo.url;
-                const { data } = await api.get(path, { responseType: "blob" });
-                const url = URL.createObjectURL(data);
-                revoked = url;
-                setSrc(url);
-            } catch {
-                /* ignore */
-            }
-        })();
-        return () => { if (revoked) URL.revokeObjectURL(revoked); };
-    }, [photo.url]);
+    // Native <img src> — the browser handles fetch, cache, HTTP/2 multiplexing,
+    // viewport-based lazy load, and progressive decode natively. The previous
+    // `api.get(..., {responseType: 'blob'})` pattern serialised 50 XHR
+    // downloads of the ORIGINAL (2-8MB per phone photo) through the JS thread
+    // — that's what made 50-photo albums crawl. `thumb_url` is a 400px JPEG
+    // generated once by the backend and cached.
+    const thumbSrc = mediaUrl(photo.thumb_url || photo.url);
 
     const canDelete = currentUser && (currentUser.role === "admin" || currentUser.id === photo.uploaded_by);
 
@@ -425,7 +415,13 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
                 className={`group relative aspect-square rounded-2xl overflow-hidden bg-muted border-4 shadow-warm transition-all ${selected ? "border-primary" : "border-transparent hover:border-primary/40"}`}
                 data-testid={`photo-select-${photo.id}`}
             >
-                {src ? <img src={src} alt={photo.title} loading="lazy" decoding="async" className="w-full h-full object-contain" /> : <div className="w-full h-full animate-pulse bg-muted" />}
+                <img
+                    src={thumbSrc}
+                    alt={photo.title || "Photo"}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-contain"
+                />
                 <div className={`absolute top-2 left-2 rounded-full p-1.5 shadow ${selected ? "bg-primary text-white" : "bg-white/90 text-slate-400"}`}>
                     {selected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
                 </div>
@@ -442,8 +438,8 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
                 aria-label={`Open ${photo.title || "photo"}`}
                 data-testid={`photo-open-${photo.id}`}
             >
-                {src ? (
-                    <img src={src} alt={photo.title} loading="lazy" decoding="async" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
+                {thumbSrc ? (
+                    <img src={thumbSrc} alt={photo.title || "Photo"} loading="lazy" decoding="async" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
                 ) : (
                     <div className="w-full h-full animate-pulse bg-muted" />
                 )}
@@ -504,30 +500,36 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
 function PhotoLightbox({ photos, index, onClose, onPrev, onNext }) {
     const open = index !== null && index >= 0 && index < photos.length;
     const photo = open ? photos[index] : null;
-    const [src, setSrc] = useState("");
+    // Track load state per photo so we can show a spinner over the previous
+    // image while the next one is decoding. The browser will still keep the
+    // old image visible until the new one is ready — very smooth.
     const [loading, setLoading] = useState(false);
 
-    // Re-fetch the underlying image whenever the displayed photo changes.
+    // Prefetch adjacent photos (prev + next) so arrow-navigation feels
+    // instant. Uses in-memory <link rel="prefetch"> equivalent via
+    // `new Image()` — the browser fetches, decodes, and caches under the
+    // hood. Doing this while the current photo is displayed hides the
+    // network latency completely.
     useEffect(() => {
-        if (!photo) { setSrc(""); return; }
-        let revoked = null;
-        let cancelled = false;
-        setLoading(true);
-        (async () => {
-            try {
-                const path = photo.url.startsWith("/api") ? photo.url.slice(4) : photo.url;
-                const { data } = await api.get(path, { responseType: "blob" });
-                if (cancelled) return;
-                const url = URL.createObjectURL(data);
-                revoked = url;
-                setSrc(url);
-            } catch {
-                /* ignore */
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
-        })();
-        return () => { cancelled = true; if (revoked) URL.revokeObjectURL(revoked); };
+        if (!open || photos.length < 2) return;
+        const idxs = [
+            (index + 1) % photos.length,
+            (index - 1 + photos.length) % photos.length,
+        ];
+        const preloaders = idxs.map((i) => {
+            const p = photos[i];
+            if (!p) return null;
+            const img = new Image();
+            img.decoding = "async";
+            img.src = mediaUrl(p.url);
+            return img;
+        });
+        return () => { preloaders.forEach((img) => { if (img) img.src = ""; }); };
+    }, [open, index, photos]);
+
+    // Reset loading state whenever the visible photo changes.
+    useEffect(() => {
+        if (photo) setLoading(true);
     }, [photo]);
 
     // Keyboard nav: Esc to close, ← / → to walk the album.
@@ -543,6 +545,8 @@ function PhotoLightbox({ photos, index, onClose, onPrev, onNext }) {
     }, [open, photos.length, onClose, onPrev, onNext]);
 
     if (!open || !photo) return null;
+
+    const fullSrc = mediaUrl(photo.url);
 
     async function downloadCurrent() {
         try {
@@ -613,18 +617,23 @@ function PhotoLightbox({ photos, index, onClose, onPrev, onNext }) {
                 className="relative max-w-[92vw] max-h-[88vh] flex flex-col items-center"
                 onClick={(e) => e.stopPropagation()}
             >
-                {loading && !src ? (
-                    <Loader2 className="h-10 w-10 text-white/70 animate-spin" />
-                ) : src ? (
+                <div className="relative">
+                    {loading && (
+                        <div className="absolute inset-0 grid place-items-center pointer-events-none z-10">
+                            <Loader2 className="h-10 w-10 text-white/70 animate-spin" />
+                        </div>
+                    )}
                     <img
-                        src={src}
+                        key={fullSrc}
+                        src={fullSrc}
                         alt={photo.title || "Photo"}
+                        decoding="async"
+                        onLoad={() => setLoading(false)}
+                        onError={() => setLoading(false)}
                         className="max-w-[92vw] max-h-[80vh] object-contain rounded-lg shadow-2xl"
                         data-testid="lightbox-image"
                     />
-                ) : (
-                    <div className="text-white/70 text-sm">Failed to load image.</div>
-                )}
+                </div>
                 {/* Caption */}
                 <div className="mt-4 text-center text-white max-w-2xl">
                     <div className="font-heading text-lg font-bold" data-testid="lightbox-title">{photo.title || "Untitled"}</div>
