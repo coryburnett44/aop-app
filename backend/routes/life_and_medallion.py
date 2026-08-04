@@ -37,12 +37,17 @@ class LifeMemberIn(BaseModel):
     user_id: Optional[str] = None          # existing member (preferred)
     name: Optional[str] = None             # OR free-text (historical)
     year: int = Field(..., ge=1900, le=2100)
+    month: Optional[int] = Field(None, ge=1, le=12)
+    day: Optional[int] = Field(None, ge=1, le=31)
     note: Optional[str] = None             # optional short bio / role
 
 
 class LifeMemberUpdateIn(BaseModel):
+    user_id: Optional[str] = None          # switch member (or "" to make historical)
     name: Optional[str] = None
     year: Optional[int] = None
+    month: Optional[int] = Field(None, ge=1, le=12)
+    day: Optional[int] = Field(None, ge=1, le=31)
     note: Optional[str] = None
 
 
@@ -77,6 +82,8 @@ def register(
             "user_id": doc.get("user_id"),
             "name": doc.get("name", ""),
             "year": doc.get("year"),
+            "month": doc.get("month"),
+            "day": doc.get("day"),
             "note": doc.get("note", ""),
             "created_at": doc.get("created_at"),
             # Enriched at read-time (see list handler)
@@ -129,10 +136,13 @@ def register(
             "user_id": body.user_id or None,
             "name": display_name,
             "year": int(body.year),
+            "month": int(body.month) if body.month else None,
+            "day": int(body.day) if body.day else None,
             "note": (body.note or "").strip(),
             "created_at": iso(now_utc()),
         }
         await db.life_members.insert_one(doc)
+        doc.pop("_id", None)
         return _life_member_out(await _enrich_life_member(doc))
 
     @api.put("/life-members/{lm_id}")
@@ -141,17 +151,45 @@ def register(
         if not doc:
             raise HTTPException(status_code=404, detail="Life Member entry not found.")
         updates = {}
+        # `user_id` semantics: passing an empty string clears the link (turns
+        # the entry into a free-text/historical row). Passing a real id
+        # switches the linked member (backend re-derives the display name).
+        if body.user_id is not None:
+            new_uid = (body.user_id or "").strip()
+            if new_uid:
+                u = await db.users.find_one({"id": new_uid}, {"_id": 0, "id": 1, "name": 1, "first_name": 1, "last_name": 1})
+                if not u:
+                    raise HTTPException(status_code=404, detail="Selected member not found.")
+                # Prevent duplicating an existing membership row.
+                other = await db.life_members.find_one({"user_id": new_uid, "id": {"$ne": lm_id}})
+                if other:
+                    raise HTTPException(status_code=409, detail="This member is already in the Life Member Club.")
+                updates["user_id"] = new_uid
+                # Refresh the display name to match the new member unless
+                # the admin also supplied a `name` override this call.
+                if body.name is None:
+                    updates["name"] = (u.get("name") or f"{u.get('first_name','')} {u.get('last_name','')}".strip()) or "Member"
+            else:
+                updates["user_id"] = None
         if body.name is not None and body.name.strip():
             updates["name"] = body.name.strip()
         if body.year is not None:
             if body.year < 1900 or body.year > 2100:
                 raise HTTPException(status_code=400, detail="Year must be between 1900 and 2100.")
             updates["year"] = int(body.year)
+        # Month/day can be cleared (set to None) by passing 0. We only
+        # persist an explicit int change; other values are validated
+        # by Pydantic's Field(ge=..., le=...).
+        if body.month is not None:
+            updates["month"] = int(body.month) if body.month else None
+        if body.day is not None:
+            updates["day"] = int(body.day) if body.day else None
         if body.note is not None:
             updates["note"] = body.note.strip()
         if updates:
             await db.life_members.update_one({"id": lm_id}, {"$set": updates})
             doc.update(updates)
+        doc.pop("_id", None)
         return _life_member_out(await _enrich_life_member(doc))
 
     @api.delete("/life-members/{lm_id}")

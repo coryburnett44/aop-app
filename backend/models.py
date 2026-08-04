@@ -154,6 +154,7 @@ class ChapterIn(BaseModel):
     founded_year: Optional[int] = None
     description: str = ""
     logo_url: str = ""
+    lieutenant_governor_user_id: Optional[str] = None
 
 
 class ChapterUpdateIn(BaseModel):
@@ -165,6 +166,7 @@ class ChapterUpdateIn(BaseModel):
     founded_year: Optional[int] = None
     description: Optional[str] = None
     logo_url: Optional[str] = None
+    lieutenant_governor_user_id: Optional[str] = None
 
 
 class HoursLogIn(BaseModel):

@@ -15,6 +15,37 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 154 — Chapter Lt. Governor + Life Member/Medallion edit (2026-02-04) [3 FEATURES]
+**User requests (all three delivered):**
+1. On the Chapters page, admins can pick a **Lieutenant Governor** who is spotlighted on the public chapter card.
+2. Admins can **edit Life Member Club recipients** (member, day, month, year, note) after adding them.
+3. Admins can **edit Medallion members' info** (member, day/date, reason) on the Awards page after awarding, and the recipient box is now bigger.
+
+**Backend:**
+- **`/app/backend/models.py`** — `ChapterIn`/`ChapterUpdateIn` gain `lieutenant_governor_user_id`. `LifeMemberIn` gains `month`, `day`. New `LifeMemberUpdateIn` accepts `user_id` (switch/clear), `name`, `year`, `month`, `day`, `note`.
+- **`/app/backend/routes/chapters.py`** — chapters list is now enriched at read-time with a compact `lieutenant_governor: {id, name, avatar_url, bio, title, email}` block (or `null`). `PUT /chapters/{id}` validates that the selected member exists; empty string clears the assignment.
+- **`/app/backend/routes/life_and_medallion.py`** — `_life_member_out` now includes `month`/`day`. `PUT /life-members/{lm_id}` supports changing linked member (with duplicate-check), clearing the link (turns row historical), setting/clearing month & day, and re-deriving display name when a new member is linked.
+- **`/app/backend/routes/awards.py`** — `PUT /awards/grants/{grant_id}` now accepts an optional `user_id` to reassign the medallion to a different member; the ordinal is recomputed against the new recipient's history. `GET /awards/{award_id}/grants` now returns `grant_id` so the frontend can address individual grants.
+
+**Frontend:**
+- **`pages/Chapters.jsx`** — new "LIEUTENANT GOVERNOR" spotlight card at the bottom of each chapter tile, showing avatar, name and title. Only renders when a Lt. Governor is assigned.
+- **`pages/Admin.jsx` → `ChapterDialog`** — new "Lieutenant Governor" `Select` populated from `/members` (lazy-loaded on dialog open). "— No Lieutenant Governor —" sentinel clears the assignment.
+- **`pages/Awards.jsx` → `LifeMemberSection`** — Add dialog now has `Month`/`Day` inputs. Card renders a human date ("Inducted March 15, 2024") when month/day are set. New `Pencil` edit button per card opens an Edit dialog covering member (or historical name), year, month, day and note.
+- **`pages/Awards.jsx` → `MedallionSection`/`MedallionTierPanel`** — recipient boxes are bigger: 2-column grid (was 3), taller `p-4`, `h-14` avatar, and richer content (formatted date, ordinal pill, reason text). Admin-only pencil button opens an Edit dialog that reassigns recipient, back-dates the grant, and edits the reason. Uses `formatCalendarDay` for a nicer date rendering.
+
+**data-testids added:**
+- Chapters: `chapter-lt-governor-select`, `chapter-lt-governor-{id}`.
+- Life Member: `life-month-input`, `life-day-input`, `life-member-edit-{id}`, `life-member-date-{id}`, `life-member-edit-dialog`, `life-edit-user-select`, `life-edit-name-input`, `life-edit-year-input`, `life-edit-month-input`, `life-edit-day-input`, `life-edit-note-input`, `life-member-save-edit-btn`.
+- Medallion: `medallion-holder-{tier}-{id}`, `medallion-edit-grant-{tier}-{grant_id}`, `medallion-edit-grant-dialog`, `medallion-edit-user-select`, `medallion-edit-date-input`, `medallion-edit-reason-input`, `medallion-save-grant-btn`.
+
+**Verification:**
+- curl: assign LG (200 + spotlight enriched); bogus LG id (400); clear LG (spotlight becomes null).
+- curl: create Life Member with month/day; update year/month/day/note (all persisted); switch member (name re-derived); delete (200).
+- curl: create medallion grant; edit granted_at + reason (200); switch recipient (ordinal recomputed to 1); bogus recipient (404).
+- Playwright: Admin chapter dialog LG select loaded with 45 members; DMV public card renders "LIEUTENANT GOVERNOR" spotlight with Reg Ular. Life Member Edit dialog opens with all 5 fields populated (2024 / 3 / 15) and card shows "Inducted March 15, 2024". Medallion recipient boxes render 2-col enlarged, edit dialog opens with Recipient/Date/Reason fields.
+
+
+
 ### Iteration 153 — CSV preview-approve flow, Life Member dark-mode fix, Medallions split out of Awards catalog (2026-02-04) [FEATURES + BUGFIX]
 **User requests (all three delivered):**
 1. Life Member Club paragraph was rendering as white text in dark mode. Force it to stay dark.

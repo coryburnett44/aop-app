@@ -572,7 +572,11 @@ function LifeMemberSection({ isAdmin }) {
     const [loading, setLoading] = useState(true);
     const [showAdd, setShowAdd] = useState(false);
     const [members, setMembers] = useState([]);
-    const [form, setForm] = useState({ mode: "existing", user_id: "", name: "", year: new Date().getFullYear(), note: "" });
+    const [form, setForm] = useState({ mode: "existing", user_id: "", name: "", year: new Date().getFullYear(), month: "", day: "", note: "" });
+    // Iter 154 — edit dialog state. Null when closed; otherwise the row
+    // currently being edited (member, year, month, day, note all mutable).
+    const [editRow, setEditRow] = useState(null);
+    const [editForm, setEditForm] = useState({ user_id: "", name: "", year: "", month: "", day: "", note: "" });
 
     async function load() {
         setLoading(true);
@@ -591,6 +595,8 @@ function LifeMemberSection({ isAdmin }) {
 
     async function addOne() {
         const payload = { year: Number(form.year), note: (form.note || "").trim() };
+        if (form.month) payload.month = Number(form.month);
+        if (form.day) payload.day = Number(form.day);
         if (form.mode === "existing") {
             if (!form.user_id) return toast.error("Pick a member from the directory.");
             payload.user_id = form.user_id;
@@ -602,9 +608,47 @@ function LifeMemberSection({ isAdmin }) {
             await api.post("/life-members", payload);
             toast.success("Added to Life Member Club");
             setShowAdd(false);
-            setForm({ mode: form.mode, user_id: "", name: "", year: new Date().getFullYear(), note: "" });
+            setForm({ mode: form.mode, user_id: "", name: "", year: new Date().getFullYear(), month: "", day: "", note: "" });
             load();
         } catch (e) { toast.error(e.response?.data?.detail || "Failed to add"); }
+    }
+
+    function openEdit(row) {
+        setEditRow(row);
+        setEditForm({
+            user_id: row.user_id || "",
+            name: row.name || "",
+            year: row.year || "",
+            month: row.month || "",
+            day: row.day || "",
+            note: row.note || "",
+        });
+    }
+
+    async function saveEdit() {
+        if (!editRow) return;
+        const payload = {
+            year: Number(editForm.year),
+            month: editForm.month ? Number(editForm.month) : 0,
+            day: editForm.day ? Number(editForm.day) : 0,
+            note: (editForm.note || "").trim(),
+        };
+        // Only send `name` when the entry is historical (no linked member).
+        // If it IS linked, the display name follows the member.
+        if (editRow.user_id) {
+            // Allow switching member OR clearing the link (making historical).
+            if (editForm.user_id !== editRow.user_id) {
+                payload.user_id = editForm.user_id || "";
+            }
+        } else {
+            payload.name = editForm.name.trim();
+        }
+        try {
+            await api.put(`/life-members/${editRow.id}`, payload);
+            toast.success("Life Member updated");
+            setEditRow(null);
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     }
 
     async function removeOne(id) {
@@ -667,27 +711,45 @@ function LifeMemberSection({ isAdmin }) {
                                 <div className="flex-1 h-px bg-slate-200" />
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {entries.map((e) => (
-                                    <div key={e.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition-shadow" data-testid={`life-member-card-${e.id}`}>
-                                        <div className="flex items-start gap-3">
-                                            <Avatar className="h-12 w-12 shrink-0">
-                                                {e.member_avatar_url && <AvatarImage src={mediaUrl(e.member_avatar_url)} alt={e.member_name || e.name} />}
-                                                <AvatarFallback className="bg-amber-100 text-amber-800">{(e.member_name || e.name || "?").slice(0, 1).toUpperCase()}</AvatarFallback>
-                                            </Avatar>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="font-semibold truncate">{e.member_name || e.name}</div>
-                                                {e.member_chapter_name && <div className="text-xs text-slate-500 truncate">{e.member_chapter_name}</div>}
-                                                {e.note && <div className="text-xs text-slate-600 mt-1">{e.note}</div>}
-                                                {!e.user_id && <div className="text-[10px] uppercase tracking-wider text-amber-700 mt-1 font-medium">Historical</div>}
+                                {entries.map((e) => {
+                                    // Iter 154 — build a human date like
+                                    // "March 22, 2024" if we have month+day,
+                                    // fall back to "March 2024" or just year.
+                                    const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+                                    let dateStr = String(e.year || "");
+                                    if (e.month) {
+                                        dateStr = e.day
+                                            ? `${monthNames[e.month - 1]} ${e.day}, ${e.year}`
+                                            : `${monthNames[e.month - 1]} ${e.year}`;
+                                    }
+                                    return (
+                                        <div key={e.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition-shadow" data-testid={`life-member-card-${e.id}`}>
+                                            <div className="flex items-start gap-3">
+                                                <Avatar className="h-12 w-12 shrink-0">
+                                                    {e.member_avatar_url && <AvatarImage src={mediaUrl(e.member_avatar_url)} alt={e.member_name || e.name} />}
+                                                    <AvatarFallback className="bg-amber-100 text-amber-800">{(e.member_name || e.name || "?").slice(0, 1).toUpperCase()}</AvatarFallback>
+                                                </Avatar>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="font-semibold truncate">{e.member_name || e.name}</div>
+                                                    {e.member_chapter_name && <div className="text-xs text-slate-500 truncate">{e.member_chapter_name}</div>}
+                                                    {(e.month || e.day) && <div className="text-xs text-amber-800 font-medium mt-0.5" data-testid={`life-member-date-${e.id}`}>Inducted {dateStr}</div>}
+                                                    {e.note && <div className="text-xs text-slate-600 mt-1">{e.note}</div>}
+                                                    {!e.user_id && <div className="text-[10px] uppercase tracking-wider text-amber-700 mt-1 font-medium">Historical</div>}
+                                                </div>
+                                                {isAdmin && (
+                                                    <div className="flex flex-col gap-1 shrink-0">
+                                                        <button onClick={() => openEdit(e)} className="text-slate-400 hover:text-primary" data-testid={`life-member-edit-${e.id}`} title="Edit induction details">
+                                                            <Pencil className="h-4 w-4" />
+                                                        </button>
+                                                        <button onClick={() => removeOne(e.id)} className="text-slate-400 hover:text-red-600" data-testid={`life-member-delete-${e.id}`} title="Remove">
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
-                                            {isAdmin && (
-                                                <button onClick={() => removeOne(e.id)} className="text-slate-400 hover:text-red-600" data-testid={`life-member-delete-${e.id}`}>
-                                                    <Trash2 className="h-4 w-4" />
-                                                </button>
-                                            )}
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     ))}
@@ -725,6 +787,16 @@ function LifeMemberSection({ isAdmin }) {
                             <Label htmlFor="lm-year">Year inducted</Label>
                             <Input id="lm-year" type="number" min="1900" max="2100" value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} data-testid="life-year-input" />
                         </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <Label htmlFor="lm-month">Month (optional)</Label>
+                                <Input id="lm-month" type="number" min="1" max="12" placeholder="1&ndash;12" value={form.month} onChange={(e) => setForm({ ...form, month: e.target.value })} data-testid="life-month-input" />
+                            </div>
+                            <div>
+                                <Label htmlFor="lm-day">Day (optional)</Label>
+                                <Input id="lm-day" type="number" min="1" max="31" placeholder="1&ndash;31" value={form.day} onChange={(e) => setForm({ ...form, day: e.target.value })} data-testid="life-day-input" />
+                            </div>
+                        </div>
                         <div>
                             <Label htmlFor="lm-note">Note (optional)</Label>
                             <Textarea id="lm-note" rows={2} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Short bio or role at time of induction…" data-testid="life-note-input" />
@@ -734,6 +806,58 @@ function LifeMemberSection({ isAdmin }) {
                             <Button onClick={addOne} data-testid="life-member-save-btn">Add</Button>
                         </div>
                     </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Iter 154 — Edit dialog. Admins can change every attribute
+              of an existing Life Member row: linked member (or clear
+              link → historical), induction year/month/day, and note. */}
+            <Dialog open={!!editRow} onOpenChange={(v) => { if (!v) setEditRow(null); }}>
+                <DialogContent data-testid="life-member-edit-dialog">
+                    <DialogHeader><DialogTitle>Edit Life Member</DialogTitle></DialogHeader>
+                    {editRow && (
+                        <div className="space-y-4">
+                            {editRow.user_id ? (
+                                <div>
+                                    <Label htmlFor="lm-edit-user">Member</Label>
+                                    <Select value={editForm.user_id} onValueChange={(v) => setEditForm({ ...editForm, user_id: v })}>
+                                        <SelectTrigger id="lm-edit-user" data-testid="life-edit-user-select"><SelectValue placeholder="Pick a member…" /></SelectTrigger>
+                                        <SelectContent>
+                                            {members.map((m) => (<SelectItem key={m.id} value={m.id}>{m.name}{m.email ? ` · ${m.email}` : ""}</SelectItem>))}
+                                        </SelectContent>
+                                    </Select>
+                                    <div className="text-[11px] text-slate-500 mt-1">Switching members updates the displayed name automatically.</div>
+                                </div>
+                            ) : (
+                                <div>
+                                    <Label htmlFor="lm-edit-name">Historical name</Label>
+                                    <Input id="lm-edit-name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} data-testid="life-edit-name-input" />
+                                </div>
+                            )}
+                            <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                    <Label htmlFor="lm-edit-year">Year</Label>
+                                    <Input id="lm-edit-year" type="number" min="1900" max="2100" value={editForm.year} onChange={(e) => setEditForm({ ...editForm, year: e.target.value })} data-testid="life-edit-year-input" />
+                                </div>
+                                <div>
+                                    <Label htmlFor="lm-edit-month">Month</Label>
+                                    <Input id="lm-edit-month" type="number" min="1" max="12" placeholder="1&ndash;12" value={editForm.month} onChange={(e) => setEditForm({ ...editForm, month: e.target.value })} data-testid="life-edit-month-input" />
+                                </div>
+                                <div>
+                                    <Label htmlFor="lm-edit-day">Day</Label>
+                                    <Input id="lm-edit-day" type="number" min="1" max="31" placeholder="1&ndash;31" value={editForm.day} onChange={(e) => setEditForm({ ...editForm, day: e.target.value })} data-testid="life-edit-day-input" />
+                                </div>
+                            </div>
+                            <div>
+                                <Label htmlFor="lm-edit-note">Note</Label>
+                                <Textarea id="lm-edit-note" rows={2} value={editForm.note} onChange={(e) => setEditForm({ ...editForm, note: e.target.value })} data-testid="life-edit-note-input" />
+                            </div>
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button variant="outline" onClick={() => setEditRow(null)}>Cancel</Button>
+                                <Button onClick={saveEdit} data-testid="life-member-save-edit-btn">Save changes</Button>
+                            </div>
+                        </div>
+                    )}
                 </DialogContent>
             </Dialog>
         </div>
@@ -758,6 +882,16 @@ function MedallionSection({ isAdmin }) {
     const [holdersByTier, setHoldersByTier] = useState({ bronze: [], silver: [], gold: [] });
     const [loading, setLoading] = useState(true);
     const [activeTier, setActiveTier] = useState("bronze");
+    const [members, setMembers] = useState([]);
+    // Iter 154 — grant-edit dialog state. Null when closed; otherwise the
+    // holder row currently being edited (member, date, reason mutable).
+    const [editGrant, setEditGrant] = useState(null);
+    const [editForm, setEditForm] = useState({ user_id: "", granted_at: "", reason: "" });
+
+    useEffect(() => {
+        if (!isAdmin) return;
+        api.get("/members").then((r) => setMembers(r.data || [])).catch(() => setMembers([]));
+    }, [isAdmin]);
 
     async function load() {
         setLoading(true);
@@ -789,6 +923,30 @@ function MedallionSection({ isAdmin }) {
 
     if (loading) return <div className="text-muted-foreground text-sm">Loading Medallion Club…</div>;
 
+    function openEditGrant(holder) {
+        setEditGrant(holder);
+        setEditForm({
+            user_id: holder.user_id || "",
+            granted_at: (holder.granted_at || "").slice(0, 10),
+            reason: holder.reason || "",
+        });
+    }
+
+    async function saveGrant() {
+        if (!editGrant?.grant_id) return;
+        const payload = {};
+        if (editForm.user_id && editForm.user_id !== editGrant.user_id) payload.user_id = editForm.user_id;
+        if (editForm.granted_at) payload.granted_at = editForm.granted_at;
+        if (editForm.reason !== editGrant.reason) payload.reason = editForm.reason;
+        if (Object.keys(payload).length === 0) { setEditGrant(null); return; }
+        try {
+            await api.put(`/awards/grants/${editGrant.grant_id}`, payload);
+            toast.success("Grant updated");
+            setEditGrant(null);
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    }
+
     return (
         <div className="space-y-6" data-testid="medallion-section">
             <p className="text-sm text-muted-foreground">
@@ -810,15 +968,50 @@ function MedallionSection({ isAdmin }) {
                             holders={holdersByTier[l.key] || []}
                             isAdmin={isAdmin}
                             onGranted={load}
+                            onEditGrant={openEditGrant}
                         />
                     </TabsContent>
                 ))}
             </Tabs>
+
+            {/* Iter 154 — Grant edit dialog. Admin can reassign the
+              recipient, back-date the grant, and edit the reason. */}
+            <Dialog open={!!editGrant} onOpenChange={(v) => { if (!v) setEditGrant(null); }}>
+                <DialogContent data-testid="medallion-edit-grant-dialog">
+                    <DialogHeader><DialogTitle>Edit Medallion Grant</DialogTitle></DialogHeader>
+                    {editGrant && (
+                        <div className="space-y-4">
+                            <div>
+                                <Label htmlFor="med-edit-user">Recipient</Label>
+                                <Select value={editForm.user_id} onValueChange={(v) => setEditForm({ ...editForm, user_id: v })}>
+                                    <SelectTrigger id="med-edit-user" data-testid="medallion-edit-user-select"><SelectValue placeholder="Pick a member…" /></SelectTrigger>
+                                    <SelectContent>
+                                        {members.map((m) => (<SelectItem key={m.id} value={m.id}>{m.name}{m.email ? ` · ${m.email}` : ""}</SelectItem>))}
+                                    </SelectContent>
+                                </Select>
+                                <div className="text-[11px] text-slate-500 mt-1">Changing the recipient recalculates the ordinal for the new member.</div>
+                            </div>
+                            <div>
+                                <Label htmlFor="med-edit-date">Date awarded</Label>
+                                <Input id="med-edit-date" type="date" value={editForm.granted_at} onChange={(e) => setEditForm({ ...editForm, granted_at: e.target.value })} data-testid="medallion-edit-date-input" />
+                            </div>
+                            <div>
+                                <Label htmlFor="med-edit-reason">Reason / note</Label>
+                                <Textarea id="med-edit-reason" rows={3} value={editForm.reason} onChange={(e) => setEditForm({ ...editForm, reason: e.target.value })} data-testid="medallion-edit-reason-input" />
+                            </div>
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button variant="outline" onClick={() => setEditGrant(null)}>Cancel</Button>
+                                <Button onClick={saveGrant} data-testid="medallion-save-grant-btn">Save changes</Button>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
 
-function MedallionTierPanel({ level, award, holders, isAdmin, onGranted }) {
+function MedallionTierPanel({ level, award, holders, isAdmin, onGranted, onEditGrant }) {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1">
@@ -854,14 +1047,46 @@ function MedallionTierPanel({ level, award, holders, isAdmin, onGranted }) {
                     {holders.length === 0 ? (
                         <p className="text-sm text-muted-foreground" data-testid={`medallion-holders-${level.key}`}>No {level.label} Medallion recipients yet.</p>
                     ) : (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3" data-testid={`medallion-holders-${level.key}`}>
+                        // Iter 154 — enlarged recipient cards (was 3-col
+                        // tight boxes). Now 2 columns max on lg with
+                        // taller padding, larger avatar, and an admin
+                        // "Edit" pencil that opens the grant editor.
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" data-testid={`medallion-holders-${level.key}`}>
                             {holders.map((h) => (
-                                <div key={`${h.user_id}-${h.granted_at}`} className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 bg-slate-50">
-                                    <Avatar className="h-8 w-8"><AvatarImage src={mediaUrl(h.avatar_url)} /><AvatarFallback>{h.member_name?.[0] || "?"}</AvatarFallback></Avatar>
-                                    <div className="text-xs">
-                                        <div className="font-medium truncate">{h.member_name}</div>
-                                        {h.year && <div className="text-slate-500">{h.year}</div>}
+                                <div
+                                    key={h.grant_id || `${h.user_id}-${h.granted_at}`}
+                                    className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 dark:bg-muted p-4 shadow-sm hover:shadow-md transition-shadow"
+                                    data-testid={`medallion-holder-${level.key}-${h.grant_id || h.user_id}`}
+                                >
+                                    <Avatar className="h-14 w-14 shrink-0">
+                                        <AvatarImage src={mediaUrl(h.avatar_url)} />
+                                        <AvatarFallback>{h.member_name?.[0] || "?"}</AvatarFallback>
+                                    </Avatar>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-semibold text-base truncate">{h.member_name}</div>
+                                        {h.granted_at && (
+                                            <div className="text-xs text-slate-500 mt-0.5">
+                                                Awarded {formatCalendarDay(h.granted_at) || h.year}
+                                            </div>
+                                        )}
+                                        {h.ordinal > 1 && (
+                                            <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 mt-0.5">{h.ordinal}× recipient</div>
+                                        )}
+                                        {h.reason && (
+                                            <div className="text-xs text-slate-600 dark:text-muted-foreground mt-1 line-clamp-2">{h.reason}</div>
+                                        )}
                                     </div>
+                                    {isAdmin && h.grant_id && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onEditGrant && onEditGrant(h)}
+                                            className="shrink-0 rounded-full border border-slate-200 p-2 text-slate-500 hover:border-primary hover:text-primary transition-colors"
+                                            data-testid={`medallion-edit-grant-${level.key}-${h.grant_id}`}
+                                            title="Edit this medallion grant"
+                                        >
+                                            <Pencil className="h-3.5 w-3.5" />
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                         </div>

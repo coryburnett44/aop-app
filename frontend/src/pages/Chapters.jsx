@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, mediaUrl } from "../lib/api";
-import { MapPin, Compass, Users as UsersIcon, Map as MapIcon } from "lucide-react";
+import { MapPin, Compass, Users as UsersIcon, Map as MapIcon, Star } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 
 export default function Chapters() {
     const [chapters, setChapters] = useState([]);
@@ -50,6 +51,27 @@ export default function Chapters() {
                             <div className="flex items-center gap-2"><UsersIcon className="h-4 w-4" /> {c.member_count} member{c.member_count !== 1 ? "s" : ""}</div>
                         </div>
                         {c.description && <p className="text-sm mt-4 leading-relaxed">{c.description}</p>}
+                        {c.lieutenant_governor && (
+                            <div
+                                className="mt-4 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3"
+                                data-testid={`chapter-lt-governor-${c.id}`}
+                            >
+                                <Avatar className="h-11 w-11 shrink-0 border border-primary/30">
+                                    <AvatarImage src={mediaUrl(c.lieutenant_governor.avatar_url)} alt={c.lieutenant_governor.name} />
+                                    <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                                        {(c.lieutenant_governor.name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("")}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                        <Star className="h-3 w-3 text-primary fill-primary" />
+                                        <span className="text-[10px] font-semibold uppercase tracking-wider text-primary">Lieutenant Governor</span>
+                                    </div>
+                                    <div className="font-semibold text-sm truncate">{c.lieutenant_governor.name}</div>
+                                    {c.lieutenant_governor.title && <div className="text-xs text-muted-foreground truncate">{c.lieutenant_governor.title}</div>}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 ))}
                 {chapters.length === 0 && <div className="text-muted-foreground col-span-full">No chapters yet.</div>}

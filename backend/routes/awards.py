@@ -132,7 +132,7 @@ def register(
         award_grants + one users lookup."""
         grants = await db.award_grants.find(
             {"award_id": award_id},
-            {"_id": 0, "user_id": 1, "user_name": 1, "granted_at": 1, "ordinal": 1, "reason": 1},
+            {"_id": 0, "id": 1, "user_id": 1, "user_name": 1, "granted_at": 1, "ordinal": 1, "reason": 1},
         ).sort("granted_at", -1).to_list(500)
         if not grants:
             return []
@@ -154,6 +154,9 @@ def register(
                 # full datetimes for a hot list endpoint.
                 year = granted_at[:4] if len(granted_at) >= 4 else ""
             out.append({
+                # `grant_id` powers the admin "Edit" affordance on the
+                # Medallion recipient list (Iter 154).
+                "grant_id": g.get("id"),
                 "user_id": g.get("user_id"),
                 "member_name": u.get("name") or g.get("user_name") or "Former member",
                 "avatar_url": u.get("avatar_url"),
@@ -295,9 +298,13 @@ def register(
 
     @api.put("/awards/grants/{grant_id}")
     async def update_award_grant(grant_id: str, body: dict, _: dict = Depends(admin_tab_dep("awards"))):
-        """Admin edit of an existing grant — change the reason or back-date it.
-        Only `reason` and `granted_at` are editable; the member, award, and
-        ordinal are immutable so audit history stays trustworthy."""
+        """Admin edit of an existing grant — change the reason, back-date it,
+        or reassign it to a different member. The award (and its ordinal
+        within that grant's original scope) stay immutable so historical
+        distinction counts don't shift. When `user_id` moves the grant to
+        a different member, the ordinal is recalculated so it reflects the
+        new member's grant count for that award (Iter 154).
+        """
         grant = await db.award_grants.find_one({"id": grant_id}, {"_id": 0})
         if not grant:
             raise HTTPException(status_code=404, detail="Grant not found")
@@ -314,6 +321,22 @@ def register(
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid granted_at — use ISO or YYYY-MM-DD")
             update_doc["granted_at"] = gd
+        # Iter 154 — allow reassigning the recipient. The award stays the
+        # same; the ordinal is re-derived so it accurately reflects how
+        # many times the NEW recipient holds this award.
+        if body.get("user_id") and body["user_id"] != grant.get("user_id"):
+            new_uid = str(body["user_id"]).strip()
+            u = await db.users.find_one({"id": new_uid}, {"_id": 0, "id": 1, "name": 1})
+            if not u:
+                raise HTTPException(status_code=404, detail="Selected recipient member not found.")
+            prior = await db.award_grants.count_documents({
+                "award_id": grant["award_id"],
+                "user_id": new_uid,
+                "id": {"$ne": grant_id},
+            })
+            update_doc["user_id"] = new_uid
+            update_doc["user_name"] = u.get("name", "")
+            update_doc["ordinal"] = prior + 1
         if not update_doc:
             return {"ok": True, "no_change": True}
         await db.award_grants.update_one({"id": grant_id}, {"$set": update_doc})

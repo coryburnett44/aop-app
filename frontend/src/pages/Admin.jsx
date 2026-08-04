@@ -2633,11 +2633,26 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
         founded_year: chapter?.founded_year || "",
         description: chapter?.description || "",
         logo_url: chapter?.logo_url || "",
+        // Iter 154 — optional Lt. Governor. Empty string = "no LG assigned"
+        // and clears the field on save.
+        lieutenant_governor_user_id: chapter?.lieutenant_governor_user_id || "",
     });
+    const [members, setMembers] = useState([]);
+    useEffect(() => {
+        // Only fetch the member list when the dialog is open so a huge org
+        // roster isn't loaded for every card render.
+        if (!open) return;
+        api.get("/members").then((r) => setMembers(r.data || [])).catch(() => setMembers([]));
+    }, [open]);
     async function save() {
         if (!form.name) { toast.error("Pick a chapter from the list"); return; }
         try {
-            const payload = { ...form, founded_year: form.founded_year ? Number(form.founded_year) : null };
+            const payload = {
+                ...form,
+                founded_year: form.founded_year ? Number(form.founded_year) : null,
+                // Send `null` to leave LG untouched; send "" to clear; send an id to assign.
+                lieutenant_governor_user_id: form.lieutenant_governor_user_id === "__clear__" ? "" : form.lieutenant_governor_user_id,
+            };
             if (chapter) await api.put(`/chapters/${chapter.id}`, payload);
             else await api.post("/chapters", payload);
             toast.success("Saved");
@@ -2678,6 +2693,24 @@ function ChapterDialog({ chapter, onSaved, trigger }) {
                     </div>
                     <div><Label>Founded year</Label><Input type="number" value={form.founded_year} onChange={(e) => setForm({ ...form, founded_year: e.target.value })} className="rounded-xl mt-1.5" /></div>
                     <div><Label>Description</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="rounded-xl mt-1.5" /></div>
+                    <div>
+                        <Label>Lieutenant Governor</Label>
+                        <Select
+                            value={form.lieutenant_governor_user_id || "__clear__"}
+                            onValueChange={(v) => setForm({ ...form, lieutenant_governor_user_id: v === "__clear__" ? "" : v })}
+                        >
+                            <SelectTrigger className="rounded-xl mt-1.5" data-testid="chapter-lt-governor-select">
+                                <SelectValue placeholder="Pick a Lieutenant Governor&hellip;" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="__clear__">&mdash; No Lieutenant Governor &mdash;</SelectItem>
+                                {members.map((m) => (
+                                    <SelectItem key={m.id} value={m.id}>{m.name}{m.email ? ` · ${m.email}` : ""}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <div className="text-xs text-muted-foreground mt-1.5">Displayed as a spotlight on the public Chapter page. Leave blank if the chapter has no Lt. Governor assigned.</div>
+                    </div>
                     <div>
                         <Label>Chapter logo</Label>
                         <div className="flex items-center gap-2 mt-1.5">
