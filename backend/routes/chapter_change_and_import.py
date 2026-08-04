@@ -315,19 +315,11 @@ def register(
     # ================================================================
     # CSV IMPORT OF PAST EVENT ATTENDANCE
     # ================================================================
-    @api.post("/admin/checkins/import-csv")
-    async def import_checkins_csv(file: UploadFile = File(...), admin: dict = Depends(require_full_admin)):
-        """Parse a CSV of past event attendance and insert rows into the
-        `checkins` collection. Columns (any order, case-insensitive):
-          - `email` (preferred) OR `name` for member match
-          - `event_name` (or `event`)
-          - `date` (or `event_date`) — any common format
-
-        A synthetic event row is created if `event_name`+`date` doesn't
-        already exist (matched case-insensitively), so the checkin count
-        used by the Medallion criteria + Chapter-of-the-Year picks up
-        historical attendance immediately.
-        """
+    # Iter 152 flow: upload is a PREVIEW (persists an `import_batches`
+    # doc but writes NOTHING to checkins/events yet). Admins review the
+    # matched + skipped rows, then click Approve to commit — mirroring
+    # the volunteer-hours & causes approval UX.
+    async def _parse_csv_batch(file: UploadFile, admin: dict) -> dict:
         content_type = (file.content_type or "").lower()
         if "csv" not in content_type and "text" not in content_type and not (file.filename or "").lower().endswith(".csv"):
             raise HTTPException(status_code=400, detail="Upload a .csv file.")
@@ -356,57 +348,191 @@ def register(
             if u.get("name"):
                 users_by_name[u["name"].lower().strip()] = u
 
-        # Preload existing (event_name+date) → event_id map so we don't
-        # duplicate synthetic events on repeated imports.
+        # Preload existing (event_name+date) → event_id map so the
+        # preview shows admins whether the row will create a synthetic
+        # event or attach to an existing one.
         events_by_key: dict = {}
         async for e in db.events.find({}, {"_id": 0, "id": 1, "title": 1, "start_at": 1}):
             key = ((e.get("title") or "").strip().lower(), (e.get("start_at") or "")[:10])
             if key[0] and key[1]:
                 events_by_key[key] = e["id"]
 
-        # Track (event_id, user_id) pairs already-checked-in for idempotency.
         existing_checkins: set = set()
         async for c in db.checkins.find({}, {"_id": 0, "event_id": 1, "user_id": 1}):
             existing_checkins.add((c.get("event_id"), c.get("user_id")))
 
-        inserted, skipped, errors = 0, 0, []
+        rows_out: list = []
+        counters = {"total": 0, "insert": 0, "skip": 0, "duplicate": 0}
         for i, row in enumerate(reader, start=2):  # start=2 to account for header row
+            counters["total"] += 1
             email = ((email_col and row.get(email_col)) or "").strip().lower()
             name = ((name_col and row.get(name_col)) or "").strip()
             event_name = ((row.get(event_col) or "")).strip()
             date_raw = ((row.get(date_col) or "")).strip()
 
+            base = {
+                "row": i,
+                "email": email,
+                "name": name,
+                "event_name": event_name,
+                "date_raw": date_raw,
+                "date_parsed": None,
+                "matched_user_id": None,
+                "matched_user_name": None,
+                "matched_user_email": None,
+                "event_id": None,
+                "event_is_new": False,
+                "action": "skip",
+                "skip_reason": "",
+            }
+
             if not event_name or not date_raw:
-                skipped += 1
-                errors.append({"row": i, "reason": "Missing event_name or date."})
-                continue
+                base["skip_reason"] = "Missing event_name or date."
+                counters["skip"] += 1
+                rows_out.append(base); continue
             dt = _parse_date(date_raw)
             if not dt:
-                skipped += 1
-                errors.append({"row": i, "reason": f"Unparseable date: {date_raw!r}"})
-                continue
+                base["skip_reason"] = f"Unparseable date: {date_raw!r}"
+                counters["skip"] += 1
+                rows_out.append(base); continue
+            base["date_parsed"] = dt.date().isoformat()
 
-            # Match member.
             u = None
             if email and email in users_by_email:
                 u = users_by_email[email]
             elif name and name.lower() in users_by_name:
                 u = users_by_name[name.lower()]
             if not u:
-                skipped += 1
-                errors.append({"row": i, "reason": f"No matching member for email={email!r} name={name!r}"})
-                continue
+                lookup = " / ".join([p for p in [f"email={email!r}" if email else "", f"name={name!r}" if name else ""] if p]) or "(no email or name)"
+                base["skip_reason"] = f"No matching member for {lookup}"
+                counters["skip"] += 1
+                rows_out.append(base); continue
 
-            # Locate or synthesise the event.
+            base["matched_user_id"] = u["id"]
+            base["matched_user_name"] = u.get("name", "")
+            base["matched_user_email"] = u.get("email", "")
+
             key = (event_name.lower(), dt.date().isoformat())
             event_id = events_by_key.get(key)
+            base["event_id"] = event_id
+            base["event_is_new"] = event_id is None
+
+            if event_id and (event_id, u["id"]) in existing_checkins:
+                base["action"] = "duplicate"
+                base["skip_reason"] = "Member is already checked-in to this event."
+                counters["duplicate"] += 1
+                rows_out.append(base); continue
+
+            base["action"] = "insert"
+            counters["insert"] += 1
+            rows_out.append(base)
+
+        batch_doc = {
+            "id": str(uuid.uuid4()),
+            "created_at": iso(now_utc()),
+            "created_by": admin["id"],
+            "created_by_name": admin.get("name", ""),
+            "filename": file.filename or "attendance.csv",
+            "status": "pending",
+            "csv_headers": headers,
+            "rows": rows_out,
+            "summary": counters,
+        }
+        await db.checkin_import_batches.insert_one(batch_doc)
+        # `insert_one` mutates the dict to include `_id` (an ObjectId that
+        # isn't JSON-serialisable) — strip it before returning.
+        batch_doc.pop("_id", None)
+        # Compat: also return legacy `inserted/skipped/errors` fields so an
+        # older UI reading this endpoint continues to render a summary until
+        # the two-phase UI ships.
+        return {
+            **batch_doc,
+            "batch_id": batch_doc["id"],
+            "inserted": 0,
+            "skipped": counters["skip"] + counters["duplicate"],
+            "errors": [
+                {"row": r["row"], "reason": r["skip_reason"]}
+                for r in rows_out if r["action"] != "insert"
+            ][:200],
+        }
+
+    def _batch_out(doc: dict) -> dict:
+        # Strip the raw Mongo _id if present but preserve everything else.
+        d = {k: v for k, v in doc.items() if k != "_id"}
+        d["batch_id"] = d.get("id")
+        return d
+
+    @api.post("/admin/checkins/import-csv")
+    async def preview_import_checkins_csv(file: UploadFile = File(...), admin: dict = Depends(require_full_admin)):
+        """PREVIEW-only: parse the CSV, match members, flag skipped rows +
+        reasons, and persist a `checkin_import_batches` row. Nothing is
+        written to `checkins`/`events` until the admin explicitly approves
+        the batch via `/admin/checkins/import-batches/{id}/approve`."""
+        return await _parse_csv_batch(file, admin)
+
+    @api.get("/admin/checkins/import-batches")
+    async def list_import_batches(status: Optional[str] = "pending", _: dict = Depends(require_full_admin)):
+        q: dict = {}
+        if status and status != "all":
+            q["status"] = status
+        cursor = db.checkin_import_batches.find(q, {"_id": 0}).sort("created_at", -1).limit(50)
+        rows = await cursor.to_list(50)
+        return [_batch_out(r) for r in rows]
+
+    @api.get("/admin/checkins/import-batches/{batch_id}")
+    async def get_import_batch(batch_id: str, _: dict = Depends(require_full_admin)):
+        doc = await db.checkin_import_batches.find_one({"id": batch_id}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Import batch not found.")
+        return _batch_out(doc)
+
+    @api.delete("/admin/checkins/import-batches/{batch_id}")
+    async def discard_import_batch(batch_id: str, _: dict = Depends(require_full_admin)):
+        res = await db.checkin_import_batches.delete_one({"id": batch_id, "status": "pending"})
+        if not res.deleted_count:
+            raise HTTPException(status_code=404, detail="Pending batch not found (already approved or discarded).")
+        return {"discarded": True}
+
+    @api.post("/admin/checkins/import-batches/{batch_id}/approve")
+    async def approve_import_batch(batch_id: str, admin: dict = Depends(require_full_admin)):
+        """Commit every `action=='insert'` row in the batch. Skipped and
+        duplicate rows are left untouched. Idempotent: approving an already-
+        approved batch is rejected so we don't double-write."""
+        doc = await db.checkin_import_batches.find_one({"id": batch_id}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Import batch not found.")
+        if doc.get("status") != "pending":
+            raise HTTPException(status_code=409, detail=f"Batch is already {doc.get('status')}.")
+
+        # Re-check duplicate state at approval time so we don't clobber
+        # checkins added between preview & approval.
+        existing_checkins: set = set()
+        async for c in db.checkins.find({}, {"_id": 0, "event_id": 1, "user_id": 1}):
+            existing_checkins.add((c.get("event_id"), c.get("user_id")))
+        events_by_key: dict = {}
+        async for e in db.events.find({}, {"_id": 0, "id": 1, "title": 1, "start_at": 1}):
+            key = ((e.get("title") or "").strip().lower(), (e.get("start_at") or "")[:10])
+            if key[0] and key[1]:
+                events_by_key[key] = e["id"]
+
+        inserted, duplicate_now = 0, 0
+        for r in doc.get("rows") or []:
+            if r.get("action") != "insert":
+                continue
+            uid = r.get("matched_user_id")
+            date_iso = r.get("date_parsed")
+            event_name = r.get("event_name") or ""
+            if not uid or not date_iso or not event_name:
+                continue
+            key = (event_name.lower(), date_iso)
+            event_id = events_by_key.get(key) or r.get("event_id")
             if not event_id:
                 event_id = str(uuid.uuid4())
                 await db.events.insert_one({
                     "id": event_id,
                     "title": event_name,
-                    "start_at": dt.isoformat(),
-                    "end_at": dt.isoformat(),
+                    "start_at": f"{date_iso}T00:00:00+00:00",
+                    "end_at": f"{date_iso}T00:00:00+00:00",
                     "location": "",
                     "description": "Imported from historical attendance CSV.",
                     "is_public": False,
@@ -415,27 +541,29 @@ def register(
                     "imported": True,
                 })
                 events_by_key[key] = event_id
-
-            # Idempotent — one checkin per (event_id, user_id).
-            if (event_id, u["id"]) in existing_checkins:
-                skipped += 1
+            if (event_id, uid) in existing_checkins:
+                duplicate_now += 1
                 continue
-
             await db.checkins.insert_one({
                 "id": str(uuid.uuid4()),
                 "event_id": event_id,
-                "user_id": u["id"],
-                "user_name": u.get("name", ""),
-                "checked_in_at": dt.isoformat(),
+                "user_id": uid,
+                "user_name": r.get("matched_user_name") or "",
+                "checked_in_at": f"{date_iso}T00:00:00+00:00",
                 "source": "csv_import",
                 "imported_at": iso(now_utc()),
+                "batch_id": batch_id,
             })
-            existing_checkins.add((event_id, u["id"]))
+            existing_checkins.add((event_id, uid))
             inserted += 1
 
-        return {
-            "inserted": inserted,
-            "skipped": skipped,
-            "errors": errors[:200],  # cap to avoid huge payloads
-            "csv_headers": headers,
+        outcome = {
+            "status": "approved",
+            "approved_at": iso(now_utc()),
+            "approved_by": admin["id"],
+            "approved_by_name": admin.get("name", ""),
+            "outcome": {"inserted": inserted, "duplicate_at_approval": duplicate_now},
         }
+        await db.checkin_import_batches.update_one({"id": batch_id}, {"$set": outcome})
+        doc.update(outcome)
+        return _batch_out(doc)

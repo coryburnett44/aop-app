@@ -62,7 +62,11 @@ function CatalogSection() {
     const [recipientsAward, setRecipientsAward] = useState(null); // award whose modal is open
 
     useEffect(() => {
-        api.get("/awards").then(({ data }) => setAwards(data)).catch(() => {});
+        // Iter 152: Medallion Club awards live in their own dedicated tab
+        // and are surfaced separately on the Personnel Data Brief PDF.
+        // Filter them OUT of the general Awards System catalog so admins
+        // don't see them mixed with regular ribbons/decorations.
+        api.get("/awards").then(({ data }) => setAwards((data || []).filter((a) => !a.medallion_tier))).catch(() => {});
         (async () => {
             const { data: members } = await api.get("/members");
             const all = [];
@@ -624,12 +628,17 @@ function LifeMemberSection({ isAdmin }) {
 
     return (
         <div className="space-y-8" data-testid="life-member-section">
-            <div className="bg-gradient-to-br from-amber-50 to-white border border-amber-200/60 rounded-2xl p-6">
+            {/* Keep this hero card explicitly light in both light & dark mode
+               so the amber gradient stays legible. Arbitrary hex classes
+               bypass the dark-mode `.bg-white`/`.text-slate-*` remap in
+               index.css so the paragraph reads black-on-amber in every
+               theme (user report Iter 152). */}
+            <div className="bg-gradient-to-br from-[#fffbeb] to-[#ffffff] border border-[#fde68a] rounded-2xl p-6">
                 <div className="flex items-start gap-3">
                     <Medal className="h-7 w-7 text-amber-600 shrink-0 mt-1" />
                     <div className="flex-1">
-                        <h2 className="text-xl font-heading font-semibold">Alpha Omega Phi Life Member Club</h2>
-                        <p className="mt-2 text-sm text-slate-700 leading-relaxed" data-testid="life-member-blurb">{LIFE_MEMBER_BLURB}</p>
+                        <h2 className="text-xl font-heading font-semibold text-[#0f172a]">Alpha Omega Phi Life Member Club</h2>
+                        <p className="mt-2 text-sm text-[#334155] leading-relaxed" data-testid="life-member-blurb">{LIFE_MEMBER_BLURB}</p>
                     </div>
                 </div>
             </div>

@@ -741,13 +741,36 @@ def register(
             tdoc = await db.tiers.find_one({"id": u["tier_id"]}, {"_id": 0})
             tier = tier_out(tdoc) if tdoc else None
         grants = await db.award_grants.find({"user_id": user_id}, {"_id": 0}).sort([("award_name", 1), ("granted_at", 1)]).to_list(200)
+        # Iter 152 — Medallion Club grants are pulled out into their own
+        # list so the Personnel Data Brief PDF can render them as a
+        # dedicated section AFTER the Awards & Decorations section. We
+        # identify medallion awards via the `medallion_tier` field on the
+        # awards catalog collection.
+        medallion_award_ids: set = set()
+        medallion_tier_by_id: dict = {}
+        async for a in db.awards.find(
+            {"medallion_tier": {"$in": ["bronze", "silver", "gold"]}},
+            {"_id": 0, "id": 1, "medallion_tier": 1, "name": 1, "image_url": 1},
+        ):
+            medallion_award_ids.add(a["id"])
+            medallion_tier_by_id[a["id"]] = a
         counts: dict = {}
         grouped_by_id: dict = {}
+        medallion_grants: list = []
         for g in grants:
             aid = g["award_id"]
             counts[aid] = counts.get(aid, 0) + 1
             if not g.get("ordinal"):
                 g["ordinal"] = counts[aid]
+            if aid in medallion_award_ids:
+                info = medallion_tier_by_id.get(aid, {})
+                medallion_grants.append({
+                    **g,
+                    "medallion_tier": info.get("medallion_tier"),
+                    "medallion_name": info.get("name") or g.get("award_name"),
+                    "medallion_image_url": info.get("image_url"),
+                })
+                continue
             if aid not in grouped_by_id:
                 grouped_by_id[aid] = {
                     "award_id": aid,
@@ -765,8 +788,21 @@ def register(
                 grouped_by_id[aid]["grants"].append(g)
         for g in grants:
             g["award_count"] = counts.get(g["award_id"], 1)
-        grants.sort(key=lambda x: x.get("granted_at", ""), reverse=True)
+        # Non-medallion grants for the "awards" list. Medallions have
+        # their own section on the PDF & are omitted here to keep the
+        # Awards & Decorations count accurate.
+        non_medallion_grants = [g for g in grants if g["award_id"] not in medallion_award_ids]
+        non_medallion_grants.sort(key=lambda x: x.get("granted_at", ""), reverse=True)
+        grants = non_medallion_grants  # preserve name used downstream
         awards_grouped = sorted(grouped_by_id.values(), key=lambda x: (x.get("last_granted_at") or ""), reverse=True)
+        # Group medallion grants by tier (Bronze/Silver/Gold) for the PDF.
+        medallions_by_tier: dict = {"bronze": [], "silver": [], "gold": []}
+        for mg in medallion_grants:
+            mt = (mg.get("medallion_tier") or "").lower()
+            if mt in medallions_by_tier:
+                medallions_by_tier[mt].append(mg)
+        for mt in medallions_by_tier:
+            medallions_by_tier[mt].sort(key=lambda x: x.get("granted_at", ""), reverse=True)
 
         hours_items = await db.volunteer_hours.find({"user_id": user_id}, {"_id": 0}).sort("date", -1).to_list(500)
         hours_clean = [hours_out(h) for h in hours_items]
@@ -857,6 +893,9 @@ def register(
             "awards_grouped": awards_grouped,
             "awards_count": len(grants),
             "awards_distinct_count": len(awards_grouped),
+            "medallions": medallion_grants,
+            "medallions_by_tier": medallions_by_tier,
+            "medallions_count": len(medallion_grants),
             "of_the_year": oty_all,
             "of_the_year_recent": oty_all[:7],
             "of_the_year_count": len(oty_all),
@@ -1120,9 +1159,10 @@ def register(
         else:
             col1.append(Paragraph("<i>None on record.</i>", tiny))
 
-        # ---- COL 2: AWARDS + OF THE YEAR ----
+        # ---- COL 2: AWARDS + MEDALLION CLUB + OF THE YEAR ----
         col2: list = []
-        # Awards — grouped, top 10 by latest
+        # Awards — grouped, top 10 by latest. Medallions are pulled out into
+        # their own section immediately below (Iter 152).
         grouped = list(data.get("awards_grouped") or [])
         if not grouped:
             counts_local: dict = {}
@@ -1150,10 +1190,31 @@ def register(
         else:
             col2.append(Paragraph("<i>None on record.</i>", tiny))
 
+        # Medallion Club — Bronze/Silver/Gold (Iter 152). Placed
+        # directly under Awards so leadership sees the elite recognitions
+        # as their own line item. Only tiers the member holds show up.
+        medallions_by_tier = data.get("medallions_by_tier") or {}
+        medallions_count = int(data.get("medallions_count") or 0)
+        col2.append(orb_section_bar(f"SECTION V &mdash; MEDALLION CLUB ({medallions_count})"))
+        if medallions_count > 0:
+            med_lines = []
+            tier_label = {"bronze": "BRONZE", "silver": "SILVER", "gold": "GOLD"}
+            for mt in ("gold", "silver", "bronze"):  # highest → lowest
+                for mg in medallions_by_tier.get(mt) or []:
+                    date = (mg.get("granted_at") or "")[:10]
+                    name = mg.get("medallion_name") or mg.get("award_name") or "Medallion"
+                    med_lines.append([Paragraph(
+                        f"<b>{tier_label.get(mt, mt.upper())}</b> &middot; {name}  <font color='#999999'>{date}</font>",
+                        tiny,
+                    )])
+            col2.append(orb_list(med_lines))
+        else:
+            col2.append(Paragraph("<i>None on record.</i>", tiny))
+
         # Of The Year — top 7
         oty_recent = data.get("of_the_year_recent") or []
         oty_count = int(data.get("of_the_year_count") or 0)
-        oty_title = "SECTION V &mdash; OF THE YEAR HONORS"
+        oty_title = "SECTION VI &mdash; OF THE YEAR HONORS"
         if oty_count > 7:
             oty_title += f" (LAST 7 OF {oty_count})"
         col2.append(orb_section_bar(oty_title))
@@ -1175,7 +1236,7 @@ def register(
             key=lambda a: (0 if a.get("is_current") else 1, -1 * int((a.get("start_date") or "").replace("-", "") or 0)),
         )
         assignments_top = sorted_asn[:4]  # current + 3 prior
-        asn_title = "SECTION VI &mdash; ASSIGNMENT HISTORY"
+        asn_title = "SECTION VII &mdash; ASSIGNMENT HISTORY"
         if len(sorted_asn) > 4:
             asn_title += f" (RECENT 4 OF {len(sorted_asn)})"
         col3.append(orb_section_bar(asn_title))
@@ -1193,7 +1254,7 @@ def register(
         else:
             col3.append(Paragraph("<i>None on record.</i>", tiny))
 
-        col3.append(orb_section_bar("SECTION VII &mdash; SERVICE STATISTICS"))
+        col3.append(orb_section_bar("SECTION VIII &mdash; SERVICE STATISTICS"))
         cy_hours = sum(h.get("hours", 0) for h in (data.get("hours") or []) if (h.get("date") or "")[:4] == str(current_year) and h.get("status") == "approved")
         lifetime_hours = float(data.get("approved_hours") or 0)
         events_cy_count = sum(1 for c in (data.get("checkins") or []) if (c.get("checked_in_at") or "")[:4] == str(current_year))
@@ -1204,10 +1265,11 @@ def register(
             ["TOTAL PAID", f"${float(data.get('total_paid') or 0):,.2f}"],
             [f"EVENTS CY {current_year}", str(events_cy_count)],
             ["AWARDS HELD", f"{len(grouped_sorted)} (distinct)"],
+            ["MEDALLIONS", str(medallions_count)],
             ["OTY HONORS", str(oty_count)],
         ]))
 
-        col3.append(orb_section_bar(f"SECTION VIII &mdash; RECENT EVENTS ({current_year})"))
+        col3.append(orb_section_bar(f"SECTION IX &mdash; RECENT EVENTS ({current_year})"))
         event_lookup = {e["id"]: e for e in (data.get("events") or [])}
         cy_checkins = [c for c in (data.get("checkins") or []) if (c.get("checked_in_at") or "")[:4] == str(current_year)]
         seen_events: set = set()

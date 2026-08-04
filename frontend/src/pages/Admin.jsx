@@ -1261,54 +1261,171 @@ function ChapterChangeRequestsPanel({ isFullAdmin, onChanged }) {
  */
 function CsvCheckinImportPanel({ isFullAdmin }) {
     const [busy, setBusy] = useState(false);
-    const [result, setResult] = useState(null);
+    const [batch, setBatch] = useState(null);
+    const [showAll, setShowAll] = useState({ matched: false, skipped: false });
     if (!isFullAdmin) return null;
 
     async function onFile(e) {
         const file = e.target.files?.[0];
         if (!file) return;
         setBusy(true);
-        setResult(null);
+        setBatch(null);
         try {
             const fd = new FormData();
             fd.append("file", file);
             const { data } = await api.post("/admin/checkins/import-csv", fd, { headers: { "Content-Type": "multipart/form-data" } });
-            setResult(data);
-            toast.success(`Imported ${data.inserted} attendance records`);
+            setBatch(data);
+            const s = data.summary || {};
+            toast.success(`Parsed ${s.total || 0} rows — ${s.insert || 0} ready, ${(s.skip || 0) + (s.duplicate || 0)} skipped. Review then Approve.`);
         } catch (err) {
             toast.error(formatApiError(err.response?.data?.detail) || "Import failed");
-            setResult(null);
         }
         setBusy(false);
         e.target.value = "";
     }
 
+    async function approve() {
+        if (!batch?.batch_id) return;
+        if (!window.confirm(`Approve and commit ${batch.summary?.insert || 0} attendance record${batch.summary?.insert === 1 ? "" : "s"}? Skipped and duplicate rows will be left as-is.`)) return;
+        setBusy(true);
+        try {
+            const { data } = await api.post(`/admin/checkins/import-batches/${batch.batch_id}/approve`);
+            const inserted = data?.outcome?.inserted || 0;
+            toast.success(`Approved — inserted ${inserted} attendance record${inserted === 1 ? "" : "s"}.`);
+            setBatch(data);
+        } catch (err) {
+            toast.error(formatApiError(err.response?.data?.detail) || "Approve failed");
+        }
+        setBusy(false);
+    }
+
+    async function discard() {
+        if (!batch?.batch_id) return;
+        if (!window.confirm("Discard this pending import? The file will need to be re-uploaded to try again.")) return;
+        setBusy(true);
+        try {
+            await api.delete(`/admin/checkins/import-batches/${batch.batch_id}`);
+            toast.success("Import discarded.");
+            setBatch(null);
+        } catch (err) {
+            toast.error(formatApiError(err.response?.data?.detail) || "Discard failed");
+        }
+        setBusy(false);
+    }
+
+    const rows = batch?.rows || [];
+    const matched = rows.filter((r) => r.action === "insert");
+    const skipped = rows.filter((r) => r.action !== "insert");
+    const pending = batch?.status === "pending";
+    const approved = batch?.status === "approved";
+
     return (
-        <div className="mb-6 border rounded-2xl bg-white p-4" data-testid="csv-checkin-import-panel">
+        <div className="mb-6 border rounded-2xl bg-white dark:bg-card p-4" data-testid="csv-checkin-import-panel">
             <div className="flex items-start gap-3">
                 <Upload className="h-5 w-5 text-slate-600 mt-1 shrink-0" />
                 <div className="flex-1">
                     <h3 className="font-heading text-lg font-semibold">Import historical event attendance (CSV)</h3>
                     <p className="text-xs text-slate-500 mt-1">
-                        CSV must include an <code className="bg-slate-100 rounded px-1">email</code> (preferred) or <code className="bg-slate-100 rounded px-1">name</code> column plus <code className="bg-slate-100 rounded px-1">event_name</code> and <code className="bg-slate-100 rounded px-1">date</code>. Rows are matched to existing members; unknown emails are skipped and reported. Imports feed Medallion &ldquo;events attended&rdquo; and Chapter of the Year tallies. Idempotent &mdash; re-importing the same file is safe.
+                        CSV must include an <code className="bg-slate-100 dark:bg-muted rounded px-1">email</code> (preferred) or <code className="bg-slate-100 dark:bg-muted rounded px-1">name</code> column plus <code className="bg-slate-100 dark:bg-muted rounded px-1">event_name</code> and <code className="bg-slate-100 dark:bg-muted rounded px-1">date</code>. Uploads are a <strong>preview</strong> &mdash; skipped members and reasons are surfaced below, and nothing is written until you click <strong>Approve</strong>. Idempotent &mdash; already-imported rows show as duplicates.
                     </p>
-                    <div className="mt-3">
-                        <input type="file" accept=".csv,text/csv" onChange={onFile} disabled={busy} data-testid="csv-checkin-file-input" className="text-sm" />
-                    </div>
-                    {busy && <div className="text-xs text-slate-500 mt-2">Uploading &amp; processing…</div>}
-                    {result && (
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm" data-testid="csv-checkin-import-result">
-                            <div><strong>Inserted:</strong> {result.inserted}</div>
-                            <div><strong>Skipped:</strong> {result.skipped}</div>
-                            {result.errors?.length > 0 && (
-                                <details className="mt-2">
-                                    <summary className="cursor-pointer text-slate-600 text-xs">Show {result.errors.length} row-level issues</summary>
-                                    <ul className="mt-2 text-xs text-slate-600 max-h-40 overflow-y-auto space-y-1">
-                                        {result.errors.slice(0, 50).map((e, i) => (
-                                            <li key={i}>Row {e.row}: {e.reason}</li>
-                                        ))}
-                                    </ul>
-                                </details>
+                    {!batch && (
+                        <div className="mt-3">
+                            <input type="file" accept=".csv,text/csv" onChange={onFile} disabled={busy} data-testid="csv-checkin-file-input" className="text-sm" />
+                            {busy && <div className="text-xs text-slate-500 mt-2">Uploading &amp; parsing&hellip;</div>}
+                        </div>
+                    )}
+
+                    {batch && (
+                        <div className="mt-3 space-y-3" data-testid="csv-checkin-import-result">
+                            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 dark:bg-muted p-3 text-sm">
+                                <span className="font-mono text-xs text-slate-500 truncate">{batch.filename}</span>
+                                <span className="text-xs text-slate-500">&middot;</span>
+                                <span className="text-xs" data-testid="csv-batch-total"><strong>{batch.summary?.total || 0}</strong> rows</span>
+                                <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[11px] font-semibold" data-testid="csv-batch-matched">{batch.summary?.insert || 0} ready</span>
+                                {batch.summary?.duplicate > 0 && (
+                                    <span className="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-[11px] font-semibold" data-testid="csv-batch-duplicate">{batch.summary.duplicate} duplicate</span>
+                                )}
+                                {batch.summary?.skip > 0 && (
+                                    <span className="rounded-full bg-red-100 text-red-800 px-2 py-0.5 text-[11px] font-semibold" data-testid="csv-batch-skipped">{batch.summary.skip} skipped</span>
+                                )}
+                                {approved && (
+                                    <span className="ml-auto rounded-full bg-emerald-600 text-white px-3 py-1 text-[11px] font-bold uppercase tracking-wider" data-testid="csv-batch-approved-badge">
+                                        Approved &middot; {batch.outcome?.inserted || 0} inserted
+                                    </span>
+                                )}
+                                {pending && (
+                                    <div className="ml-auto flex gap-2">
+                                        <Button variant="outline" size="sm" onClick={discard} disabled={busy} className="rounded-full" data-testid="csv-batch-discard-btn">Discard</Button>
+                                        <Button size="sm" onClick={approve} disabled={busy || (batch.summary?.insert || 0) === 0} className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="csv-batch-approve-btn">
+                                            {busy ? "Approving\u2026" : `Approve ${batch.summary?.insert || 0} record${(batch.summary?.insert || 0) === 1 ? "" : "s"}`}
+                                        </Button>
+                                    </div>
+                                )}
+                                {approved && (
+                                    <Button variant="outline" size="sm" onClick={() => setBatch(null)} className="rounded-full ml-2" data-testid="csv-batch-new-btn">Upload another</Button>
+                                )}
+                            </div>
+
+                            {matched.length > 0 && (
+                                <div className="rounded-lg border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/40 dark:bg-emerald-900/10 p-3" data-testid="csv-batch-matched-panel">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="text-xs font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">Ready to import ({matched.length})</div>
+                                        {matched.length > 8 && (
+                                            <button type="button" onClick={() => setShowAll((v) => ({ ...v, matched: !v.matched }))} className="text-xs text-emerald-700 dark:text-emerald-300 underline" data-testid="csv-batch-matched-toggle">
+                                                {showAll.matched ? "Show fewer" : `Show all ${matched.length}`}
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="max-h-56 overflow-y-auto">
+                                        <table className="w-full text-xs">
+                                            <thead className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
+                                                <tr><th className="text-left py-1 pr-2">Row</th><th className="text-left py-1 pr-2">Member</th><th className="text-left py-1 pr-2">Event</th><th className="text-left py-1 pr-2">Date</th><th className="text-left py-1 pr-2">Event status</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                {(showAll.matched ? matched : matched.slice(0, 8)).map((r) => (
+                                                    <tr key={r.row} className="border-t border-emerald-100 dark:border-emerald-900/40">
+                                                        <td className="py-1 pr-2 text-slate-500 dark:text-muted-foreground">{r.row}</td>
+                                                        <td className="py-1 pr-2"><span className="font-medium">{r.matched_user_name || r.name}</span> <span className="text-slate-400">{r.matched_user_email}</span></td>
+                                                        <td className="py-1 pr-2">{r.event_name}</td>
+                                                        <td className="py-1 pr-2 tabular-nums">{r.date_parsed}</td>
+                                                        <td className="py-1 pr-2">{r.event_is_new ? <span className="text-amber-700 dark:text-amber-300">will create event</span> : <span className="text-emerald-700 dark:text-emerald-300">existing event</span>}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+
+                            {skipped.length > 0 && (
+                                <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50/40 dark:bg-red-900/10 p-3" data-testid="csv-batch-skipped-panel">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="text-xs font-semibold uppercase tracking-wider text-red-800 dark:text-red-300">Skipped ({skipped.length}) &mdash; will NOT be imported</div>
+                                        {skipped.length > 8 && (
+                                            <button type="button" onClick={() => setShowAll((v) => ({ ...v, skipped: !v.skipped }))} className="text-xs text-red-700 dark:text-red-300 underline" data-testid="csv-batch-skipped-toggle">
+                                                {showAll.skipped ? "Show fewer" : `Show all ${skipped.length}`}
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="max-h-56 overflow-y-auto">
+                                        <table className="w-full text-xs">
+                                            <thead className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
+                                                <tr><th className="text-left py-1 pr-2">Row</th><th className="text-left py-1 pr-2">CSV member</th><th className="text-left py-1 pr-2">Event</th><th className="text-left py-1 pr-2">Date</th><th className="text-left py-1 pr-2">Reason</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                {(showAll.skipped ? skipped : skipped.slice(0, 8)).map((r) => (
+                                                    <tr key={r.row} className="border-t border-red-100 dark:border-red-900/40">
+                                                        <td className="py-1 pr-2 text-slate-500 dark:text-muted-foreground">{r.row}</td>
+                                                        <td className="py-1 pr-2"><span className="font-medium">{r.name || <em className="text-slate-400">(no name)</em>}</span> <span className="text-slate-400">{r.email}</span></td>
+                                                        <td className="py-1 pr-2">{r.event_name || <em className="text-slate-400">&mdash;</em>}</td>
+                                                        <td className="py-1 pr-2 tabular-nums">{r.date_parsed || r.date_raw || <em className="text-slate-400">&mdash;</em>}</td>
+                                                        <td className="py-1 pr-2 text-red-700 dark:text-red-300">{r.action === "duplicate" ? <span className="font-semibold">Duplicate &mdash; </span> : null}{r.skip_reason}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             )}
                         </div>
                     )}
@@ -2786,7 +2903,11 @@ function AwardsAdmin() {
 
     const load = async () => {
         const [a, m] = await Promise.all([api.get("/awards"), api.get("/members")]);
-        setAwards(a.data);
+        // Iter 152: Medallions have their own admin surface (Medallion
+        // Eligibility panel + Manual Grant on Awards.jsx). Filter them
+        // out of the awards catalog so admins never re-order or re-edit
+        // medallions from the general awards list.
+        setAwards((a.data || []).filter((x) => !x.medallion_tier));
         setMembers(m.data);
     };
     useEffect(() => { load(); }, []);

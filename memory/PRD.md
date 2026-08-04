@@ -15,6 +15,35 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 153 — CSV preview-approve flow, Life Member dark-mode fix, Medallions split out of Awards catalog (2026-02-04) [FEATURES + BUGFIX]
+**User requests (all three delivered):**
+1. Life Member Club paragraph was rendering as white text in dark mode. Force it to stay dark.
+2. Remove Medallion Club awards from the Awards System catalog. Put them in their own list on the Personnel Data Brief PDF, placed AFTER the Awards & Decorations section.
+3. On the CSV historical-attendance import, show admins which members were skipped and the reason (matching the volunteer-hours / causes workflow) and give them an explicit Approve button.
+
+**Backend:**
+- **`/app/backend/routes/chapter_change_and_import.py`** — CSV import is now a **two-phase preview → approve** flow. `POST /api/admin/checkins/import-csv` parses the CSV, matches members, flags per-row `action` (`insert`/`skip`/`duplicate`) with a `skip_reason`, and persists a `checkin_import_batches` doc in `pending` status. Nothing writes to `checkins`/`events` until the admin approves.
+  - `GET  /api/admin/checkins/import-batches?status=pending|approved|all`
+  - `GET  /api/admin/checkins/import-batches/{id}`
+  - `POST /api/admin/checkins/import-batches/{id}/approve` — commits inserts, creates synthetic events, re-checks duplicates at approval time (idempotent).
+  - `DELETE /api/admin/checkins/import-batches/{id}` — discard a pending batch.
+  - Bugfix: strip the ObjectId `_id` from the insert-mutated dict before returning (was causing endpoint to hang).
+- **`/app/backend/routes/reports.py`** — `personnel_brief_data` now splits award grants: non-medallion → `awards_grouped/awards_count`, medallions → `medallions_by_tier` (bronze/silver/gold), `medallions_count`, `medallions`. Personnel Data Brief PDF renders a new **Section V — MEDALLION CLUB** directly under **Section IV — Awards & Decorations**. Sections shifted: VI = Of The Year, VII = Assignment History, VIII = Service Statistics (with new MEDALLIONS stat line), IX = Recent Events. Fixed a variable-shadowing bug (`tier` overwrote `data['tier']`) that regressed the ORB header.
+
+**Frontend:**
+- **`Awards.jsx`** — `CatalogSection` filters out `medallion_tier` awards so the awards catalog only shows regular ribbons/decorations. Life Member hero card uses arbitrary hex classes (`bg-[#fffbeb]`, `text-[#334155]`, `text-[#0f172a]`) to bypass the dark-mode `.text-slate-700` remap so the paragraph is now **legibly dark on amber** in both light and dark themes.
+- **`Admin.jsx` → `AwardsAdmin`** — same filter applied so admins never re-order or re-edit medallions from the Awards catalog (medallions have their own dedicated Awards → Medallion Club and Medallion Eligibility surfaces).
+- **`Admin.jsx` → `CsvCheckinImportPanel`** — rebuilt as a review-and-approve UI. After upload, shows a preview toolbar (filename, N ready, N duplicate, N skipped), plus two tables: **Ready to Import** (member, event, date, "will create event" vs "existing event") and **Skipped — will NOT be imported** (member, event, date, exact reason). Explicit **Approve N records** button + **Discard** button. Once approved, shows an "Approved · N inserted" pill and an "Upload another" button. Dark-mode-aware surfaces (dark border/bg utility variants).
+- New data-testids: `csv-batch-total`, `csv-batch-matched-panel`, `csv-batch-skipped-panel`, `csv-batch-approve-btn`, `csv-batch-discard-btn`, `csv-batch-new-btn`, `csv-batch-matched-toggle`, `csv-batch-skipped-toggle`, `csv-batch-approved-badge`, `csv-batch-matched`, `csv-batch-duplicate`, `csv-batch-skipped`.
+
+**Verification:**
+- CSV curl roundtrip: preview → 200 with structured rows in ~20ms; approve → `{inserted: 2, duplicate_at_approval: 0}`; re-approve → 409 as expected.
+- Playwright smoke: full CSV UI renders with 2 ready-rows, 3 skipped-rows (with exact reasons), Approve button armed.
+- PDF: `pdfminer` extraction confirms exact section order: I Personal Data → II Education → III Languages → IV Awards & Decorations → V Medallion Club → VI Of The Year → VII Assignment History → VIII Service Statistics → IX Recent Events.
+- Life Member paragraph computed color in dark mode: `rgb(51, 65, 85)` (slate-700 dark ink) on amber-cream card — user's ask satisfied.
+
+
+
 ### Iteration 152 — Member Region Bulk Move + Medallion consecutive-years rule verified (2026-02-04) [FEATURE + BUGFIX]
 **User request (from Msg #338, previously missed):** Let admins multi-select members in the directory and reassign their region in one click. **User Iteration-151 rule now verified:** members without any inactivity record and joined on/before Aug 4 2023 auto-get 3+ consecutive years; any inactivity in `status_history` zeroes the count.
 
