@@ -15,6 +15,23 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 156 — Profile Events tab: RSVP'd vs Attended split + year filter (2026-02-04) [FEATURE]
+**User request:** On the member's Profile → Events tab, separate RSVP'd from attended (checked-in) events. Allow filtering by year.
+
+**Backend (`/app/backend/routes/rsvps.py`):**
+- `GET /api/me/events` now unions RSVP'd + checked-in events (walk-ins included) and adds three flags per row: `rsvp: bool`, `attended: bool`, `checked_in_at: ISO|null`. Sorted newest-first by `start_at`.
+
+**Frontend (`/app/frontend/src/pages/Profile.jsx`):**
+- New `EventsTabContent` component: `RSVP'd (n)` / `Attended (n)` inner Tabs, plus a `Year` `Select` filter whose options are derived from whichever list is active (uses `checked_in_at` year for Attended, `start_at` year for RSVP'd). Empty-state copy adapts to active tab and year filter.
+- Each event card now shows RSVP'D / ATTENDED pill badges on the right; Attended cards also show a green "Checked in {date}" indicator.
+- data-testids: `profile-events-tab`, `events-subtab-rsvp`, `events-subtab-attended`, `events-year-filter`, `events-list-rsvp`, `events-list-attended`, `events-empty-state`.
+
+**Verification:**
+- curl: 11 total events → 5 RSVP'd, 7 attended, 4 distinct years (2022, 2023, 2024, 2027).
+- Playwright: tabs render with counts, list switches to Attended, year filter opens with 5 options, filtered result renders exactly the event with both RSVP + Attended badges.
+
+
+
 ### Iteration 155 — Medallion Withdraw with audited note (2026-02-04) [FEATURE]
 **User request:** Let admins revoke a granted medallion with a note (previously only edit was possible).
 

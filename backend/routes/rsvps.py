@@ -833,10 +833,40 @@ def register(
 
     @api.get("/me/events")
     async def my_events(user: dict = Depends(get_current_user)):
-        rsvps = await db.rsvps.find({"user_id": user["id"]}, {"_id": 0}).to_list(500)
-        ids = [r["event_id"] for r in rsvps]
-        events = await db.events.find({"id": {"$in": ids}}, {"_id": 0}).to_list(500)
-        return [event_out(e) for e in events]
+        """Personal event feed for the Profile → Events tab. Returns
+        every event the caller has *either* RSVP'd to *or* been checked
+        into (walk-ins). Each event carries `rsvp` and `attended` flags
+        so the client can render two separate tabs (RSVP'd vs Attended)
+        and filter by year without re-fetching (Iter 156)."""
+        rsvps = await db.rsvps.find({"user_id": user["id"]}, {"_id": 0, "event_id": 1}).to_list(2000)
+        checkins = await db.checkins.find({"user_id": user["id"]}, {"_id": 0, "event_id": 1, "checked_in_at": 1}).to_list(2000)
+        rsvp_ids = {r["event_id"] for r in rsvps if r.get("event_id")}
+        checkin_by_event = {}
+        for c in checkins:
+            eid = c.get("event_id")
+            if not eid:
+                continue
+            # Keep the earliest checkin timestamp per event (in case a
+            # member was scanned in twice).
+            existing = checkin_by_event.get(eid)
+            new_ts = c.get("checked_in_at") or ""
+            if not existing or (new_ts and new_ts < existing):
+                checkin_by_event[eid] = new_ts
+        ids = list(rsvp_ids | set(checkin_by_event.keys()))
+        if not ids:
+            return []
+        events = await db.events.find({"id": {"$in": ids}}, {"_id": 0}).to_list(len(ids))
+        out = []
+        for e in events:
+            row = event_out(e)
+            row["rsvp"] = e["id"] in rsvp_ids
+            row["attended"] = e["id"] in checkin_by_event
+            row["checked_in_at"] = checkin_by_event.get(e["id"]) or None
+            out.append(row)
+        # Sort newest-first so the "Attended" tab shows recent history
+        # at the top and the "RSVP'd" tab shows the next upcoming event.
+        out.sort(key=lambda x: x.get("start_at") or "", reverse=True)
+        return out
 
     # ---------- Check-in ----------
 

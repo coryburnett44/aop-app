@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
@@ -631,18 +631,106 @@ export default function Profile() {
                 </TabsContent>
 
                 <TabsContent value="events" className="mt-6 space-y-4">
-                    {events.length === 0 && <div className="text-muted-foreground">You haven't RSVPed to any events yet. <Link to="/events" className="text-primary">Browse events →</Link></div>}
-                    {events.map((e) => (
+                    <EventsTabContent events={events} />
+                </TabsContent>
+            </Tabs>
+        </div>
+    );
+}
+
+function EventsTabContent({ events }) {
+    const [subtab, setSubtab] = useState("rsvp");
+    const [year, setYear] = useState("all");
+
+    // Iter 156 — split the caller's events into "RSVP'd" (planned/committed)
+    // and "Attended" (confirmed checkin). Both lists can overlap; the tabs
+    // let a member see one or the other. Year filter is derived from
+    // whichever bucket is active so we never show empty years.
+    const rsvpEvents = useMemo(() => events.filter((e) => e.rsvp), [events]);
+    const attendedEvents = useMemo(() => events.filter((e) => e.attended), [events]);
+    const activeList = subtab === "attended" ? attendedEvents : rsvpEvents;
+
+    const years = useMemo(() => {
+        const s = new Set();
+        for (const e of activeList) {
+            const y = e.attended && e.checked_in_at
+                ? (e.checked_in_at || "").slice(0, 4)
+                : (e.start_at || "").slice(0, 4);
+            if (y && y.length === 4) s.add(y);
+        }
+        return Array.from(s).sort().reverse();
+    }, [activeList]);
+
+    const filtered = useMemo(() => {
+        if (year === "all") return activeList;
+        return activeList.filter((e) => {
+            const y = e.attended && e.checked_in_at
+                ? (e.checked_in_at || "").slice(0, 4)
+                : (e.start_at || "").slice(0, 4);
+            return y === year;
+        });
+    }, [activeList, year]);
+
+    return (
+        <div className="space-y-4" data-testid="profile-events-tab">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
+                <Tabs value={subtab} onValueChange={(v) => { setSubtab(v); setYear("all"); }} className="flex-1">
+                    <TabsList className="rounded-full bg-muted p-1">
+                        <TabsTrigger value="rsvp" className="rounded-full" data-testid="events-subtab-rsvp">
+                            RSVP&rsquo;d ({rsvpEvents.length})
+                        </TabsTrigger>
+                        <TabsTrigger value="attended" className="rounded-full" data-testid="events-subtab-attended">
+                            Attended ({attendedEvents.length})
+                        </TabsTrigger>
+                    </TabsList>
+                </Tabs>
+                <div className="flex items-center gap-2">
+                    <Label htmlFor="events-year-filter" className="text-xs text-muted-foreground shrink-0">Year</Label>
+                    <Select value={year} onValueChange={setYear}>
+                        <SelectTrigger id="events-year-filter" className="w-32 rounded-full" data-testid="events-year-filter">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All years</SelectItem>
+                            {years.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                        </SelectContent>
+                    </Select>
+                </div>
+            </div>
+
+            {filtered.length === 0 ? (
+                <div className="text-muted-foreground" data-testid="events-empty-state">
+                    {subtab === "attended"
+                        ? <>No attended events{year !== "all" ? ` in ${year}` : ""} yet. Attendance is recorded when you&rsquo;re checked in at an event.</>
+                        : <>You haven&rsquo;t RSVPed to any events{year !== "all" ? ` in ${year}` : ""} yet. <Link to="/events" className="text-primary">Browse events &rarr;</Link></>}
+                </div>
+            ) : (
+                <div className="space-y-3" data-testid={`events-list-${subtab}`}>
+                    {filtered.map((e) => (
                         <Link key={e.id} to={`/events/${e.id}`} className="block bg-card rounded-2xl p-5 border border-border hover:shadow-warm transition-all" data-testid={`my-event-${e.id}`}>
-                            <div className="font-heading font-semibold text-lg">{e.title}</div>
-                            <div className="mt-2 flex items-center gap-5 text-sm text-muted-foreground">
-                                <span className="inline-flex items-center gap-1.5"><Calendar className="h-4 w-4" /> {fmtET(e.start_at, "EEE, MMM d · h:mm a zzz")}</span>
-                                <span className="inline-flex items-center gap-1.5"><MapPin className="h-4 w-4" /> {e.location}</span>
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1 min-w-0">
+                                    <div className="font-heading font-semibold text-lg truncate">{e.title}</div>
+                                    <div className="mt-2 flex items-center gap-5 text-sm text-muted-foreground flex-wrap">
+                                        <span className="inline-flex items-center gap-1.5"><Calendar className="h-4 w-4" /> {fmtET(e.start_at, "EEE, MMM d · h:mm a zzz")}</span>
+                                        {e.location && <span className="inline-flex items-center gap-1.5"><MapPin className="h-4 w-4" /> {e.location}</span>}
+                                        {subtab === "attended" && e.checked_in_at && (
+                                            <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                                Checked in {formatCalendarDay(e.checked_in_at, "MMM d, yyyy")}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-1 items-end shrink-0">
+                                    {e.rsvp && <span className="text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5 bg-primary/10 text-primary">RSVP&rsquo;d</span>}
+                                    {e.attended && <span className="text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">Attended</span>}
+                                </div>
                             </div>
                         </Link>
                     ))}
-                </TabsContent>
-            </Tabs>
+                </div>
+            )}
         </div>
     );
 }
