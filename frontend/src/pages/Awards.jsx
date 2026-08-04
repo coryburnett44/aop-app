@@ -41,12 +41,16 @@ export default function Awards() {
             <p className="text-muted-foreground mt-2">Recognition for the members who show up, lead, and lift others.</p>
 
             <Tabs defaultValue="catalog" className="mt-8">
-                <TabsList className="rounded-full bg-muted p-1">
+                <TabsList className="rounded-full bg-muted p-1 flex-wrap h-auto">
                     <TabsTrigger value="catalog" className="rounded-full" data-testid="awards-tab-catalog">Awards catalog</TabsTrigger>
                     <TabsTrigger value="oty" className="rounded-full" data-testid="awards-tab-oty">Of The Year</TabsTrigger>
+                    <TabsTrigger value="life" className="rounded-full" data-testid="awards-tab-life">Life Member Club</TabsTrigger>
+                    <TabsTrigger value="medallion" className="rounded-full" data-testid="awards-tab-medallion">Medallion Club</TabsTrigger>
                 </TabsList>
                 <TabsContent value="catalog" className="mt-6"><CatalogSection /></TabsContent>
                 <TabsContent value="oty" className="mt-6"><OfTheYearSection isAdmin={isAdmin} /></TabsContent>
+                <TabsContent value="life" className="mt-6"><LifeMemberSection isAdmin={isAdmin} /></TabsContent>
+                <TabsContent value="medallion" className="mt-6"><MedallionSection isAdmin={isAdmin} /></TabsContent>
             </Tabs>
         </div>
     );
@@ -550,5 +554,370 @@ function WinnerEditor({ category, row, onClose, onSaved }) {
                 </div>
             </DialogContent>
         </Dialog>
+    );
+}
+
+
+/* =========================================================================
+ *  Life Member Club
+ * ======================================================================= */
+const LIFE_MEMBER_BLURB = "The Alpha Omega Phi Life Member Club is the most elite club within the organization. This club is reserved for those who have excelled beyond the standard required and were opted in by the Executive Committee. The organization will not have more than 15% of its members holding this status.";
+
+function LifeMemberSection({ isAdmin }) {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [showAdd, setShowAdd] = useState(false);
+    const [members, setMembers] = useState([]);
+    const [form, setForm] = useState({ mode: "existing", user_id: "", name: "", year: new Date().getFullYear(), note: "" });
+
+    async function load() {
+        setLoading(true);
+        try {
+            const { data } = await api.get("/life-members");
+            setRows(data || []);
+        } catch { setRows([]); }
+        setLoading(false);
+    }
+
+    useEffect(() => { load(); }, []);
+    useEffect(() => {
+        if (!isAdmin) return;
+        api.get("/members").then((r) => setMembers(r.data || [])).catch(() => setMembers([]));
+    }, [isAdmin]);
+
+    async function addOne() {
+        const payload = { year: Number(form.year), note: (form.note || "").trim() };
+        if (form.mode === "existing") {
+            if (!form.user_id) return toast.error("Pick a member from the directory.");
+            payload.user_id = form.user_id;
+        } else {
+            if (!form.name.trim()) return toast.error("Enter the historical member's name.");
+            payload.name = form.name.trim();
+        }
+        try {
+            await api.post("/life-members", payload);
+            toast.success("Added to Life Member Club");
+            setShowAdd(false);
+            setForm({ mode: form.mode, user_id: "", name: "", year: new Date().getFullYear(), note: "" });
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Failed to add"); }
+    }
+
+    async function removeOne(id) {
+        if (!window.confirm("Remove this Life Member entry?")) return;
+        try {
+            await api.delete(`/life-members/${id}`);
+            toast.success("Removed");
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Delete failed"); }
+    }
+
+    const byYear = useMemo(() => {
+        const groups = {};
+        for (const r of rows) {
+            const y = r.year || "Unknown";
+            groups[y] = groups[y] || [];
+            groups[y].push(r);
+        }
+        return Object.entries(groups).sort((a, b) => (Number(b[0]) || 0) - (Number(a[0]) || 0));
+    }, [rows]);
+
+    return (
+        <div className="space-y-8" data-testid="life-member-section">
+            <div className="bg-gradient-to-br from-amber-50 to-white border border-amber-200/60 rounded-2xl p-6">
+                <div className="flex items-start gap-3">
+                    <Medal className="h-7 w-7 text-amber-600 shrink-0 mt-1" />
+                    <div className="flex-1">
+                        <h2 className="text-xl font-heading font-semibold">Alpha Omega Phi Life Member Club</h2>
+                        <p className="mt-2 text-sm text-slate-700 leading-relaxed" data-testid="life-member-blurb">{LIFE_MEMBER_BLURB}</p>
+                    </div>
+                </div>
+            </div>
+
+            {isAdmin && (
+                <div className="flex justify-end">
+                    <Button onClick={() => setShowAdd(true)} data-testid="life-member-add-btn">
+                        <Plus className="h-4 w-4 mr-2" /> Add Life Member
+                    </Button>
+                </div>
+            )}
+
+            {loading ? (
+                <div className="text-muted-foreground text-sm">Loading Life Members…</div>
+            ) : byYear.length === 0 ? (
+                <div className="rounded-2xl border-2 border-dashed border-slate-200 p-10 text-center text-muted-foreground">
+                    No Life Members yet.{isAdmin ? " Click 'Add Life Member' to induct one." : ""}
+                </div>
+            ) : (
+                <div className="space-y-8" data-testid="life-member-list">
+                    {byYear.map(([year, entries]) => (
+                        <div key={year}>
+                            <div className="flex items-center gap-3 mb-4">
+                                <span className="text-2xl font-heading font-bold">{year}</span>
+                                <span className="text-xs text-slate-500 uppercase tracking-wider">{entries.length} inducted</span>
+                                <div className="flex-1 h-px bg-slate-200" />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {entries.map((e) => (
+                                    <div key={e.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition-shadow" data-testid={`life-member-card-${e.id}`}>
+                                        <div className="flex items-start gap-3">
+                                            <Avatar className="h-12 w-12 shrink-0">
+                                                {e.member_avatar_url && <AvatarImage src={mediaUrl(e.member_avatar_url)} alt={e.member_name || e.name} />}
+                                                <AvatarFallback className="bg-amber-100 text-amber-800">{(e.member_name || e.name || "?").slice(0, 1).toUpperCase()}</AvatarFallback>
+                                            </Avatar>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-semibold truncate">{e.member_name || e.name}</div>
+                                                {e.member_chapter_name && <div className="text-xs text-slate-500 truncate">{e.member_chapter_name}</div>}
+                                                {e.note && <div className="text-xs text-slate-600 mt-1">{e.note}</div>}
+                                                {!e.user_id && <div className="text-[10px] uppercase tracking-wider text-amber-700 mt-1 font-medium">Historical</div>}
+                                            </div>
+                                            {isAdmin && (
+                                                <button onClick={() => removeOne(e.id)} className="text-slate-400 hover:text-red-600" data-testid={`life-member-delete-${e.id}`}>
+                                                    <Trash2 className="h-4 w-4" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <Dialog open={showAdd} onOpenChange={setShowAdd}>
+                <DialogContent data-testid="life-member-add-dialog">
+                    <DialogHeader><DialogTitle>Add Life Member</DialogTitle></DialogHeader>
+                    <div className="space-y-4">
+                        <div>
+                            <Label>Type</Label>
+                            <div className="flex gap-2 mt-2">
+                                <Button type="button" variant={form.mode === "existing" ? "default" : "outline"} size="sm" onClick={() => setForm({ ...form, mode: "existing" })} data-testid="life-mode-existing">Existing member</Button>
+                                <Button type="button" variant={form.mode === "historical" ? "default" : "outline"} size="sm" onClick={() => setForm({ ...form, mode: "historical" })} data-testid="life-mode-historical">Historical (free-text)</Button>
+                            </div>
+                        </div>
+                        {form.mode === "existing" ? (
+                            <div>
+                                <Label htmlFor="lm-user">Member</Label>
+                                <Select value={form.user_id} onValueChange={(v) => setForm({ ...form, user_id: v })}>
+                                    <SelectTrigger id="lm-user" data-testid="life-user-select"><SelectValue placeholder="Pick a member…" /></SelectTrigger>
+                                    <SelectContent>
+                                        {members.map((m) => (<SelectItem key={m.id} value={m.id}>{m.name}{m.email ? ` · ${m.email}` : ""}</SelectItem>))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        ) : (
+                            <div>
+                                <Label htmlFor="lm-name">Name</Label>
+                                <Input id="lm-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Jane Doe" data-testid="life-name-input" />
+                            </div>
+                        )}
+                        <div>
+                            <Label htmlFor="lm-year">Year inducted</Label>
+                            <Input id="lm-year" type="number" min="1900" max="2100" value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} data-testid="life-year-input" />
+                        </div>
+                        <div>
+                            <Label htmlFor="lm-note">Note (optional)</Label>
+                            <Textarea id="lm-note" rows={2} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Short bio or role at time of induction…" data-testid="life-note-input" />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-2">
+                            <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
+                            <Button onClick={addOne} data-testid="life-member-save-btn">Add</Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+        </div>
+    );
+}
+
+
+/* =========================================================================
+ *  Medallion Club — Bronze / Silver / Gold
+ * ======================================================================= */
+const MEDALLION_LEVELS = [
+    { key: "bronze", label: "Bronze", color: "#CD7F32",
+      criteria: ["Minimum 3 years of consecutive service", "600 cumulative community service hours", "Attend four national or state events", "Minimum of $1,500 fundraised"] },
+    { key: "silver", label: "Silver", color: "#C0C0C0",
+      criteria: ["Minimum 6 years of consecutive service", "1,200 cumulative community service hours", "Attend eight national or state events", "Minimum of $3,000 fundraised", "Must be a Bronze Medallion Member"] },
+    { key: "gold", label: "Gold", color: "#FFD700",
+      criteria: ["Minimum 10 years of consecutive service", "2,000 cumulative community service hours", "Attend 12 national or state events", "Minimum of $6,000 fundraised", "Must be a Silver Medallion Member"] },
+];
+
+function MedallionSection({ isAdmin }) {
+    const [awards, setAwards] = useState([]);
+    const [eligibility, setEligibility] = useState({ bronze: [], silver: [], gold: [] });
+    const [loading, setLoading] = useState(true);
+    const [activeTier, setActiveTier] = useState("bronze");
+    const [granting, setGranting] = useState(false);
+
+    async function load() {
+        setLoading(true);
+        try {
+            const [aw, elig] = await Promise.all([
+                api.get("/awards"),
+                isAdmin ? api.get("/awards/medallion-eligibility") : Promise.resolve({ data: { bronze: [], silver: [], gold: [] } }),
+            ]);
+            setAwards((aw.data || []).filter((a) => a.medallion_tier));
+            setEligibility(elig.data || { bronze: [], silver: [], gold: [] });
+        } catch { /* ignore */ }
+        setLoading(false);
+    }
+
+    useEffect(() => { load(); }, [isAdmin]);
+
+    const awardByTier = useMemo(() => {
+        const m = {};
+        for (const a of awards) m[a.medallion_tier] = a;
+        return m;
+    }, [awards]);
+
+    async function grantTo(userId, tier) {
+        const a = awardByTier[tier];
+        if (!a) return;
+        if (!window.confirm(`Grant the ${a.name} to this member?`)) return;
+        setGranting(true);
+        try {
+            await api.post(`/awards/${a.id}/grant`, { user_id: userId, note: `Auto-granted by Medallion eligibility (${tier}).` });
+            toast.success(`${a.name} granted`);
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Grant failed"); }
+        setGranting(false);
+    }
+
+    if (loading) return <div className="text-muted-foreground text-sm">Loading Medallion Club…</div>;
+
+    return (
+        <div className="space-y-6" data-testid="medallion-section">
+            <p className="text-sm text-muted-foreground">
+                The Medallion Club recognises the organization&rsquo;s most-dedicated members across three
+                tiered levels — each unlocked by consecutive years of service, community-service
+                hours, event attendance, and personal fundraising.
+            </p>
+            <Tabs value={activeTier} onValueChange={setActiveTier}>
+                <TabsList className="rounded-full bg-muted p-1">
+                    {MEDALLION_LEVELS.map((l) => (
+                        <TabsTrigger key={l.key} value={l.key} className="rounded-full" data-testid={`medallion-subtab-${l.key}`}>{l.label}</TabsTrigger>
+                    ))}
+                </TabsList>
+                {MEDALLION_LEVELS.map((l) => (
+                    <TabsContent key={l.key} value={l.key} className="mt-6">
+                        <MedallionTierPanel level={l} award={awardByTier[l.key]} candidates={eligibility[l.key] || []} isAdmin={isAdmin} granting={granting} onGrant={(uid) => grantTo(uid, l.key)} />
+                    </TabsContent>
+                ))}
+            </Tabs>
+        </div>
+    );
+}
+
+function MedallionTierPanel({ level, award, candidates, isAdmin, granting, onGrant }) {
+    const eligibleOnly = candidates.filter((c) => c.eligible && !c.already_granted);
+    const holders = candidates.filter((c) => c.already_granted);
+    const partial = candidates.filter((c) => !c.eligible && c.criteria_met_count >= 3);
+
+    return (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-1">
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+                    {award?.image_url ? (
+                        <img src={award.image_url} alt={`${level.label} Medallion`} className="w-40 h-40 mx-auto object-contain" data-testid={`medallion-image-${level.key}`} />
+                    ) : (
+                        <div className="w-40 h-40 mx-auto rounded-full flex items-center justify-center" style={{ backgroundColor: level.color + "22", color: level.color }}>
+                            <Medal className="h-20 w-20" />
+                        </div>
+                    )}
+                    <h3 className="mt-4 text-xl font-heading font-bold">{level.label} Medallion</h3>
+                    {award?.description && <p className="mt-2 text-sm text-slate-600 leading-relaxed">{award.description}</p>}
+                </div>
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+                    <h4 className="text-sm font-semibold text-slate-800 uppercase tracking-wider">Criteria</h4>
+                    <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                        {level.criteria.map((c, i) => (
+                            <li key={i} className="flex items-start gap-2">
+                                <span className="mt-1 h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: level.color }} />
+                                <span>{c}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            </div>
+
+            <div className="lg:col-span-2 space-y-6">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <h4 className="text-sm font-semibold text-slate-800 uppercase tracking-wider mb-3">
+                        Current Recipients ({holders.length})
+                    </h4>
+                    {holders.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No {level.label} Medallion recipients yet.</p>
+                    ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3" data-testid={`medallion-holders-${level.key}`}>
+                            {holders.map((h) => (
+                                <div key={h.user_id} className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 bg-slate-50">
+                                    <Avatar className="h-8 w-8"><AvatarImage src={mediaUrl(h.avatar_url)} /><AvatarFallback>{h.name?.[0] || "?"}</AvatarFallback></Avatar>
+                                    <div className="text-xs">
+                                        <div className="font-medium truncate">{h.name}</div>
+                                        {h.chapter_name && <div className="text-slate-500 truncate">{h.chapter_name}</div>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {isAdmin && (
+                    <div className="rounded-2xl border-2 border-green-200 bg-green-50/40 p-5" data-testid={`medallion-eligible-${level.key}`}>
+                        <h4 className="text-sm font-semibold text-green-800 uppercase tracking-wider mb-3">
+                            Suggested Grants — Meets all {level.criteria.length} criteria ({eligibleOnly.length})
+                        </h4>
+                        {eligibleOnly.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">No candidates currently meet every criterion for the {level.label} Medallion.</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {eligibleOnly.map((c) => (<EligibilityRow key={c.user_id} candidate={c} level={level} onGrant={() => onGrant(c.user_id)} granting={granting} />))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {isAdmin && partial.length > 0 && (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                        <h4 className="text-sm font-semibold text-slate-800 uppercase tracking-wider mb-3">Close to eligible ({partial.length}) — members meeting 3+ criteria</h4>
+                        <div className="space-y-2 max-h-96 overflow-y-auto">
+                            {partial.slice(0, 20).map((c) => (<EligibilityRow key={c.user_id} candidate={c} level={level} readonly />))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function EligibilityRow({ candidate, level, onGrant, granting, readonly }) {
+    const c = candidate;
+    const met = c.criteria_met || {};
+    const pips = [
+        { key: "years", label: `${c.years_of_service}y`, ok: met.years },
+        { key: "cs_hours", label: `${c.cs_hours}h`, ok: met.cs_hours },
+        { key: "events", label: `${c.events_attended}ev`, ok: met.events },
+        { key: "fundraised", label: `$${(c.fundraised || 0).toLocaleString()}`, ok: met.fundraised },
+    ];
+    if (c.requires_prior_tier) pips.push({ key: "prior", label: c.requires_prior_tier[0].toUpperCase() + c.requires_prior_tier.slice(1), ok: met.prior_tier });
+
+    return (
+        <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-2">
+            <Avatar className="h-9 w-9 shrink-0"><AvatarImage src={mediaUrl(c.avatar_url)} /><AvatarFallback>{c.name?.[0] || "?"}</AvatarFallback></Avatar>
+            <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm truncate">{c.name}</div>
+                {c.chapter_name && <div className="text-xs text-slate-500 truncate">{c.chapter_name}</div>}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                {pips.map((p) => (
+                    <span key={p.key} title={p.key} className={`text-[10px] rounded-full px-2 py-0.5 font-semibold ${p.ok ? "bg-green-100 text-green-800" : "bg-red-100 text-red-700"}`}>{p.label}</span>
+                ))}
+            </div>
+            {!readonly && (
+                <Button size="sm" onClick={onGrant} disabled={granting} data-testid={`medallion-grant-${level.key}-${c.user_id}`}>Grant</Button>
+            )}
+        </div>
     );
 }

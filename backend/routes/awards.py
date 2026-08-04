@@ -82,6 +82,13 @@ def award_out(a: dict) -> dict:
         "sort_order": a.get("sort_order", _default_sort_for(a.get("name", ""))),
         "granted_count": a.get("granted_count", 0),
         "granted_distinct_count": a.get("granted_distinct_count", a.get("granted_count", 0)),
+        # New (Medallion Club): the medal photograph + tier + numerical
+        # criteria for the eligibility computation. Older awards without
+        # these fields simply return "" / None which the frontend treats
+        # as "regular award".
+        "image_url": a.get("image_url", ""),
+        "medallion_tier": a.get("medallion_tier"),
+        "medallion_criteria": a.get("medallion_criteria"),
     }
 
 

@@ -2985,6 +2985,26 @@ AOP_AWARDS = [
      "description": "The Alpha Omega Phi Ribbon is automatically awarded to members who completed the Intake Course and attended the Induction / Commitment Ceremony."},
     {"order": 16, "name": "Federation Ribbon", "icon": "ribbon", "color": "#A16207",
      "description": "The Federation Participation Ribbon is awarded to AOP members who attended a Federation event."},
+    # ---------- Medallion Club (Bronze / Silver / Gold) ----------
+    # Elite tiered recognition based on consecutive years of service, cumulative
+    # community-service hours, national/state events attended, and total funds
+    # raised. Gold requires Silver, Silver requires Bronze. Photos are hosted
+    # publicly on customer-assets so <img> tags work in emails/PDFs too.
+    {"order": 17, "name": "Bronze Medallion", "icon": "medal", "color": "#CD7F32",
+     "image_url": "https://customer-assets-rejwkqb3.emergentagent.net/job_club-express-lite/artifacts/joq9ecrf_Bronze.jpg",
+     "description": "The Bronze Medallion recognises members who have served consecutively for 3+ years, contributed 600+ community-service hours, attended four national or state events, and personally raised at least $1,500 for the organization.",
+     "medallion_tier": "bronze",
+     "medallion_criteria": {"years": 3, "cs_hours": 600, "events": 4, "fundraised": 1500, "requires_tier": None}},
+    {"order": 18, "name": "Silver Medallion", "icon": "medal", "color": "#C0C0C0",
+     "image_url": "https://customer-assets-rejwkqb3.emergentagent.net/job_club-express-lite/artifacts/ff80hesm_Silver.jpg",
+     "description": "The Silver Medallion recognises current Bronze Medallion members who have served consecutively for 6+ years, contributed 1,200+ community-service hours, attended eight national or state events, and personally raised at least $3,000 for the organization.",
+     "medallion_tier": "silver",
+     "medallion_criteria": {"years": 6, "cs_hours": 1200, "events": 8, "fundraised": 3000, "requires_tier": "bronze"}},
+    {"order": 19, "name": "Gold Medallion", "icon": "medal", "color": "#FFD700",
+     "image_url": "https://customer-assets-rejwkqb3.emergentagent.net/job_club-express-lite/artifacts/lbpxkr2b_Gold.jpg",
+     "description": "The Gold Medallion recognises current Silver Medallion members who have served consecutively for 10+ years, contributed 2,000+ community-service hours, attended twelve national or state events, and personally raised at least $6,000 for the organization.",
+     "medallion_tier": "gold",
+     "medallion_criteria": {"years": 10, "cs_hours": 2000, "events": 12, "fundraised": 6000, "requires_tier": "silver"}},
 ]
 AOP_AWARD_NAMES = [a["name"] for a in AOP_AWARDS]
 
@@ -3375,6 +3395,17 @@ routes_awards.register(
     iso=iso,
     now_utc=now_utc,
     send_push_best_effort=routes_push.send_push_best_effort,
+)
+# Life Member Club + Medallion Club (Bronze/Silver/Gold auto-eligibility)
+from routes import life_and_medallion as routes_life_and_medallion  # noqa: E402
+routes_life_and_medallion.register(
+    api,
+    db=db,
+    iso=iso,
+    now_utc=now_utc,
+    logger=logger,
+    admin_tab_dep=admin_tab_dep,
+    get_current_user=get_current_user,
 )
 routes_email.register(
     api,
