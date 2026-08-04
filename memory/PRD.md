@@ -15,6 +15,29 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 150 — Phase 2: chapter-change approvals + governor bio + CSV attendance + Medallion UX (2026-02-28) [FEATURE]
+**User request:** (1) Chapter changes now require full-access admin approval with notifications; (2) Regions Governor Spotlight (photo + bio on each region card); (3) CSV import of past event attendance feeding `checkins` (Medallion + Chapter of the Year); (4) Move Medallion "Suggested Grants" from Awards → Medallion Club tab to the Admin → Awards page — members must never see suggestions — while allowing admins to grant medallions bypassing eligibility.
+
+**Backend:**
+- **New routes file** `/app/backend/routes/chapter_change_and_import.py`:
+  - `POST /api/me/chapter-change-request` — member submits (target_chapter_id + reason). Rejects duplicate pending (409). Emails all governor-managers of source/target chapters + full-access admins.
+  - `GET /api/me/chapter-change-request` — member sees own pending / most-recent.
+  - `DELETE /api/me/chapter-change-request` — member cancels pending.
+  - `GET /api/admin/chapter-change-requests` — chapter-admins & full-access see the list. Governor-managers scoped to their chapter server-side.
+  - `POST /api/admin/chapter-change-requests/{id}/approve|deny` — **full-access only** via new `require_full_admin` dep. On approve: updates `user.chapter_id`, appends `assignment_history`, notifies member + governor-managers + full-access admins via email + push.
+  - `POST /api/admin/checkins/import-csv` — full-access only. Multipart CSV upload. Auto-detects columns (email/name/event_name/date, case-insensitive). Idempotent: matches on (event_name+date+user_id), skips duplicates, synthesises an event if none matches, reports row-level errors.
+- **Server** — new `require_full_admin` dep. Regular member's profile PATCH now rejects direct `chapter_id` changes with a helpful 403 ("please use the Request chapter change button").
+
+**Frontend:**
+- **`Profile.jsx`** — new `ChapterChangeRequest` component. Members see a read-only chapter chip + "Request change" button. Dialog collects target chapter + optional reason. After submit, chip shows "Change pending approval" badge + cancel link. Governor-managers still see the "Locked" chip (unchanged).
+- **`Admin.jsx`** — new `ChapterChangeRequestsPanel` at top of Members tab (approve/deny visible only to full-access; scoped chapter-admins see 'Awaiting full-access admin'). New `CsvCheckinImportPanel` — drag-and-drop CSV import with inline result summary and expandable per-row error list. New `MedallionEligibilityPanel` on the Awards tab with expandable Bronze/Silver/Gold sections, per-criterion pips (years, CS hours, events, fundraised, prior-tier), one-click Grant that hits `POST /awards/{id}/grant`. Suggestions never appear on the public Awards page.
+- **`Awards.jsx`** — the tab-level 'Suggested Grants' green panels are removed. Replaced by `ManualMedallionGrant` (admin-only) — a member-search + Select + note + Grant flow that bypasses eligibility so admins can hand out medallions to any member.
+- **`Regions.jsx`** — governor block now renders `r.governor.bio` (data-testid `governor-bio-{region_id}`) when a governor is assigned and has a bio.
+
+**Verification:** `test_iteration150_phase2_awards_and_regions.py` — 10/10 pass. Combined with iteration 149: 19/19 pass. `testing_agent` iteration 150 verdict: **100% backend + 100% frontend**. Testing agent caught + fixed a duplicate JSX block from the Awards.jsx refactor (verified). Full member/admin roundtrip verified via Playwright: submit → pending badge → admin approves → chapter updates.
+
+
+## Implemented
 ### Iteration 149 — Awards Phase 1: Life Member Club + Medallion Club (2026-02-28) [FEATURE]
 **User request:** New Awards tabs — "Life Member Club" (with fixed org blurb + admin add-by-year, existing members OR historical free-text) and "Medallion Club" (Bronze/Silver/Gold with strict criteria; admins get auto-eligibility suggestions like the existing Ribbon flow; medal photos supplied by user).
 
