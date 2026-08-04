@@ -848,7 +848,7 @@ function MedallionTierPanel({ level, award, candidates, isAdmin, granting, onGra
                         Current Recipients ({holders.length})
                     </h4>
                     {holders.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No {level.label} Medallion recipients yet.</p>
+                        <p className="text-sm text-muted-foreground" data-testid={`medallion-holders-${level.key}`}>No {level.label} Medallion recipients yet.</p>
                     ) : (
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3" data-testid={`medallion-holders-${level.key}`}>
                             {holders.map((h) => (

@@ -15,6 +15,22 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 149 — Awards Phase 1: Life Member Club + Medallion Club (2026-02-28) [FEATURE]
+**User request:** New Awards tabs — "Life Member Club" (with fixed org blurb + admin add-by-year, existing members OR historical free-text) and "Medallion Club" (Bronze/Silver/Gold with strict criteria; admins get auto-eligibility suggestions like the existing Ribbon flow; medal photos supplied by user).
+
+**Implementation:**
+1. **New routes file** `/app/backend/routes/life_and_medallion.py`:
+   - `GET/POST/PUT/DELETE /api/life-members` — CRUD (admin except GET). POST rejects payloads lacking BOTH `user_id` and `name`. Duplicate `user_id` returns 409. Enriched at read-time with the member's name/avatar/chapter for account-linked entries.
+   - `GET /api/awards/medallion-eligibility` — admin-only. Returns `{bronze, silver, gold}` buckets. Each row includes: `user_id, name, chapter_name, avatar_url, years_of_service, cs_hours, events_attended, fundraised, criteria_met (per-criterion booleans), criteria_met_count, eligible, requires_prior_tier, already_granted`. Sorted eligible-first, then by criteria_met_count desc. Sources: consecutive years via most-recent reactivation entry or joined_at fallback; CS hours from approved `volunteer_hours`; events from `checkins`; fundraised from completed donation `transactions` (matches existing Fundraiser Ribbon logic).
+2. **Server seed** — 3 new medallion awards (Bronze/Silver/Gold) with the user-supplied medal photo URLs and the exact numeric criteria they specified. `award_out()` now returns `image_url`, `medallion_tier`, `medallion_criteria`.
+3. **Frontend Awards.jsx** — appended `LifeMemberSection` + `MedallionSection` (with Bronze/Silver/Gold sub-tabs) at end of file. TabsList expanded from 2 → 4. Life Member section shows the fixed blurb + admin add dialog with existing-member picker OR free-text mode + year + optional note. Medallion sub-tabs show the medal photo, criteria bullets, description, current recipients, and (admin-only) a "Suggested Grants" green panel with per-criterion pips and a "Grant" button that hits `POST /awards/{id}/grant`. Because Medallion is integrated with the existing Awards system, grants show up on member profiles / PDFs like any other award.
+
+**Verification:** `test_iteration149_life_member_medallion.py` — 9/9 pass (medallion award seeding, life-member CRUD, missing-identity 400, bad-year 422, duplicate-user 409, eligibility payload shape + sort order, admin-only guards). testing_agent iteration 149: **verdict 100% backend + 100% frontend**, RBAC verified for non-admins (blurb + list visible, Add button hidden), medal images render, criteria pips render green/red per criterion, grant button posts and flips the "Current Recipients" list.
+
+**Phase 2 (deferred per plan):** Chapter-change approval flow (chapter-admins see, only full-access approves), Regions Governor Spotlight on region cards, Member Region Bulk Move in the directory, CSV import of past events attended.
+
+
+## Implemented
 ### Iteration 148 — Photo album perf: persistent thumbnails + pagination + infinite scroll (2026-02-28) [BUG FIX / PERF]
 **User followup:** "Photo albums still not loading fast. My 4-Year Anniversary album has over 190 photos. If Lightbox is not giving me my request, please try something else."
 
