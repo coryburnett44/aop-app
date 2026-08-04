@@ -17,6 +17,7 @@ The `award_out` serializer is owned here. Helpers (`db`, `get_current_user`,
 `admin_tab_dep`, `iso`, `now_utc`) are injected by `register(...)`.
 """
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 import uuid
 
 from fastapi import Depends, HTTPException
@@ -252,11 +253,91 @@ def register(
         return out
 
     @api.delete("/awards/grants/{grant_id}")
-    async def revoke_award(grant_id: str, _: dict = Depends(admin_tab_dep("awards"))):
-        res = await db.award_grants.delete_one({"id": grant_id})
-        if res.deleted_count == 0:
+    async def revoke_award(grant_id: str, reason: Optional[str] = None, admin: dict = Depends(admin_tab_dep("awards"))):
+        """Hard-remove a single grant. Records a snapshot in
+        `award_grant_revocations` so we retain an audit trail (who,
+        when, why) even though the grant itself disappears. `reason`
+        can be supplied as a query string for the legacy DELETE flow —
+        the newer POST `/revoke` endpoint below is preferred because
+        FormData/JSON works better on the frontend."""
+        grant = await db.award_grants.find_one({"id": grant_id}, {"_id": 0})
+        if not grant:
             raise HTTPException(status_code=404, detail="Grant not found")
+        await db.award_grants.delete_one({"id": grant_id})
+        await db.award_grant_revocations.insert_one({
+            "id": str(uuid.uuid4()),
+            "grant_id": grant_id,
+            "grant_snapshot": grant,
+            "award_id": grant.get("award_id"),
+            "award_name": grant.get("award_name"),
+            "user_id": grant.get("user_id"),
+            "user_name": grant.get("user_name"),
+            "medallion_tier": None,
+            "reason": (reason or "").strip(),
+            "revoked_by": admin["id"],
+            "revoked_by_name": admin.get("name", ""),
+            "revoked_at": iso(now_utc()),
+        })
         return {"ok": True}
+
+    @api.post("/awards/grants/{grant_id}/revoke")
+    async def revoke_award_with_note(
+        grant_id: str,
+        body: dict,
+        admin: dict = Depends(admin_tab_dep("awards")),
+    ):
+        """Withdraw a granted award (typically a medallion) with a
+        required admin note. Deletes the grant and writes an audit
+        row so leadership can see who was withdrawn and why.
+
+        Iter 155 — user asked for medallion withdraw with a note.
+        Body: `{ reason: str, notify_member?: bool }`.
+        """
+        grant = await db.award_grants.find_one({"id": grant_id}, {"_id": 0})
+        if not grant:
+            raise HTTPException(status_code=404, detail="Grant not found")
+        reason = ((body or {}).get("reason") or "").strip()
+        if not reason:
+            raise HTTPException(status_code=400, detail="A revocation note is required.")
+        # Include the medallion tier on the audit row when applicable so
+        # leadership can filter revocations by tier without re-joining.
+        aw = await db.awards.find_one(
+            {"id": grant.get("award_id")},
+            {"_id": 0, "medallion_tier": 1, "name": 1},
+        ) or {}
+        await db.award_grants.delete_one({"id": grant_id})
+        await db.award_grant_revocations.insert_one({
+            "id": str(uuid.uuid4()),
+            "grant_id": grant_id,
+            "grant_snapshot": grant,
+            "award_id": grant.get("award_id"),
+            "award_name": grant.get("award_name") or aw.get("name"),
+            "user_id": grant.get("user_id"),
+            "user_name": grant.get("user_name"),
+            "medallion_tier": aw.get("medallion_tier"),
+            "reason": reason,
+            "revoked_by": admin["id"],
+            "revoked_by_name": admin.get("name", ""),
+            "revoked_at": iso(now_utc()),
+        })
+        return {"ok": True, "revoked": True, "reason": reason}
+
+    @api.get("/awards/grants/revocations")
+    async def list_grant_revocations(
+        limit: int = 100,
+        award_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        _: dict = Depends(admin_tab_dep("awards")),
+    ):
+        """Admin-only audit log of every withdrawn grant. Newest first.
+        Filterable by award or member for chapter/tier reviews."""
+        q: dict = {}
+        if award_id:
+            q["award_id"] = award_id
+        if user_id:
+            q["user_id"] = user_id
+        cursor = db.award_grant_revocations.find(q, {"_id": 0}).sort("revoked_at", -1).limit(max(1, min(int(limit or 100), 500)))
+        return await cursor.to_list(500)
 
     # Iter 120: automatic-award-grant admin surfaces.
     @api.get("/admin/auto-grants")

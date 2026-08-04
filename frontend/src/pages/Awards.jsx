@@ -887,6 +887,12 @@ function MedallionSection({ isAdmin }) {
     // holder row currently being edited (member, date, reason mutable).
     const [editGrant, setEditGrant] = useState(null);
     const [editForm, setEditForm] = useState({ user_id: "", granted_at: "", reason: "" });
+    // Iter 155 — withdraw (revoke) dialog. Separate from edit because
+    // withdrawing REMOVES the medallion + writes an audit row that
+    // requires a mandatory reason.
+    const [revokeGrant, setRevokeGrant] = useState(null);
+    const [revokeReason, setRevokeReason] = useState("");
+    const [revoking, setRevoking] = useState(false);
 
     useEffect(() => {
         if (!isAdmin) return;
@@ -947,6 +953,26 @@ function MedallionSection({ isAdmin }) {
         } catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     }
 
+    function openRevoke(holder) {
+        setRevokeGrant(holder);
+        setRevokeReason("");
+    }
+
+    async function doRevoke() {
+        if (!revokeGrant?.grant_id) return;
+        const reason = (revokeReason || "").trim();
+        if (!reason) return toast.error("Please add a note explaining the revocation.");
+        setRevoking(true);
+        try {
+            await api.post(`/awards/grants/${revokeGrant.grant_id}/revoke`, { reason });
+            toast.success(`Medallion withdrawn from ${revokeGrant.member_name || "member"}`);
+            setRevokeGrant(null);
+            setRevokeReason("");
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Withdraw failed"); }
+        setRevoking(false);
+    }
+
     return (
         <div className="space-y-6" data-testid="medallion-section">
             <p className="text-sm text-muted-foreground">
@@ -969,6 +995,7 @@ function MedallionSection({ isAdmin }) {
                             isAdmin={isAdmin}
                             onGranted={load}
                             onEditGrant={openEditGrant}
+                            onRevokeGrant={openRevoke}
                         />
                     </TabsContent>
                 ))}
@@ -1007,11 +1034,56 @@ function MedallionSection({ isAdmin }) {
                     )}
                 </DialogContent>
             </Dialog>
+
+            {/* Iter 155 — Withdraw / revoke dialog. Requires a mandatory
+              reason (stored in `award_grant_revocations` for audit). */}
+            <Dialog open={!!revokeGrant} onOpenChange={(v) => { if (!v) { setRevokeGrant(null); setRevokeReason(""); } }}>
+                <DialogContent data-testid="medallion-withdraw-dialog">
+                    <DialogHeader><DialogTitle>Withdraw Medallion</DialogTitle></DialogHeader>
+                    {revokeGrant && (
+                        <div className="space-y-4">
+                            <div className="rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/40 p-3 text-sm">
+                                You are about to remove the medallion from{" "}
+                                <span className="font-semibold">{revokeGrant.member_name}</span>
+                                {revokeGrant.granted_at && (
+                                    <span className="text-slate-600 dark:text-muted-foreground">
+                                        {" "}(awarded {formatCalendarDay(revokeGrant.granted_at) || revokeGrant.year})
+                                    </span>
+                                )}
+                                . This will disappear from their profile immediately and be logged in the withdrawal audit.
+                            </div>
+                            <div>
+                                <Label htmlFor="med-revoke-reason">Reason for withdrawal <span className="text-red-600">*</span></Label>
+                                <Textarea
+                                    id="med-revoke-reason"
+                                    rows={3}
+                                    value={revokeReason}
+                                    onChange={(e) => setRevokeReason(e.target.value)}
+                                    placeholder="Explain why this medallion is being revoked…"
+                                    data-testid="medallion-withdraw-reason-input"
+                                />
+                                <div className="text-[11px] text-slate-500 mt-1">This note is required and will be stored in the audit log.</div>
+                            </div>
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button variant="outline" onClick={() => setRevokeGrant(null)} data-testid="medallion-withdraw-cancel-btn">Cancel</Button>
+                                <Button
+                                    onClick={doRevoke}
+                                    disabled={revoking || !revokeReason.trim()}
+                                    className="bg-red-600 hover:bg-red-700 text-white"
+                                    data-testid="medallion-withdraw-confirm-btn"
+                                >
+                                    {revoking ? "Withdrawing…" : "Withdraw Medallion"}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
 
-function MedallionTierPanel({ level, award, holders, isAdmin, onGranted, onEditGrant }) {
+function MedallionTierPanel({ level, award, holders, isAdmin, onGranted, onEditGrant, onRevokeGrant }) {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1">
@@ -1077,15 +1149,26 @@ function MedallionTierPanel({ level, award, holders, isAdmin, onGranted, onEditG
                                         )}
                                     </div>
                                     {isAdmin && h.grant_id && (
-                                        <button
-                                            type="button"
-                                            onClick={() => onEditGrant && onEditGrant(h)}
-                                            className="shrink-0 rounded-full border border-slate-200 p-2 text-slate-500 hover:border-primary hover:text-primary transition-colors"
-                                            data-testid={`medallion-edit-grant-${level.key}-${h.grant_id}`}
-                                            title="Edit this medallion grant"
-                                        >
-                                            <Pencil className="h-3.5 w-3.5" />
-                                        </button>
+                                        <div className="flex flex-col gap-1 shrink-0">
+                                            <button
+                                                type="button"
+                                                onClick={() => onEditGrant && onEditGrant(h)}
+                                                className="rounded-full border border-slate-200 p-2 text-slate-500 hover:border-primary hover:text-primary transition-colors"
+                                                data-testid={`medallion-edit-grant-${level.key}-${h.grant_id}`}
+                                                title="Edit this medallion grant"
+                                            >
+                                                <Pencil className="h-3.5 w-3.5" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => onRevokeGrant && onRevokeGrant(h)}
+                                                className="rounded-full border border-slate-200 p-2 text-slate-400 hover:border-red-500 hover:text-red-600 transition-colors"
+                                                data-testid={`medallion-withdraw-grant-${level.key}-${h.grant_id}`}
+                                                title="Withdraw this medallion (records an audit note)"
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             ))}

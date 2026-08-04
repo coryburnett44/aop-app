@@ -15,6 +15,25 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 155 — Medallion Withdraw with audited note (2026-02-04) [FEATURE]
+**User request:** Let admins revoke a granted medallion with a note (previously only edit was possible).
+
+**Backend (`/app/backend/routes/awards.py`):**
+- **`POST /api/awards/grants/{grant_id}/revoke`** — hard-removes the grant and writes an audit row to a new `award_grant_revocations` collection with `{grant_id, grant_snapshot, award_id, award_name, user_id, user_name, medallion_tier, reason, revoked_by, revoked_by_name, revoked_at}`. Requires a non-empty `reason` in the body; returns 400 otherwise.
+- **`DELETE /api/awards/grants/{grant_id}`** — legacy endpoint also updated to write an audit row (optional `?reason=` query string, defaults to empty).
+- **`GET /api/awards/grants/revocations`** — admin audit log, newest-first, filterable by `award_id` or `user_id`.
+
+**Frontend (`/app/frontend/src/pages/Awards.jsx` → `MedallionSection`/`MedallionTierPanel`):**
+- Second admin-only Trash icon on each Medallion recipient card, next to the existing Edit pencil (`data-testid="medallion-withdraw-grant-{tier}-{grant_id}"`).
+- New Withdraw dialog (`medallion-withdraw-dialog`) with a red warning banner naming the member + award date, a required `Reason for withdrawal` textarea, and a Cancel / red **Withdraw Medallion** button.
+- Button disabled while the reason is empty; toast on success/failure; the recipient list reloads immediately after revocation so the tile disappears without a manual refresh.
+
+**Verification:**
+- curl: grant → revoke without reason (400 "revocation note is required") → revoke with reason (200 `{revoked: true}`) → double-revoke (404) → audit log lists the revocation with tier/reason/revoked_by_name.
+- Playwright: 4 withdraw buttons on the Bronze tab, dialog opens with member+date banner, submit disabled until reason typed then enabled.
+
+
+
 ### Iteration 154 — Chapter Lt. Governor + Life Member/Medallion edit (2026-02-04) [3 FEATURES]
 **User requests (all three delivered):**
 1. On the Chapters page, admins can pick a **Lieutenant Governor** who is spotlighted on the public chapter card.
