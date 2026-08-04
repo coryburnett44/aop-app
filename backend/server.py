@@ -683,6 +683,11 @@ def photo_out(p: dict) -> dict:
         # lightbox / download. Keeping both as separate URLs lets the
         # browser cache them independently.
         "thumb_url": f"/api/photos/thumb/{p['storage_path']}?w=400",
+        # Iter 157 — mid-size WebP preview used by the PhotoSwipe viewer.
+        # Much smaller than the original (30-70% depending on source), so
+        # opening a photo is near-instant. Full-res `url` remains for
+        # downloads / hard zooms.
+        "preview_url": f"/api/photos/preview/{p['storage_path']}?w=1600",
         "uploaded_by": p.get("uploaded_by"),
         "uploaded_by_name": p.get("uploaded_by_name", ""),
         "created_at": p.get("created_at"),
@@ -853,7 +858,7 @@ async def download_email_image(storage_path: str, request: Request):
 # full-resolution original just to render a 200×200 tile.
 import io as _io_thumb
 
-_THUMB_ALLOWED_WIDTHS = {200, 320, 400, 600, 800, 1200}
+_THUMB_ALLOWED_WIDTHS = {200, 320, 400, 600, 800, 1200, 1600, 2000}
 _THUMB_CACHE: "dict[tuple[str, int], bytes]" = {}
 _THUMB_CACHE_MAX = 500
 
@@ -889,10 +894,41 @@ def _generate_thumbnail(raw_bytes: bytes, width: int) -> bytes:
         return raw_bytes
 
 
+def _generate_preview_webp(raw_bytes: bytes, width: int) -> bytes:
+    """Iter 157 — generate a mid-size WebP for the PhotoSwipe viewer.
+    WebP is ~30% smaller than JPEG at the same visual quality, which is
+    critical for the full-screen preview (target ~1600px wide). Falls
+    back to the JPEG generator when Pillow can't do WebP for some reason.
+    """
+    try:
+        from PIL import Image, ImageOps
+    except Exception:
+        return _generate_thumbnail(raw_bytes, width)
+    try:
+        img = Image.open(_io_thumb.BytesIO(raw_bytes))
+        img = ImageOps.exif_transpose(img)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        img.thumbnail((width, width * 3), Image.LANCZOS)
+        buf = _io_thumb.BytesIO()
+        img.save(buf, format="WEBP", quality=82, method=4)
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"preview WebP generation failed for w={width}: {e}")
+        return _generate_thumbnail(raw_bytes, width)
+
+
 def _thumb_storage_key(storage_path: str, width: int) -> str:
     """Persisted-thumbnail key: `{original}.thumb-{w}.jpg`. Kept alongside the
     original so garbage-collection is trivial (both keys share a prefix)."""
     return f"{storage_path}.thumb-{width}.jpg"
+
+
+def _preview_storage_key(storage_path: str, width: int) -> str:
+    """Persisted WebP preview key — separate from thumbs so we can garbage-
+    collect independently and so browsers cache the two variants under
+    different URLs."""
+    return f"{storage_path}.preview-{width}.webp"
 
 
 async def _fetch_thumb_from_storage(storage_path: str, width: int) -> "bytes | None":
@@ -988,6 +1024,107 @@ async def get_photo_thumbnail(
             "Cache-Control": "private, max-age=31536000, immutable",
             "ETag": etag,
             "X-Thumb-Cache": "MISS",
+        },
+    )
+
+
+# Preview cache is separate so a hot preview doesn't evict useful thumbs
+# (and vice-versa). Same LRU shape / eviction policy.
+_PREVIEW_CACHE: "dict[tuple[str, int], bytes]" = {}
+_PREVIEW_CACHE_MAX = 200
+_PREVIEW_ALLOWED_WIDTHS = {1200, 1600, 2000}
+
+
+def _put_preview_cache(key: tuple, value: bytes) -> None:
+    if len(_PREVIEW_CACHE) >= _PREVIEW_CACHE_MAX:
+        oldest = next(iter(_PREVIEW_CACHE))
+        _PREVIEW_CACHE.pop(oldest, None)
+    _PREVIEW_CACHE[key] = value
+
+
+async def _fetch_preview_from_storage(storage_path: str, width: int) -> "bytes | None":
+    key = _preview_storage_key(storage_path, width)
+    try:
+        data, _ct = await asyncio.to_thread(get_object, key)
+        return data
+    except Exception:
+        return None
+
+
+async def _persist_preview_to_storage(storage_path: str, width: int, blob: bytes) -> None:
+    try:
+        key = _preview_storage_key(storage_path, width)
+        await asyncio.to_thread(put_object, key, blob, "image/webp")
+    except Exception as e:
+        logger.warning(f"preview persist failed for {storage_path} w={width}: {e}")
+
+
+@api.get("/photos/preview/{storage_path:path}")
+async def get_photo_preview(
+    storage_path: str,
+    request: Request,
+    w: int = 1600,
+    user: dict = Depends(get_current_user),
+):
+    """Iter 157 — mid-size WebP preview for the PhotoSwipe viewer.
+    Same 3-layer cache shape as `/photos/thumb/`:
+      1. Browser ETag → 304.
+      2. In-memory LRU.
+      3. Object storage (`{path}.preview-{w}.webp`).
+      4. Cold path: Pillow WebP encode, ~500-900ms first hit.
+    The PhotoSwipe UI hits this URL first so opening a photo is near-
+    instant even on cellular; the original full-res JPEG is fetched
+    only when the user explicitly zooms/downloads.
+    """
+    if w not in _PREVIEW_ALLOWED_WIDTHS:
+        w = min(_PREVIEW_ALLOWED_WIDTHS, key=lambda x: abs(x - w))
+    rec = await db.photos.find_one({"storage_path": storage_path, "is_deleted": {"$ne": True}})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    etag = f'W/"preview-{w}-{storage_path}"'
+    if request.headers.get("if-none-match") == etag:
+        return FastResponse(status_code=304, headers={
+            "ETag": etag,
+            "Cache-Control": "private, max-age=31536000, immutable",
+        })
+    key = (storage_path, w)
+    cached = _PREVIEW_CACHE.get(key)
+    if cached is not None:
+        return FastResponse(
+            content=cached,
+            media_type="image/webp",
+            headers={
+                "Cache-Control": "private, max-age=31536000, immutable",
+                "ETag": etag,
+                "X-Preview-Cache": "HIT",
+            },
+        )
+    persisted = await _fetch_preview_from_storage(storage_path, w)
+    if persisted is not None:
+        _put_preview_cache(key, persisted)
+        return FastResponse(
+            content=persisted,
+            media_type="image/webp",
+            headers={
+                "Cache-Control": "private, max-age=31536000, immutable",
+                "ETag": etag,
+                "X-Preview-Cache": "STORAGE",
+            },
+        )
+    try:
+        raw, _ctype = await asyncio.to_thread(get_object, storage_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Photo not found in storage")
+    blob = await asyncio.to_thread(_generate_preview_webp, raw, w)
+    _put_preview_cache(key, blob)
+    asyncio.create_task(_persist_preview_to_storage(storage_path, w, blob))
+    return FastResponse(
+        content=blob,
+        media_type="image/webp",
+        headers={
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "ETag": etag,
+            "X-Preview-Cache": "MISS",
         },
     )
 

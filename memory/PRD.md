@@ -15,6 +15,27 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 157 — PhotoSwipe v5 viewer + WebP preview endpoint (2026-02-04) [PERF]
+**User request:** Photos page still slow — replace the custom "Lightbox" viewer with something faster. User selected PhotoSwipe v5 + medium-preview backend.
+
+**Backend (`/app/backend/server.py`):**
+- New `GET /api/photos/preview/{path}?w=1600` — serves a mid-size **WebP** variant of the photo. Same 3-layer cache shape as the thumb endpoint (in-memory LRU → object-storage → cold Pillow encode). Allowed widths: 1200 / 1600 / 2000.
+- New `_generate_preview_webp` (Pillow, quality=82, method=4) and dedicated `_PREVIEW_CACHE` / `_preview_storage_key` / persist helper so previews and thumbs never contend for the same LRU slots.
+- `photo_out()` now exposes a `preview_url` field alongside `thumb_url` and full-size `url`.
+- Perf on a 4.2 MB source JPEG: **1.02 MB WebP** preview (75.9% smaller). MISS 1.6s → LRU HIT 14ms → STORAGE HIT 350ms after restart.
+
+**Frontend (`/app/frontend/src/pages/Photos.jsx`):**
+- Added `photoswipe@5.4.4` dependency.
+- Custom `PhotoLightbox` component (149 lines) removed. Replaced with `PhotoSwipeViewer` — imperative PhotoSwipe v5 instance that uses `msrc: thumb_url` (instant placeholder from grid) + `src: preview_url` (fast WebP), with wheel-to-zoom, pinch-zoom, swipe navigation, and automatic adjacent-slide preloading.
+- Custom PhotoSwipe UI: bottom-centered caption strip ("title · by uploader · date · N of N"), Download toolbar button that fetches the original via `api.get(..., responseType: "blob")` and triggers a native download.
+- CSS additions in `index.css` for `.pswp-aop-caption` (frosted-glass strip) + Download button hover.
+
+**Verification:**
+- curl: 1st preview hit 200 (1.6s cold WebP encode), 2nd hit 14ms LRU, 3rd hit after restart 350ms STORAGE tier. Original untouched (4.2 MB).
+- Playwright: click first album → first photo → PhotoSwipe opens with `img src` pointing at `/photos/preview/...`, caption + Download button + close (×) all present. Screenshot shows crisp full-viewport render.
+
+
+
 ### Iteration 156 — Profile Events tab: RSVP'd vs Attended split + year filter (2026-02-04) [FEATURE]
 **User request:** On the member's Profile → Events tab, separate RSVP'd from attended (checked-in) events. Allow filtering by year.
 

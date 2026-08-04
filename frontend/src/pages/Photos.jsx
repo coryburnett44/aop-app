@@ -10,6 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Upload, Image as ImageIcon, Trash2, FolderPlus, ArrowLeft, X, Loader2, Star, Settings, Download, CheckSquare, Square } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
+// Iter 157 — PhotoSwipe v5 replaces the custom lightbox. WebP preview
+// URLs from the backend + PhotoSwipe's smart preloading make viewing
+// near-instant even on cellular.
+import PhotoSwipeLightbox from "photoswipe/lightbox";
+import PhotoSwipe from "photoswipe";
+import "photoswipe/style.css";
 
 const NAVY = "#0A2463";
 const RED = "#C8102E";
@@ -302,12 +308,10 @@ export default function Photos() {
 
             <CreateAlbumDialog open={creatingAlbum} onClose={() => setCreatingAlbum(false)} onCreated={async (a) => { setCreatingAlbum(false); await loadAlbums(); navigate(`/photos/${a.id}`); }} />
             <EditAlbumDialog album={editingAlbum} onClose={() => setEditingAlbum(null)} onSaved={async () => { setEditingAlbum(null); await loadAlbums(); }} />
-            <PhotoLightbox
+            <PhotoSwipeViewer
                 photos={photos}
                 index={lightboxIndex}
                 onClose={() => setLightboxIndex(null)}
-                onPrev={() => setLightboxIndex((i) => (i === null ? null : (i - 1 + photos.length) % photos.length))}
-                onNext={() => setLightboxIndex((i) => (i === null ? null : (i + 1) % photos.length))}
             />
         </div>
     );
@@ -584,168 +588,135 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
 }
 
 /**
- * Full-screen lightbox for the photo grid.
+ * Iter 157 — PhotoSwipe-powered photo viewer.
  *
- * Why parent-owned state: the prev/next arrows have to walk the parent's
- * filtered `photos` list. Keeping `index` here means we don't need to mirror
- * the list inside the dialog and we get free updates if a photo is deleted
- * while the lightbox is open (we cap the index in an effect).
+ * Replaces the previous custom lightbox that had to load full-res
+ * originals on every open (5-15s on large photos over cellular).
  *
- * Why we re-fetch the blob inside this component rather than reusing the
- * tile's blob URL: photos are served through the authenticated `/api/files/*`
- * route. The tile uses `api.get(..., responseType: 'blob')` + `createObjectURL`.
- * Reaching across components for the blob would couple the two; re-fetching
- * is cheap (the photo is already in the browser cache from the tile load).
+ * How it's fast:
+ *   1. `msrc` = the 400px thumbnail already in the browser cache from
+ *      the grid tile — shows instantly as a placeholder.
+ *   2. `src` = the new `/api/photos/preview/{path}` endpoint (mid-size
+ *      WebP, ~1600px wide, cached to object storage).
+ *   3. PhotoSwipe preloads the next & previous slides in the background
+ *      so arrow / swipe nav feels instant.
+ *   4. The full-res original is only fetched when the user hits
+ *      "Download" from our custom toolbar button.
+ *
+ * Parent-owned state contract stays the same: `index` = null means
+ * closed; a valid integer opens the viewer at that photo.
  */
-function PhotoLightbox({ photos, index, onClose, onPrev, onNext }) {
-    const open = index !== null && index >= 0 && index < photos.length;
-    const photo = open ? photos[index] : null;
-    // Track load state per photo so we can show a spinner over the previous
-    // image while the next one is decoding. The browser will still keep the
-    // old image visible until the new one is ready — very smooth.
-    const [loading, setLoading] = useState(false);
+function PhotoSwipeViewer({ photos, index, onClose }) {
+    const lightboxRef = useRef(null);
+    const onCloseRef = useRef(onClose);
+    // Keep the latest onClose in a ref so we don't have to tear down the
+    // PhotoSwipe instance every time the parent re-renders. Same for the
+    // photos array — we resolve the current photo at click-time via ref.
+    useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+    const photosRef = useRef(photos);
+    useEffect(() => { photosRef.current = photos; }, [photos]);
 
-    // Prefetch adjacent photos (prev + next) so arrow-navigation feels
-    // instant. Uses in-memory <link rel="prefetch"> equivalent via
-    // `new Image()` — the browser fetches, decodes, and caches under the
-    // hood. Doing this while the current photo is displayed hides the
-    // network latency completely.
     useEffect(() => {
-        if (!open || photos.length < 2) return;
-        const idxs = [
-            (index + 1) % photos.length,
-            (index - 1 + photos.length) % photos.length,
-        ];
-        const preloaders = idxs.map((i) => {
-            const p = photos[i];
-            if (!p) return null;
-            const img = new Image();
-            img.decoding = "async";
-            img.src = mediaUrl(p.url);
-            return img;
+        if (index === null || index < 0 || index >= photos.length) return;
+
+        const dataSource = photos.map((p) => ({
+            // High-quality but fast — the WebP preview endpoint.
+            src: mediaUrl(p.preview_url || p.url),
+            // Placeholder while the preview loads — instant since the tile
+            // already fetched it.
+            msrc: mediaUrl(p.thumb_url),
+            // We don't know the true dimensions on the client; use a
+            // generous 4:3 fallback. PhotoSwipe scales to fit the viewport
+            // once the image decodes.
+            width: 1600,
+            height: 1200,
+            alt: p.title || "Photo",
+        }));
+
+        const lightbox = new PhotoSwipeLightbox({
+            pswpModule: PhotoSwipe,
+            dataSource,
+            index,
+            showHideAnimationType: "fade",
+            closeOnVerticalDrag: true,
+            wheelToZoom: true,
+            bgOpacity: 0.94,
+            padding: { top: 20, bottom: 40, left: 0, right: 0 },
+            // Fine-tune arrows / counter for our design.
+            arrowPrevSVG: '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>',
+            arrowNextSVG: '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>',
         });
-        return () => { preloaders.forEach((img) => { if (img) img.src = ""; }); };
-    }, [open, index, photos]);
 
-    // Reset loading state whenever the visible photo changes.
-    useEffect(() => {
-        if (photo) setLoading(true);
-    }, [photo]);
+        // Custom Download button in the toolbar (right of the close X).
+        lightbox.on("uiRegister", () => {
+            const pswp = lightbox.pswp;
+            if (!pswp) return;
+            pswp.ui.registerElement({
+                name: "download-button",
+                order: 9,
+                isButton: true,
+                tagName: "button",
+                title: "Download original",
+                html: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pswp__icn"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+                onClick: async () => {
+                    const i = pswp.currIndex;
+                    const p = photosRef.current[i];
+                    if (!p) return;
+                    try {
+                        const path = p.url.startsWith("/api") ? p.url.slice(4) : p.url;
+                        const res = await api.get(path, { responseType: "blob" });
+                        const ext = (p.original_filename || p.url).split(".").pop().toLowerCase();
+                        const base = (p.title || p.original_filename || "photo").replace(/[^a-z0-9._ -]/gi, "_");
+                        const name = base.toLowerCase().endsWith(`.${ext}`) ? base : `${base}.${ext}`;
+                        triggerDownload(res.data, name);
+                    } catch {
+                        toast.error("Download failed");
+                    }
+                },
+            });
 
-    // Keyboard nav: Esc to close, ← / → to walk the album.
-    useEffect(() => {
-        if (!open) return;
-        function onKey(e) {
-            if (e.key === "Escape") onClose();
-            else if (e.key === "ArrowLeft" && photos.length > 1) onPrev();
-            else if (e.key === "ArrowRight" && photos.length > 1) onNext();
-        }
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
-    }, [open, photos.length, onClose, onPrev, onNext]);
+            // Caption below the photo (title + uploader + counter).
+            pswp.ui.registerElement({
+                name: "caption",
+                order: 9,
+                isButton: false,
+                appendTo: "root",
+                onInit: (el) => {
+                    el.className = "pswp-aop-caption";
+                    const update = () => {
+                        const i = pswp.currIndex;
+                        const p = photosRef.current[i];
+                        if (!p) { el.textContent = ""; return; }
+                        const date = p.created_at ? ` · ${format(parseISO(p.created_at), "MMM d, yyyy")}` : "";
+                        const counter = photosRef.current.length > 1 ? ` · ${i + 1} of ${photosRef.current.length}` : "";
+                        el.innerHTML = `
+                            <div class="pswp-aop-title">${(p.title || "Untitled").replace(/</g, "&lt;")}</div>
+                            <div class="pswp-aop-meta">by ${(p.uploaded_by_name || "Unknown").replace(/</g, "&lt;")}${date}${counter}</div>
+                        `;
+                    };
+                    update();
+                    pswp.on("change", update);
+                },
+            });
+        });
 
-    if (!open || !photo) return null;
+        lightbox.on("close", () => {
+            // Notify parent so `lightboxIndex` state is reset.
+            onCloseRef.current && onCloseRef.current();
+        });
 
-    const fullSrc = mediaUrl(photo.url);
+        lightbox.init();
+        lightbox.loadAndOpen(index);
+        lightboxRef.current = lightbox;
 
-    async function downloadCurrent() {
-        try {
-            const path = photo.url.startsWith("/api") ? photo.url.slice(4) : photo.url;
-            const res = await api.get(path, { responseType: "blob" });
-            const ext = (photo.original_filename || photo.url).split(".").pop().toLowerCase();
-            const base = (photo.title || photo.original_filename || "photo").replace(/[^a-z0-9._ -]/gi, "_");
-            const name = base.toLowerCase().endsWith(`.${ext}`) ? base : `${base}.${ext}`;
-            triggerDownload(res.data, name);
-        } catch { toast.error("Download failed"); }
-    }
+        return () => {
+            try { lightbox.destroy(); } catch { /* already destroyed */ }
+            lightboxRef.current = null;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [index]);
 
-    return (
-        <div
-            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center"
-            onClick={onClose}
-            data-testid="photo-lightbox"
-            role="dialog"
-            aria-modal="true"
-            aria-label={photo.title || "Photo preview"}
-        >
-            {/* Close (top-right) */}
-            <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onClose(); }}
-                className="absolute top-4 right-4 rounded-full bg-white/10 hover:bg-white/20 text-white p-2 transition-colors"
-                aria-label="Close"
-                data-testid="lightbox-close"
-            >
-                <X className="h-6 w-6" />
-            </button>
-            {/* Download (top-right, next to close) */}
-            <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); downloadCurrent(); }}
-                className="absolute top-4 right-16 rounded-full bg-white/10 hover:bg-white/20 text-white p-2 transition-colors"
-                aria-label="Download photo"
-                title="Download"
-                data-testid="lightbox-download"
-            >
-                <Download className="h-5 w-5" />
-            </button>
-            {/* Prev / Next arrows (hide when only 1 photo) */}
-            {photos.length > 1 && (
-                <>
-                    <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onPrev(); }}
-                        className="absolute left-4 sm:left-8 top-1/2 -translate-y-1/2 rounded-full bg-white/10 hover:bg-white/20 text-white p-3 transition-colors"
-                        aria-label="Previous photo"
-                        data-testid="lightbox-prev"
-                    >
-                        <ArrowLeft className="h-6 w-6" />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onNext(); }}
-                        className="absolute right-4 sm:right-8 top-1/2 -translate-y-1/2 rounded-full bg-white/10 hover:bg-white/20 text-white p-3 transition-colors"
-                        aria-label="Next photo"
-                        data-testid="lightbox-next"
-                    >
-                        <ArrowLeft className="h-6 w-6 rotate-180" />
-                    </button>
-                </>
-            )}
-            {/* Image — clicking the image itself does NOT close (so users can drag/zoom) */}
-            <div
-                className="relative max-w-[92vw] max-h-[88vh] flex flex-col items-center"
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="relative">
-                    {loading && (
-                        <div className="absolute inset-0 grid place-items-center pointer-events-none z-10">
-                            <Loader2 className="h-10 w-10 text-white/70 animate-spin" />
-                        </div>
-                    )}
-                    <img
-                        key={fullSrc}
-                        src={fullSrc}
-                        alt={photo.title || "Photo"}
-                        decoding="async"
-                        onLoad={() => setLoading(false)}
-                        onError={() => setLoading(false)}
-                        className="max-w-[92vw] max-h-[80vh] object-contain rounded-lg shadow-2xl"
-                        data-testid="lightbox-image"
-                    />
-                </div>
-                {/* Caption */}
-                <div className="mt-4 text-center text-white max-w-2xl">
-                    <div className="font-heading text-lg font-bold" data-testid="lightbox-title">{photo.title || "Untitled"}</div>
-                    <div className="text-xs opacity-75 mt-1">
-                        by {photo.uploaded_by_name || "Unknown"}
-                        {photo.created_at && ` · ${format(parseISO(photo.created_at), "MMM d, yyyy")}`}
-                        {photos.length > 1 && ` · ${index + 1} of ${photos.length}`}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
+    return null;
 }
 
 function UploadButton({ album, onDone, disabled, setUploading }) {
