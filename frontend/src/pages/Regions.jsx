@@ -167,27 +167,34 @@ export default function Regions() {
                         {/* Governor spotlight */}
                         {r.governor && (
                             <div className="px-5 pt-4" data-testid={`region-governor-${r.id}`}>
-                                <div className="rounded-xl border border-amber-500/40 bg-amber-50 dark:bg-amber-900/20 p-3 flex items-center gap-3">
-                                    <div className="relative shrink-0">
-                                        {r.governor.avatar_url ? (
-                                            <img src={mediaUrl(r.governor.avatar_url)} alt={r.governor.name} className="h-12 w-12 rounded-full object-cover" />
-                                        ) : (
-                                            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center text-sm font-semibold text-primary">
-                                                {(r.governor.name || "?").slice(0, 2).toUpperCase()}
-                                            </div>
-                                        )}
-                                        <Star className="h-4 w-4 text-amber-500 fill-amber-400 absolute -bottom-0.5 -right-0.5 drop-shadow" />
+                                <div className="rounded-xl border border-amber-500/40 bg-amber-50 dark:bg-amber-900/20 p-3">
+                                    <div className="flex items-center gap-3">
+                                        <div className="relative shrink-0">
+                                            {r.governor.avatar_url ? (
+                                                <img src={mediaUrl(r.governor.avatar_url)} alt={r.governor.name} className="h-12 w-12 rounded-full object-cover" />
+                                            ) : (
+                                                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center text-sm font-semibold text-primary">
+                                                    {(r.governor.name || "?").slice(0, 2).toUpperCase()}
+                                                </div>
+                                            )}
+                                            <Star className="h-4 w-4 text-amber-500 fill-amber-400 absolute -bottom-0.5 -right-0.5 drop-shadow" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400 font-bold">Governor</div>
+                                            <div className="font-semibold text-sm truncate" data-testid={`governor-name-${r.id}`}>{r.governor.name}</div>
+                                            {(r.governor.email || r.governor.phone) && (
+                                                <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3">
+                                                    {r.governor.email && <span className="inline-flex items-center gap-1"><Mail className="h-3 w-3" />{r.governor.email}</span>}
+                                                    {r.governor.phone && <span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{r.governor.phone}</span>}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400 font-bold">Governor</div>
-                                        <div className="font-semibold text-sm truncate" data-testid={`governor-name-${r.id}`}>{r.governor.name}</div>
-                                        {(r.governor.email || r.governor.phone) && (
-                                            <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3">
-                                                {r.governor.email && <span className="inline-flex items-center gap-1"><Mail className="h-3 w-3" />{r.governor.email}</span>}
-                                                {r.governor.phone && <span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{r.governor.phone}</span>}
-                                            </div>
-                                        )}
-                                    </div>
+                                    {r.governor.bio && (
+                                        <p className="mt-2 text-xs text-slate-700 dark:text-slate-300 leading-snug line-clamp-3" data-testid={`governor-bio-${r.id}`}>
+                                            {r.governor.bio}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         )}

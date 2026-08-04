@@ -8,6 +8,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { format, parseISO, differenceInDays } from "date-fns";
@@ -337,7 +338,9 @@ export default function Profile() {
                                 <Label>Chapter</Label>
                                 {/* Iter 100: Governor Managers are chapter-scoped admins whose
                                     authority is tied to their assigned chapter. They cannot
-                                    self-reassign — a full-access admin must do it. */}
+                                    self-reassign — a full-access admin must do it.
+                                    Iter 150: Regular members can request a chapter change,
+                                    but only a full-access admin can approve it. */}
                                 {user?.role === "admin" && (user?.admin_role === "governor_manager") ? (
                                     <>
                                         <div
@@ -351,6 +354,12 @@ export default function Profile() {
                                             Governor Managers can&apos;t change their own chapter. Please reach out to a full-access admin to be reassigned.
                                         </p>
                                     </>
+                                ) : user?.role === "member" ? (
+                                    <ChapterChangeRequest
+                                        user={user}
+                                        chapters={chapters}
+                                        currentChapterName={chapters.find((c) => c.id === form.chapter_id)?.name || "Not assigned"}
+                                    />
                                 ) : (
                                     <Select value={form.chapter_id} onValueChange={(v) => setForm({ ...form, chapter_id: v })}>
                                         <SelectTrigger className="rounded-xl mt-1.5" data-testid="profile-chapter"><SelectValue placeholder="Select your chapter" /></SelectTrigger>
@@ -1175,6 +1184,106 @@ function CustomFieldInput({ field, value, onChange }) {
             <Input id={id} type={inputType} value={value || ""} onChange={(e) => onChange(e.target.value)} className="rounded-xl mt-1.5" data-testid={`custom-field-input-${field.key}`} />
             {field.help_text && <p className="text-[11px] text-muted-foreground mt-1">{field.help_text}</p>}
         </div>
+    );
+}
+
+
+
+/**
+ * Iter 150 — Chapter-change request for regular members.
+ */
+function ChapterChangeRequest({ user, chapters, currentChapterName }) {
+    const [pending, setPending] = useState(null);
+    const [showDialog, setShowDialog] = useState(false);
+    const [form, setForm] = useState({ target_chapter_id: "", reason: "" });
+    const [saving, setSaving] = useState(false);
+
+    async function load() {
+        try {
+            const { data } = await api.get("/me/chapter-change-request");
+            setPending(data && data.status === "pending" ? data : null);
+        } catch { setPending(null); }
+    }
+    useEffect(() => { load(); }, []);
+
+    async function submit() {
+        if (!form.target_chapter_id) return toast.error("Pick a target chapter");
+        if (form.target_chapter_id === user?.chapter_id) return toast.error("You're already assigned to that chapter.");
+        setSaving(true);
+        try {
+            await api.post("/me/chapter-change-request", form);
+            toast.success("Chapter change request submitted");
+            setShowDialog(false);
+            setForm({ target_chapter_id: "", reason: "" });
+            load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Submit failed");
+        }
+        setSaving(false);
+    }
+
+    async function cancel() {
+        if (!window.confirm("Cancel your chapter change request?")) return;
+        try {
+            await api.delete("/me/chapter-change-request");
+            toast.success("Request cancelled");
+            load();
+        } catch (e) { toast.error(e.response?.data?.detail || "Cancel failed"); }
+    }
+
+    return (
+        <>
+            <div className="rounded-xl mt-1.5 border border-input bg-muted/40 px-3 py-2 text-sm flex items-center justify-between" data-testid="profile-chapter-readonly">
+                <span>{currentChapterName}</span>
+                {!pending ? (
+                    <Button type="button" size="sm" variant="outline" onClick={() => setShowDialog(true)} data-testid="chapter-change-request-btn">
+                        Request change
+                    </Button>
+                ) : (
+                    <span className="text-[10px] uppercase tracking-wider font-bold bg-amber-100 text-amber-800 rounded-full px-2 py-0.5" data-testid="chapter-change-pending-badge">
+                        Change pending approval
+                    </span>
+                )}
+            </div>
+            {pending && (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs" data-testid="chapter-change-pending-detail">
+                    <div>Requesting move to <strong>{pending.target_chapter_name}</strong> &mdash; awaiting full-access admin approval.</div>
+                    {pending.reason && <div className="italic text-slate-700 mt-1">&ldquo;{pending.reason}&rdquo;</div>}
+                    <button type="button" onClick={cancel} className="underline text-slate-600 mt-2" data-testid="chapter-change-cancel-btn">Cancel request</button>
+                </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-1.5">
+                Chapter changes require full-access admin approval. Submit a request and you&rsquo;ll be notified by email when it&rsquo;s reviewed.
+            </p>
+            <Dialog open={showDialog} onOpenChange={setShowDialog}>
+                <DialogContent data-testid="chapter-change-dialog">
+                    <DialogHeader><DialogTitle>Request chapter change</DialogTitle></DialogHeader>
+                    <div className="space-y-4">
+                        <div>
+                            <Label htmlFor="ccr-target">New chapter</Label>
+                            <Select value={form.target_chapter_id} onValueChange={(v) => setForm({ ...form, target_chapter_id: v })}>
+                                <SelectTrigger id="ccr-target" data-testid="chapter-change-target-select"><SelectValue placeholder="Pick a chapter…" /></SelectTrigger>
+                                <SelectContent>
+                                    {chapters.filter((c) => c.id !== user?.chapter_id).map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>{c.name}{c.region && ` — ${c.region}`}{c.state && ` (${c.state})`}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <Label htmlFor="ccr-reason">Reason (optional)</Label>
+                            <Textarea id="ccr-reason" rows={3} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Moved to a new state, joined a closer chapter, etc." data-testid="chapter-change-reason-input" />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-2">
+                            <Button variant="outline" onClick={() => setShowDialog(false)} disabled={saving}>Cancel</Button>
+                            <Button onClick={submit} disabled={saving || !form.target_chapter_id} data-testid="chapter-change-submit-btn">
+                                {saving ? "Submitting…" : "Submit request"}
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+        </>
     );
 }
 

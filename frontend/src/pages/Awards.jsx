@@ -746,25 +746,31 @@ const MEDALLION_LEVELS = [
 
 function MedallionSection({ isAdmin }) {
     const [awards, setAwards] = useState([]);
-    const [eligibility, setEligibility] = useState({ bronze: [], silver: [], gold: [] });
+    const [holdersByTier, setHoldersByTier] = useState({ bronze: [], silver: [], gold: [] });
     const [loading, setLoading] = useState(true);
     const [activeTier, setActiveTier] = useState("bronze");
-    const [granting, setGranting] = useState(false);
 
     async function load() {
         setLoading(true);
         try {
-            const [aw, elig] = await Promise.all([
-                api.get("/awards"),
-                isAdmin ? api.get("/awards/medallion-eligibility") : Promise.resolve({ data: { bronze: [], silver: [], gold: [] } }),
-            ]);
-            setAwards((aw.data || []).filter((a) => a.medallion_tier));
-            setEligibility(elig.data || { bronze: [], silver: [], gold: [] });
+            const { data } = await api.get("/awards");
+            const medallions = (data || []).filter((a) => a.medallion_tier);
+            setAwards(medallions);
+            // Fetch recipients for each tier in parallel (public endpoint —
+            // works for members too, so they can see who holds each medal).
+            const buckets = { bronze: [], silver: [], gold: [] };
+            await Promise.all(medallions.map(async (a) => {
+                try {
+                    const { data: g } = await api.get(`/awards/${a.id}/grants`);
+                    buckets[a.medallion_tier] = g || [];
+                } catch { /* ignore */ }
+            }));
+            setHoldersByTier(buckets);
         } catch { /* ignore */ }
         setLoading(false);
     }
 
-    useEffect(() => { load(); }, [isAdmin]);
+    useEffect(() => { load(); }, []);
 
     const awardByTier = useMemo(() => {
         const m = {};
@@ -772,26 +778,13 @@ function MedallionSection({ isAdmin }) {
         return m;
     }, [awards]);
 
-    async function grantTo(userId, tier) {
-        const a = awardByTier[tier];
-        if (!a) return;
-        if (!window.confirm(`Grant the ${a.name} to this member?`)) return;
-        setGranting(true);
-        try {
-            await api.post(`/awards/${a.id}/grant`, { user_id: userId, note: `Auto-granted by Medallion eligibility (${tier}).` });
-            toast.success(`${a.name} granted`);
-            load();
-        } catch (e) { toast.error(e.response?.data?.detail || "Grant failed"); }
-        setGranting(false);
-    }
-
     if (loading) return <div className="text-muted-foreground text-sm">Loading Medallion Club…</div>;
 
     return (
         <div className="space-y-6" data-testid="medallion-section">
             <p className="text-sm text-muted-foreground">
                 The Medallion Club recognises the organization&rsquo;s most-dedicated members across three
-                tiered levels — each unlocked by consecutive years of service, community-service
+                tiered levels &mdash; each unlocked by consecutive years of service, community-service
                 hours, event attendance, and personal fundraising.
             </p>
             <Tabs value={activeTier} onValueChange={setActiveTier}>
@@ -802,7 +795,13 @@ function MedallionSection({ isAdmin }) {
                 </TabsList>
                 {MEDALLION_LEVELS.map((l) => (
                     <TabsContent key={l.key} value={l.key} className="mt-6">
-                        <MedallionTierPanel level={l} award={awardByTier[l.key]} candidates={eligibility[l.key] || []} isAdmin={isAdmin} granting={granting} onGrant={(uid) => grantTo(uid, l.key)} />
+                        <MedallionTierPanel
+                            level={l}
+                            award={awardByTier[l.key]}
+                            holders={holdersByTier[l.key] || []}
+                            isAdmin={isAdmin}
+                            onGranted={load}
+                        />
                     </TabsContent>
                 ))}
             </Tabs>
@@ -810,11 +809,7 @@ function MedallionSection({ isAdmin }) {
     );
 }
 
-function MedallionTierPanel({ level, award, candidates, isAdmin, granting, onGrant }) {
-    const eligibleOnly = candidates.filter((c) => c.eligible && !c.already_granted);
-    const holders = candidates.filter((c) => c.already_granted);
-    const partial = candidates.filter((c) => !c.eligible && c.criteria_met_count >= 3);
-
+function MedallionTierPanel({ level, award, holders, isAdmin, onGranted }) {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1">
@@ -852,11 +847,11 @@ function MedallionTierPanel({ level, award, candidates, isAdmin, granting, onGra
                     ) : (
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3" data-testid={`medallion-holders-${level.key}`}>
                             {holders.map((h) => (
-                                <div key={h.user_id} className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 bg-slate-50">
-                                    <Avatar className="h-8 w-8"><AvatarImage src={mediaUrl(h.avatar_url)} /><AvatarFallback>{h.name?.[0] || "?"}</AvatarFallback></Avatar>
+                                <div key={`${h.user_id}-${h.granted_at}`} className="flex items-center gap-2 rounded-lg border border-slate-100 p-2 bg-slate-50">
+                                    <Avatar className="h-8 w-8"><AvatarImage src={mediaUrl(h.avatar_url)} /><AvatarFallback>{h.member_name?.[0] || "?"}</AvatarFallback></Avatar>
                                     <div className="text-xs">
-                                        <div className="font-medium truncate">{h.name}</div>
-                                        {h.chapter_name && <div className="text-slate-500 truncate">{h.chapter_name}</div>}
+                                        <div className="font-medium truncate">{h.member_name}</div>
+                                        {h.year && <div className="text-slate-500">{h.year}</div>}
                                     </div>
                                 </div>
                             ))}
@@ -865,59 +860,82 @@ function MedallionTierPanel({ level, award, candidates, isAdmin, granting, onGra
                 </div>
 
                 {isAdmin && (
-                    <div className="rounded-2xl border-2 border-green-200 bg-green-50/40 p-5" data-testid={`medallion-eligible-${level.key}`}>
-                        <h4 className="text-sm font-semibold text-green-800 uppercase tracking-wider mb-3">
-                            Suggested Grants — Meets all {level.criteria.length} criteria ({eligibleOnly.length})
-                        </h4>
-                        {eligibleOnly.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No candidates currently meet every criterion for the {level.label} Medallion.</p>
-                        ) : (
-                            <div className="space-y-2">
-                                {eligibleOnly.map((c) => (<EligibilityRow key={c.user_id} candidate={c} level={level} onGrant={() => onGrant(c.user_id)} granting={granting} />))}
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {isAdmin && partial.length > 0 && (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                        <h4 className="text-sm font-semibold text-slate-800 uppercase tracking-wider mb-3">Close to eligible ({partial.length}) — members meeting 3+ criteria</h4>
-                        <div className="space-y-2 max-h-96 overflow-y-auto">
-                            {partial.slice(0, 20).map((c) => (<EligibilityRow key={c.user_id} candidate={c} level={level} readonly />))}
-                        </div>
-                    </div>
+                    <ManualMedallionGrant tier={level} award={award} onGranted={onGranted} />
                 )}
             </div>
         </div>
     );
 }
 
-function EligibilityRow({ candidate, level, onGrant, granting, readonly }) {
-    const c = candidate;
-    const met = c.criteria_met || {};
-    const pips = [
-        { key: "years", label: `${c.years_of_service}y`, ok: met.years },
-        { key: "cs_hours", label: `${c.cs_hours}h`, ok: met.cs_hours },
-        { key: "events", label: `${c.events_attended}ev`, ok: met.events },
-        { key: "fundraised", label: `$${(c.fundraised || 0).toLocaleString()}`, ok: met.fundraised },
-    ];
-    if (c.requires_prior_tier) pips.push({ key: "prior", label: c.requires_prior_tier[0].toUpperCase() + c.requires_prior_tier.slice(1), ok: met.prior_tier });
+
+/**
+ * Admin-only manual grant panel for a specific Medallion tier. Bypasses the
+ * eligibility checks — the criteria-based suggestions live on the Admin →
+ * Awards page (the user asked to NOT surface those to members here). This
+ * panel is only about handing the medal to whoever the admin decides.
+ */
+function ManualMedallionGrant({ tier, award, onGranted }) {
+    const [members, setMembers] = useState([]);
+    const [userId, setUserId] = useState("");
+    const [q, setQ] = useState("");
+    const [note, setNote] = useState("");
+    const [granting, setGranting] = useState(false);
+
+    useEffect(() => {
+        api.get("/members").then((r) => setMembers(r.data || [])).catch(() => setMembers([]));
+    }, []);
+
+    const filtered = useMemo(() => {
+        const t = (q || "").trim().toLowerCase();
+        if (!t) return members.slice(0, 500);
+        return members.filter((m) =>
+            (m.name || "").toLowerCase().includes(t) || (m.email || "").toLowerCase().includes(t),
+        ).slice(0, 500);
+    }, [members, q]);
+
+    async function grant() {
+        if (!award) return toast.error("Medallion award not seeded yet.");
+        if (!userId) return toast.error("Pick a member.");
+        setGranting(true);
+        try {
+            await api.post(`/awards/${award.id}/grant`, {
+                user_id: userId,
+                note: (note || "").trim() || `Granted by admin (${tier.label} Medallion).`,
+            });
+            toast.success(`${tier.label} Medallion granted`);
+            setUserId("");
+            setNote("");
+            onGranted && onGranted();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Grant failed");
+        }
+        setGranting(false);
+    }
 
     return (
-        <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-2">
-            <Avatar className="h-9 w-9 shrink-0"><AvatarImage src={mediaUrl(c.avatar_url)} /><AvatarFallback>{c.name?.[0] || "?"}</AvatarFallback></Avatar>
-            <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm truncate">{c.name}</div>
-                {c.chapter_name && <div className="text-xs text-slate-500 truncate">{c.chapter_name}</div>}
+        <div className="rounded-2xl border border-slate-200 bg-white p-5" data-testid={`medallion-manual-grant-${tier.key}`}>
+            <h4 className="text-sm font-semibold text-slate-800 uppercase tracking-wider mb-1">Grant the {tier.label} Medallion</h4>
+            <p className="text-xs text-slate-500 mb-4">
+                Admins can grant this medallion to any member, regardless of the standard criteria.
+                For criteria-based suggestions, see the <strong>Admin → Awards page</strong>.
+            </p>
+            <div className="space-y-3">
+                <Input placeholder="Search members by name or email…" value={q} onChange={(e) => setQ(e.target.value)} data-testid={`medallion-manual-search-${tier.key}`} />
+                <Select value={userId} onValueChange={setUserId}>
+                    <SelectTrigger data-testid={`medallion-manual-select-${tier.key}`}><SelectValue placeholder="Pick a member…" /></SelectTrigger>
+                    <SelectContent>
+                        {filtered.map((m) => (
+                            <SelectItem key={m.id} value={m.id}>{m.name}{m.email ? ` · ${m.email}` : ""}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+                <Textarea rows={2} placeholder="Note (optional)…" value={note} onChange={(e) => setNote(e.target.value)} data-testid={`medallion-manual-note-${tier.key}`} />
+                <div className="flex justify-end">
+                    <Button onClick={grant} disabled={granting || !userId} data-testid={`medallion-manual-grant-btn-${tier.key}`}>
+                        {granting ? "Granting…" : `Grant ${tier.label} Medallion`}
+                    </Button>
+                </div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-                {pips.map((p) => (
-                    <span key={p.key} title={p.key} className={`text-[10px] rounded-full px-2 py-0.5 font-semibold ${p.ok ? "bg-green-100 text-green-800" : "bg-red-100 text-red-700"}`}>{p.label}</span>
-                ))}
-            </div>
-            {!readonly && (
-                <Button size="sm" onClick={onGrant} disabled={granting} data-testid={`medallion-grant-${level.key}-${c.user_id}`}>Grant</Button>
-            )}
         </div>
     );
 }

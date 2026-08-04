@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api, mediaUrl, formatApiError } from "../lib/api";
 import { safeHtml } from "../lib/sanitize";
 import { useAuth } from "../context/AuthContext";
@@ -7,6 +7,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Button } from "../components/ui/button";
+import { Avatar, AvatarImage, AvatarFallback } from "../components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Sparkles, Plus, Trash2, Users, Calendar, Newspaper, FileText, LayoutDashboard, Building2, Layers, Trophy, Clock, ShoppingBag, Heart, BarChart3, Mail, Send, PenSquare, Upload, Image as ImageIcon, Pencil, Activity, ChevronDown, ChevronRight, UserPlus, Download, Printer, Map, Bell } from "lucide-react";
@@ -1157,6 +1158,168 @@ function PendingIntakeChangesPanel({ onChanged }) {
 }
 
 
+/**
+ * Chapter-change approval flow. Any admin with `members` tab access sees the
+ * pending list (governor-managers only see requests touching their own
+ * chapter, enforced backend-side). Only FULL-access admins can approve/deny.
+ * On approval the backend updates user.chapter_id and emails/pushes the
+ * member + all governor-managers of both source & target chapters +
+ * full-access admins.
+ */
+function ChapterChangeRequestsPanel({ isFullAdmin, onChanged }) {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [showAll, setShowAll] = useState(false);
+
+    async function load() {
+        setLoading(true);
+        try {
+            const { data } = await api.get(`/admin/chapter-change-requests${showAll ? "?status=all" : ""}`);
+            setRows(data || []);
+        } catch { setRows([]); }
+        setLoading(false);
+    }
+    useEffect(() => { load(); }, [showAll]);
+
+    async function decide(id, approve) {
+        const verb = approve ? "APPROVE" : "DENY";
+        if (!window.confirm(`${verb} this chapter change request? The member and governor-managers will be notified.`)) return;
+        try {
+            await api.post(`/admin/chapter-change-requests/${id}/${approve ? "approve" : "deny"}`);
+            toast.success(`Request ${approve ? "approved" : "denied"}`);
+            load();
+            onChanged && onChanged();
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "Action failed");
+        }
+    }
+
+    if (loading) return null;
+    if (rows.length === 0 && !showAll) return null;
+
+    return (
+        <div className="mb-6 border rounded-2xl bg-amber-50/60 border-amber-200 p-4" data-testid="chapter-change-requests-panel">
+            <div className="flex items-center justify-between mb-3">
+                <h3 className="font-heading text-lg font-semibold flex items-center gap-2">
+                    <Building2 className="h-5 w-5 text-amber-700" /> Chapter-change requests
+                    {rows.length > 0 && (
+                        <span className="text-xs bg-amber-200 text-amber-900 rounded-full px-2 py-0.5" data-testid="chapter-change-count">{rows.length}</span>
+                    )}
+                </h3>
+                <button type="button" onClick={() => setShowAll(!showAll)} className="text-xs underline text-slate-600" data-testid="chapter-change-toggle-history">
+                    {showAll ? "Show pending only" : "Show history"}
+                </button>
+            </div>
+            {rows.length === 0 ? (
+                <p className="text-sm text-slate-500">No chapter change requests to review.</p>
+            ) : (
+                <div className="space-y-2">
+                    {rows.map((r) => (
+                        <div key={r.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 rounded-lg border border-amber-100 bg-white p-3" data-testid={`chapter-change-row-${r.id}`}>
+                            <Avatar className="h-10 w-10 shrink-0">
+                                <AvatarImage src={mediaUrl(r.user_avatar_url)} />
+                                <AvatarFallback>{r.user_name?.[0] || "?"}</AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-medium text-sm truncate">{r.user_name}</div>
+                                <div className="text-xs text-slate-600">
+                                    <span className="font-medium">{r.current_chapter_name || "Unassigned"}</span>
+                                    {" → "}
+                                    <span className="font-medium text-primary">{r.target_chapter_name}</span>
+                                </div>
+                                {r.reason && <div className="text-xs text-slate-500 italic mt-1">&ldquo;{r.reason}&rdquo;</div>}
+                                {r.status !== "pending" && (
+                                    <div className="text-[10px] uppercase tracking-wider mt-1">
+                                        <span className={r.status === "approved" ? "text-green-700 font-semibold" : "text-red-700 font-semibold"}>
+                                            {r.status} by {r.decided_by_name || "admin"}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                            {r.status === "pending" && isFullAdmin && (
+                                <div className="flex gap-2 self-stretch sm:self-auto">
+                                    <Button size="sm" onClick={() => decide(r.id, true)} data-testid={`chapter-change-approve-${r.id}`}>Approve</Button>
+                                    <Button size="sm" variant="outline" onClick={() => decide(r.id, false)} data-testid={`chapter-change-deny-${r.id}`}>Deny</Button>
+                                </div>
+                            )}
+                            {r.status === "pending" && !isFullAdmin && (
+                                <span className="text-xs text-slate-500 italic">Awaiting full-access admin</span>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+/**
+ * Bulk import of historical event attendance. Feeds the `checkins` collection
+ * so the Medallion "events attended" criterion and Chapter-of-the-Year
+ * pipelines see historical data. Full-access admins only.
+ */
+function CsvCheckinImportPanel({ isFullAdmin }) {
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState(null);
+    if (!isFullAdmin) return null;
+
+    async function onFile(e) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setBusy(true);
+        setResult(null);
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            const { data } = await api.post("/admin/checkins/import-csv", fd, { headers: { "Content-Type": "multipart/form-data" } });
+            setResult(data);
+            toast.success(`Imported ${data.inserted} attendance records`);
+        } catch (err) {
+            toast.error(formatApiError(err.response?.data?.detail) || "Import failed");
+            setResult(null);
+        }
+        setBusy(false);
+        e.target.value = "";
+    }
+
+    return (
+        <div className="mb-6 border rounded-2xl bg-white p-4" data-testid="csv-checkin-import-panel">
+            <div className="flex items-start gap-3">
+                <Upload className="h-5 w-5 text-slate-600 mt-1 shrink-0" />
+                <div className="flex-1">
+                    <h3 className="font-heading text-lg font-semibold">Import historical event attendance (CSV)</h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                        CSV must include an <code className="bg-slate-100 rounded px-1">email</code> (preferred) or <code className="bg-slate-100 rounded px-1">name</code> column plus <code className="bg-slate-100 rounded px-1">event_name</code> and <code className="bg-slate-100 rounded px-1">date</code>. Rows are matched to existing members; unknown emails are skipped and reported. Imports feed Medallion &ldquo;events attended&rdquo; and Chapter of the Year tallies. Idempotent &mdash; re-importing the same file is safe.
+                    </p>
+                    <div className="mt-3">
+                        <input type="file" accept=".csv,text/csv" onChange={onFile} disabled={busy} data-testid="csv-checkin-file-input" className="text-sm" />
+                    </div>
+                    {busy && <div className="text-xs text-slate-500 mt-2">Uploading &amp; processing…</div>}
+                    {result && (
+                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm" data-testid="csv-checkin-import-result">
+                            <div><strong>Inserted:</strong> {result.inserted}</div>
+                            <div><strong>Skipped:</strong> {result.skipped}</div>
+                            {result.errors?.length > 0 && (
+                                <details className="mt-2">
+                                    <summary className="cursor-pointer text-slate-600 text-xs">Show {result.errors.length} row-level issues</summary>
+                                    <ul className="mt-2 text-xs text-slate-600 max-h-40 overflow-y-auto space-y-1">
+                                        {result.errors.slice(0, 50).map((e, i) => (
+                                            <li key={i}>Row {e.row}: {e.reason}</li>
+                                        ))}
+                                    </ul>
+                                </details>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+
 function MembersAdmin() {
     const { user: me } = useAuth();
     const isFullAdmin = (me?.admin_role || "full") === "full";
@@ -1301,6 +1464,8 @@ function MembersAdmin() {
         <div>
             <ApplicationsPanel onApproved={load} />
             <PendingIntakeChangesPanel onChanged={load} />
+            <ChapterChangeRequestsPanel isFullAdmin={isFullAdmin} onChanged={load} />
+            <CsvCheckinImportPanel isFullAdmin={isFullAdmin} />
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <Input placeholder="Search members…" value={q} onChange={(e) => setQ(e.target.value)} className="rounded-full max-w-sm" data-testid="admin-member-search" />
                 <div className="flex items-center gap-2 flex-wrap">
@@ -2647,7 +2812,174 @@ function AwardsAdmin() {
                 ))}
             </div>
             {isFullAdmin && <AwardEligibilityPanel awards={awards} onGranted={load} />}
+            {isFullAdmin && <MedallionEligibilityPanel awards={awards} onGranted={load} />}
             <AutoGrantsPanel />
+        </div>
+    );
+}
+
+
+/**
+ * Admin-only Medallion eligibility panel. Surfaces members who satisfy every
+ * criterion for a Bronze/Silver/Gold Medallion (based on years of consecutive
+ * service, cumulative CS hours, events attended, and fundraised dollars). This
+ * lives in the Admin Awards page — regular members never see suggestions.
+ *
+ * Renders one collapsible per tier. Each row shows the member + coloured pips
+ * for each criterion (green ✓ / red ✗) so admins can eyeball at a glance
+ * exactly which criteria a candidate satisfies. Clicking "Grant" hits the
+ * same `/awards/{id}/grant` endpoint used by manual grants — so grants roll
+ * into the standard Awards flow (profile display, PDFs, etc.).
+ */
+function MedallionEligibilityPanel({ awards, onGranted }) {
+    const [eligibility, setEligibility] = useState({ bronze: [], silver: [], gold: [] });
+    const [loading, setLoading] = useState(true);
+    const [openTier, setOpenTier] = useState("bronze");
+    const [granting, setGranting] = useState(false);
+
+    const awardByTier = useMemo(() => {
+        const m = {};
+        for (const a of awards || []) if (a.medallion_tier) m[a.medallion_tier] = a;
+        return m;
+    }, [awards]);
+
+    async function refresh() {
+        setLoading(true);
+        try {
+            const { data } = await api.get("/awards/medallion-eligibility");
+            setEligibility(data || { bronze: [], silver: [], gold: [] });
+        } catch { /* ignore */ }
+        setLoading(false);
+    }
+    useEffect(() => { refresh(); }, []);
+
+    async function grantOne(uid, tier) {
+        const a = awardByTier[tier];
+        if (!a) return;
+        if (!window.confirm(`Grant the ${a.name} to this member?`)) return;
+        setGranting(true);
+        try {
+            await api.post(`/awards/${a.id}/grant`, { user_id: uid, note: `Auto-suggested (${tier} Medallion eligibility met).` });
+            toast.success(`${a.name} granted`);
+            refresh();
+            onGranted && onGranted();
+        } catch (e) {
+            toast.error(formatApiError(e.response?.data?.detail) || "Grant failed");
+        }
+        setGranting(false);
+    }
+
+    const tiers = [
+        { key: "bronze", label: "Bronze", color: "#CD7F32", criteriaCount: 4 },
+        { key: "silver", label: "Silver", color: "#C0C0C0", criteriaCount: 5 },
+        { key: "gold", label: "Gold", color: "#FFD700", criteriaCount: 5 },
+    ];
+
+    return (
+        <div className="mt-10 border-t pt-8" data-testid="medallion-eligibility-panel">
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+                <h3 className="font-heading text-2xl font-bold tracking-tight">Medallion Club eligibility</h3>
+                <Button type="button" variant="outline" className="rounded-full" onClick={refresh} data-testid="medallion-eligibility-refresh">
+                    Refresh
+                </Button>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+                Members who currently meet every criterion for each Medallion tier. Suggestions are
+                admin-only &mdash; regular members do not see this list. Grants roll into the standard
+                Awards flow (visible on profiles and PDFs). Admins can also grant medallions manually
+                from Awards &rarr; Medallion Club regardless of eligibility.
+            </p>
+
+            {loading ? (
+                <div className="text-sm text-muted-foreground">Computing eligibility…</div>
+            ) : (
+                <div className="space-y-4">
+                    {tiers.map((t) => {
+                        const rows = eligibility[t.key] || [];
+                        const eligibleRows = rows.filter((r) => r.eligible && !r.already_granted);
+                        const closeRows = rows.filter((r) => !r.eligible && r.criteria_met_count >= 3);
+                        const open = openTier === t.key;
+                        return (
+                            <div key={t.key} className="border rounded-2xl bg-card overflow-hidden" data-testid={`medallion-eligibility-${t.key}`}>
+                                <button
+                                    type="button"
+                                    onClick={() => setOpenTier(open ? "" : t.key)}
+                                    className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/50 transition"
+                                    data-testid={`medallion-eligibility-toggle-${t.key}`}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: t.color }} />
+                                        <span className="font-semibold text-lg">{t.label} Medallion</span>
+                                        <span className="text-xs bg-green-100 text-green-800 rounded-full px-2.5 py-0.5 font-semibold" data-testid={`medallion-eligibility-count-${t.key}`}>
+                                            {eligibleRows.length} eligible
+                                        </span>
+                                        {closeRows.length > 0 && (
+                                            <span className="text-xs bg-slate-100 text-slate-600 rounded-full px-2.5 py-0.5">
+                                                {closeRows.length} close (meets 3+)
+                                            </span>
+                                        )}
+                                    </div>
+                                    <span className="text-slate-400 text-xl">{open ? "−" : "+"}</span>
+                                </button>
+                                {open && (
+                                    <div className="border-t px-5 py-4 space-y-4">
+                                        {eligibleRows.length === 0 ? (
+                                            <p className="text-sm text-muted-foreground">No members currently meet every criterion for the {t.label} Medallion.</p>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {eligibleRows.map((c) => (
+                                                    <MedallionCandidateRow key={c.user_id} candidate={c} tier={t} onGrant={() => grantOne(c.user_id, t.key)} granting={granting} />
+                                                ))}
+                                            </div>
+                                        )}
+                                        {closeRows.length > 0 && (
+                                            <div>
+                                                <div className="text-xs uppercase tracking-wider font-semibold text-slate-500 mt-3 mb-2">Close to eligible ({closeRows.length}) — meets 3+ criteria</div>
+                                                <div className="space-y-2 max-h-96 overflow-y-auto">
+                                                    {closeRows.slice(0, 30).map((c) => (
+                                                        <MedallionCandidateRow key={c.user_id} candidate={c} tier={t} readonly />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function MedallionCandidateRow({ candidate, tier, onGrant, granting, readonly }) {
+    const c = candidate;
+    const met = c.criteria_met || {};
+    const pips = [
+        { key: "years", label: `${c.years_of_service}y`, ok: met.years, title: "Consecutive years of service" },
+        { key: "cs_hours", label: `${c.cs_hours}h`, ok: met.cs_hours, title: "Cumulative CS hours" },
+        { key: "events", label: `${c.events_attended}ev`, ok: met.events, title: "National/State events attended" },
+        { key: "fundraised", label: `$${(c.fundraised || 0).toLocaleString()}`, ok: met.fundraised, title: "Fundraised" },
+    ];
+    if (c.requires_prior_tier) {
+        pips.push({ key: "prior", label: c.requires_prior_tier[0].toUpperCase() + c.requires_prior_tier.slice(1), ok: met.prior_tier, title: `Requires ${c.requires_prior_tier} medallion` });
+    }
+    return (
+        <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-2" data-testid={`medallion-candidate-${tier.key}-${c.user_id}`}>
+            <Avatar className="h-9 w-9 shrink-0"><AvatarImage src={mediaUrl(c.avatar_url)} /><AvatarFallback>{c.name?.[0] || "?"}</AvatarFallback></Avatar>
+            <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm truncate">{c.name}</div>
+                {c.chapter_name && <div className="text-xs text-slate-500 truncate">{c.chapter_name}</div>}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                {pips.map((p) => (
+                    <span key={p.key} title={p.title} className={`text-[10px] rounded-full px-2 py-0.5 font-semibold ${p.ok ? "bg-green-100 text-green-800" : "bg-red-100 text-red-700"}`}>{p.label}</span>
+                ))}
+            </div>
+            {!readonly && (
+                <Button size="sm" onClick={onGrant} disabled={granting} data-testid={`medallion-grant-${tier.key}-${c.user_id}`}>Grant</Button>
+            )}
         </div>
     );
 }

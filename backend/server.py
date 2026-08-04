@@ -318,6 +318,17 @@ def effective_admin_tabs(user: dict) -> set[str]:
 def admin_can(user: dict, tab: str) -> bool:
     return tab in effective_admin_tabs(user)
 
+async def require_full_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Strict guard: caller MUST be a full-access admin (admin_role == 'full').
+    Used by irreversible operations like chapter-change approval and
+    historical CSV imports where chapter-scoped admins should be able to
+    view but not commit."""
+    if user.get("role") != "admin" or admin_role_of(user) != "full":
+        raise HTTPException(status_code=403, detail="Full-access admin only.")
+    return user
+
+
+
 async def require_admin_tab(tab: str, user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
@@ -429,6 +440,20 @@ async def update_me(body: ProfileUpdateIn, user: dict = Depends(get_current_user
                     detail="Governor Managers cannot change their own chapter. Ask a full-access admin to reassign.",
                 )
             # No-op — strip so we don't re-write the same value.
+            updates.pop("chapter_id", None)
+        elif user.get("role") == "member":
+            # Iter150: regular members must go through the approval flow.
+            # Submitting a `chapter_id` on the profile save is silently
+            # dropped so we don't fail the whole save, but the value never
+            # persists — the member is instructed on the UI to use the
+            # dedicated "Request chapter change" flow instead.
+            cid_incoming = (updates.get("chapter_id") or "").strip() or None
+            current = user.get("chapter_id") or None
+            if cid_incoming != current:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Chapter changes require approval. Please use the 'Request chapter change' button on your profile.",
+                )
             updates.pop("chapter_id", None)
         else:
             cid = (updates.get("chapter_id") or "").strip()
@@ -3406,6 +3431,21 @@ routes_life_and_medallion.register(
     logger=logger,
     admin_tab_dep=admin_tab_dep,
     get_current_user=get_current_user,
+)
+# Chapter-change approval flow + historical event-attendance CSV import.
+from routes import chapter_change_and_import as routes_chapter_change  # noqa: E402
+routes_chapter_change.register(
+    api,
+    db=db,
+    iso=iso,
+    now_utc=now_utc,
+    logger=logger,
+    admin_tab_dep=admin_tab_dep,
+    get_current_user=get_current_user,
+    require_full_admin=require_full_admin,
+    send_bulk_email=send_bulk_email,
+    send_push_best_effort=routes_push.send_push_best_effort,
+    frontend_url=os.environ.get("FRONTEND_URL", ""),
 )
 routes_email.register(
     api,
