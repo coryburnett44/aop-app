@@ -137,6 +137,17 @@ class MemberRegionOverrideIn(BaseModel):
     region_id: str = ""
 
 
+class BulkRegionOverrideIn(BaseModel):
+    """Multi-select region reassignment payload (Iter 152).
+
+    `region_id == ""` clears the override on every listed user (falling back
+    to their state-based region). Duplicates in `user_ids` are collapsed and
+    unknown ids are ignored — the response reports the exact modified count.
+    """
+    user_ids: list[str] = []
+    region_id: str = ""
+
+
 # ---------- Helpers ----------
 def _region_variants(region: dict) -> list[str]:
     """Flatten all state variants for a region into a single lookup list."""
@@ -447,3 +458,37 @@ def register(api, *, db, get_current_user, admin_tab_dep, public_user):
                 raise HTTPException(status_code=400, detail="Region not found")
         await db.users.update_one({"id": user_id}, {"$set": {"region_override": override}})
         return {"user_id": user_id, "region_override": override}
+
+    @api.post("/admin/members/bulk-region")
+    async def bulk_set_region_override(
+        body: BulkRegionOverrideIn,
+        admin: dict = Depends(admin_tab_dep("members")),
+    ):
+        """Iter 152 — multi-select bulk region reassignment.
+        Admins tick members in the directory and re-home them all in one shot.
+        An empty `region_id` clears every listed member's override so they
+        fall back to state-based bucketing."""
+        uids = list({(u or "").strip() for u in (body.user_ids or []) if (u or "").strip()})
+        if not uids:
+            raise HTTPException(status_code=400, detail="user_ids is required")
+        if len(uids) > 500:
+            raise HTTPException(status_code=400, detail="Max 500 members per bulk move")
+        override = (body.region_id or "").strip()
+        region_name = ""
+        if override:
+            r = await db.app_regions.find_one({"id": override}, {"_id": 0, "id": 1, "name": 1})
+            if not r:
+                raise HTTPException(status_code=400, detail="Region not found")
+            region_name = r.get("name", "")
+        res = await db.users.update_many(
+            {"id": {"$in": uids}},
+            {"$set": {"region_override": override}},
+        )
+        return {
+            "matched": res.matched_count,
+            "modified": res.modified_count,
+            "requested": len(uids),
+            "region_id": override,
+            "region_name": region_name,
+            "cleared": override == "",
+        }

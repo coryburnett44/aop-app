@@ -165,27 +165,48 @@ def register(
     # Medallion Club — auto-eligibility
     # ================================================================
     async def _consecutive_years_by_user() -> dict:
-        """Compute years-of-consecutive-service per user based on the same
-        streak logic the Service Ribbon uses: latest `reactivation` entry
-        in status_history, or fall back to `joined_at` / `created_at`."""
+        """Compute years-of-consecutive-service per user for the Medallion Club.
+
+        Rule (per user's Iteration 151 clarification):
+          - Base the count on the member's `join_date` (or `joined_at` /
+            `created_at` fallback).
+          - If the member has EVER been inactive — i.e. `status_override`
+            is `inactive`/`deceased`, or `status_history` contains any
+            'inactive' entry — they do NOT count as having consecutive
+            years. Reactivating after paying dues does not restart a fresh
+            'consecutive' streak; it simply zeros them out for medallion
+            purposes. This is stricter than the ribbon logic (which
+            respects reactivation as a new streak start).
+        """
         out: dict = {}
         today = datetime.now(timezone.utc).date()
+
+        def _has_inactivity(u: dict) -> bool:
+            if (u.get("status_override") or "").lower() in {"inactive", "deceased"}:
+                return True
+            for entry in u.get("status_history") or []:
+                status = (entry.get("status") or entry.get("action") or "").lower()
+                if status in {"inactive", "deactivated", "deactivation", "deceased"}:
+                    return True
+            return False
+
         async for u in db.users.find(
-            {"status_override": {"$ne": "inactive"}},
-            {"_id": 0, "id": 1, "joined_at": 1, "created_at": 1, "status_history": 1},
+            {},
+            {"_id": 0, "id": 1, "join_date": 1, "joined_at": 1, "created_at": 1,
+             "status_history": 1, "status_override": 1},
         ):
             uid = u.get("id")
-            start = None
-            for entry in reversed(u.get("status_history") or []):
-                if entry.get("action") == "reactivation":
-                    start = _parse_iso_date(entry.get("at"))
-                    if start:
-                        break
-            if not start:
-                start = _parse_iso_date(u.get("joined_at") or "") or _parse_iso_date(u.get("created_at") or "")
+            # Any history of inactivity zeroes them out.
+            if _has_inactivity(u):
+                out[uid] = 0
+                continue
+            start = (
+                _parse_iso_date(u.get("join_date") or "")
+                or _parse_iso_date(u.get("joined_at") or "")
+                or _parse_iso_date(u.get("created_at") or "")
+            )
             if not start:
                 continue
-            # Years completed as of today (integer).
             years = today.year - start.year - (
                 (today.month, today.day) < (start.month, start.day)
             )

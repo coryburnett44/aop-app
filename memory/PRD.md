@@ -15,6 +15,21 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 152 — Member Region Bulk Move + Medallion consecutive-years rule verified (2026-02-04) [FEATURE + BUGFIX]
+**User request (from Msg #338, previously missed):** Let admins multi-select members in the directory and reassign their region in one click. **User Iteration-151 rule now verified:** members without any inactivity record and joined on/before Aug 4 2023 auto-get 3+ consecutive years; any inactivity in `status_history` zeroes the count.
+
+**Backend:**
+- **`/app/backend/routes/regions.py`** — new `POST /api/admin/members/bulk-region` accepting `{user_ids: [], region_id: "" }`. Validates the region exists (or accepts empty-string to clear the override), collapses duplicate ids, caps at 500/call, returns `{matched, modified, requested, region_id, region_name, cleared}`. `MemberRegionOverrideIn` is unchanged; new `BulkRegionOverrideIn` model.
+- **`/app/backend/tests/test_iteration151_medallion_years_rule.py`** — executed. 2/2 pass. Confirms `_consecutive_years_by_user()` in `routes/life_and_medallion.py` correctly (a) uses join_date/joined_at/created_at, (b) zeros users with any `status_history` entry of inactive/deactivated/deceased or `status_override in {inactive, deceased}`, and (c) computes exact years-of-service otherwise.
+
+**Frontend:**
+- **`Admin.jsx` → `MembersAdmin`** — new "Move N to region" toolbar button appears next to "Add anniversary fee" whenever ≥1 member is checked. Opens a dialog with a region `Select` (all regions + "Clear override" sentinel) and an Apply button. On success, toast reports the modified count + region name and the selection is cleared. Regions are fetched once on mount so the picker is instant.
+- data-testids added: `bulk-move-region-btn`, `bulk-region-dialog`, `bulk-region-target`, `bulk-region-confirm`, `bulk-region-cancel`.
+
+**Verification:** curl roundtrip verifies happy path (`modified=2`, correct region), empty ids → 400, unknown region_id → 400, unauth → 401. Playwright smoke: checkbox → toolbar button → dialog with region picker rendered end-to-end. Medallion pytest 2/2 pass.
+
+
+
 ### Iteration 150 — Phase 2: chapter-change approvals + governor bio + CSV attendance + Medallion UX (2026-02-28) [FEATURE]
 **User request:** (1) Chapter changes now require full-access admin approval with notifications; (2) Regions Governor Spotlight (photo + bio on each region card); (3) CSV import of past event attendance feeding `checkins` (Medallion + Chapter of the Year); (4) Move Medallion "Suggested Grants" from Awards → Medallion Club tab to the Admin → Awards page — members must never see suggestions — while allowing admins to grant medallions bypassing eligibility.
 

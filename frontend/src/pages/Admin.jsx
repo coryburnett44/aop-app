@@ -1401,6 +1401,20 @@ function MembersAdmin() {
     const [bulkOpen, setBulkOpen] = useState(false);
     const [bulkForm, setBulkForm] = useState({ label: "10-Year Anniversary Fee", amount: "150" });
     const [bulkBusy, setBulkBusy] = useState(false);
+    // Iter 152 — bulk region reassignment.
+    const [regions, setRegions] = useState([]);
+    const [regionOpen, setRegionOpen] = useState(false);
+    const [regionTarget, setRegionTarget] = useState("");
+    const [regionBusy, setRegionBusy] = useState(false);
+    useEffect(() => {
+        // Load regions once so the bulk-move dialog is instant when opened.
+        (async () => {
+            try {
+                const { data } = await api.get("/regions");
+                setRegions(data?.regions || []);
+            } catch { /* non-fatal — dialog will just show an empty picker */ }
+        })();
+    }, []);
     const pendingCount = members.filter((x) => x.pending_set_password).length;
     const outstandingCount = members.filter((x) => (x.outstanding_balance_total || 0) > 0).length;
     let visibleMembers = members;
@@ -1457,6 +1471,36 @@ function MembersAdmin() {
         setBulkBusy(false);
     }
 
+    async function runBulkMoveRegion() {
+        if (selectedIds.size === 0) {
+            toast.error("Select at least one member.");
+            return;
+        }
+        if (!regionTarget) {
+            toast.error("Pick a target region (or 'Clear override').");
+            return;
+        }
+        setRegionBusy(true);
+        try {
+            const region_id = regionTarget === "__clear__" ? "" : regionTarget;
+            const { data } = await api.post("/admin/members/bulk-region", {
+                user_ids: Array.from(selectedIds),
+                region_id,
+            });
+            const label = data?.cleared
+                ? `Cleared region override on ${data.modified} member${data.modified === 1 ? "" : "s"}`
+                : `Moved ${data.modified} member${data.modified === 1 ? "" : "s"} into ${data.region_name || "region"}`;
+            toast.success(label);
+            setRegionOpen(false);
+            setRegionTarget("");
+            clearSelection();
+            await load();
+        } catch (e) {
+            toast.error(e.response?.data?.detail || "Bulk region move failed");
+        }
+        setRegionBusy(false);
+    }
+
     const chapterName = (id) => chapters.find((c) => c.id === id)?.name || "—";
     const tierName = (id) => tiers.find((t) => t.id === id)?.name || "—";
 
@@ -1482,6 +1526,15 @@ function MembersAdmin() {
                                 title="Add the same balance line to every selected member"
                             >
                                 + Add anniversary fee to {selectedIds.size}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setRegionTarget(""); setRegionOpen(true); }}
+                                className="rounded-full px-3 py-1.5 text-xs font-semibold border border-primary/40 bg-white text-primary hover:bg-primary/5 transition"
+                                data-testid="bulk-move-region-btn"
+                                title="Reassign the region on every selected member in one click"
+                            >
+                                Move {selectedIds.size} to region
                             </button>
                             <button
                                 type="button"
@@ -1700,6 +1753,37 @@ function MembersAdmin() {
                     </div>
                 </DialogContent>
             </Dialog>
+            <Dialog open={regionOpen} onOpenChange={setRegionOpen}>
+                <DialogContent className="rounded-2xl max-w-md" data-testid="bulk-region-dialog">
+                    <DialogHeader>
+                        <DialogTitle className="font-heading">Move {selectedIds.size} member{selectedIds.size === 1 ? "" : "s"} to a region</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 text-sm">
+                        <div className="rounded-xl bg-primary/5 border border-primary/20 p-3 text-xs text-foreground/80">
+                            Overrides the region on every selected member — they will be counted under the chosen region regardless of the state on their profile. Choose <span className="font-semibold">Clear override</span> to revert everyone back to state-based bucketing.
+                        </div>
+                        <div>
+                            <Label className="text-xs">Target region</Label>
+                            <Select value={regionTarget} onValueChange={setRegionTarget}>
+                                <SelectTrigger className="rounded-xl mt-1" data-testid="bulk-region-target"><SelectValue placeholder="Pick a region…" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__clear__">— Clear override (use state) —</SelectItem>
+                                    {regions.map((r) => (
+                                        <SelectItem key={r.id} value={r.id}>{r.emoji || "📍"} {r.name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-2">
+                            <Button variant="outline" onClick={() => setRegionOpen(false)} className="rounded-full" data-testid="bulk-region-cancel">Cancel</Button>
+                            <Button onClick={runBulkMoveRegion} disabled={regionBusy || !regionTarget} className="rounded-full bg-primary hover:bg-primary/90" data-testid="bulk-region-confirm">
+                                {regionBusy ? "Applying…" : `Apply to ${selectedIds.size} member${selectedIds.size === 1 ? "" : "s"}`}
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
         </div>
     );
 }
