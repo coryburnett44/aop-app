@@ -15,6 +15,28 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 158 — Photos page perf: responsive srcset + lazy + progressive + paginated (2026-02-04) [PERF]
+**User request:** Optimize the Photos page — responsive thumbnails, lazy loading, progressive image loading, no full-res until click, paginate/virtualize if many images.
+
+**What was already in place (kept):**
+- Backend `/api/photos/thumb/{path}?w=…` (200 / 320 / 400 / 600 / 800 / 1200 / 1600 / 2000) with 3-tier cache (LRU → object storage → Pillow encode).
+- Backend `/api/photos/preview/{path}?w=1600` WebP preview endpoint.
+- Native `loading="lazy"` + `decoding="async"` on grid tiles + album covers.
+- Server-side pagination: `PAGE_SIZE = 60` photos/page, IntersectionObserver sentinel triggers `loadMorePhotos` at 400px from bottom.
+- PhotoSwipe viewer uses thumb as `msrc` placeholder + WebP preview as `src` (75.9% smaller). Full-res original only fetched on Download.
+
+**New in Iter 158 (`/app/frontend/src/pages/Photos.jsx`):**
+- **Responsive `srcset` + `sizes` on grid tiles** — 200 / 400 / 800 variants. `sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"` mirrors the 2/3/4-column grid so the browser picks the right variant per viewport × DPR (retina picks 800w for a 200×200 tile).
+- **Responsive srcset on album covers** — 320 / 600 / 800 variants, `sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"`.
+- **`fetchPriority="low"`** on both tile and cover imgs so off-screen prefetches don't compete with critical resources.
+
+**Verification:**
+- Playwright: album cover renders with 3-entry srcset + proper sizes + lazy loading. Grid tile renders with srcset + sizes + lazy + fetchpriority="low". Browser picked `?w=800` for a ~200px tile on 4× DPR — correct choice.
+- No new lint errors (`fetchPriority` accepted in React; earlier `fetchpriority` lower-case fixed).
+- Total render pipeline: `?w=200` (~8-15 KB) → `?w=800` (~40-90 KB) — orders of magnitude smaller than the ~2-8 MB originals the old grid was fetching before the recent perf work.
+
+
+
 ### Iteration 157 — PhotoSwipe v5 viewer + WebP preview endpoint (2026-02-04) [PERF]
 **User request:** Photos page still slow — replace the custom "Lightbox" viewer with something faster. User selected PhotoSwipe v5 + medium-preview backend.
 

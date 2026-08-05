@@ -432,9 +432,29 @@ function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
             data-testid={`album-card-${album.name}`}
         >
             <div className="aspect-[4/3] bg-gradient-to-br from-primary/15 to-primary/5 grid place-items-center relative overflow-hidden">
-                {album.cover_url ? (
-                    <img src={mediaUrl(album.cover_thumb_url || album.cover_url)} alt={album.name} loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" data-testid={`album-cover-${album.name}`} />
-                ) : (
+                {album.cover_url ? (() => {
+                    // Iter 158 — responsive srcset for album covers too.
+                    // Cover is a 4:3 tile at 1 / 2 / 3 columns depending on
+                    // breakpoint, so we need 320-800px variants.
+                    const coverPath = (album.cover_thumb_url || album.cover_url || "").split("?")[0];
+                    const looksThumb = coverPath.includes("/photos/thumb/");
+                    const src = looksThumb ? mediaUrl(`${coverPath}?w=600`) : mediaUrl(album.cover_thumb_url || album.cover_url);
+                    const srcSet = looksThumb ? [320, 600, 800].map((w) => `${mediaUrl(`${coverPath}?w=${w}`)} ${w}w`).join(", ") : undefined;
+                    const sizes = looksThumb ? "(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw" : undefined;
+                    return (
+                        <img
+                            src={src}
+                            srcSet={srcSet}
+                            sizes={sizes}
+                            alt={album.name}
+                            loading="lazy"
+                            decoding="async"
+                            fetchPriority="low"
+                            className="absolute inset-0 w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
+                            data-testid={`album-cover-${album.name}`}
+                        />
+                    );
+                })() : (
                     <ImageIcon className="h-12 w-12 text-primary/40" />
                 )}
                 <span className="absolute top-2 left-2 text-[10px] font-bold uppercase tracking-wider bg-white/95 text-slate-700 px-2 py-1 rounded-full backdrop-blur">
@@ -493,9 +513,21 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
     // viewport-based lazy load, and progressive decode natively. The previous
     // `api.get(..., {responseType: 'blob'})` pattern serialised 50 XHR
     // downloads of the ORIGINAL (2-8MB per phone photo) through the JS thread
-    // — that's what made 50-photo albums crawl. `thumb_url` is a 400px JPEG
+    // — that's what made 50-photo albums crawl. `thumb_url` is a JPEG
     // generated once by the backend and cached.
-    const thumbSrc = mediaUrl(photo.thumb_url || photo.url);
+    //
+    // Iter 158 — responsive srcset. The backend accepts w=200/320/400/600/800
+    // so we hand the browser three variants and let it pick the best one
+    // based on the tile's rendered pixel size (device DPR × CSS px).
+    // `sizes` mirrors the grid: 2-col mobile → tile ~50vw, 3-col sm → 33vw,
+    // 4-col lg → 25vw. `fetchPriority=low` de-prioritises off-screen tiles
+    // when the browser prefetches them, keeping the initial paint snappy.
+    const thumbPath = (photo.thumb_url || "").split("?")[0] || photo.url;
+    const thumbSrc = mediaUrl(`${thumbPath}?w=400`);
+    const thumbSrcSet = [200, 400, 800]
+        .map((w) => `${mediaUrl(`${thumbPath}?w=${w}`)} ${w}w`)
+        .join(", ");
+    const thumbSizes = "(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw";
 
     const canDelete = currentUser && (currentUser.role === "admin" || currentUser.id === photo.uploaded_by);
 
@@ -521,9 +553,12 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
             >
                 <img
                     src={thumbSrc}
+                    srcSet={thumbSrcSet}
+                    sizes={thumbSizes}
                     alt={photo.title || "Photo"}
                     loading="lazy"
                     decoding="async"
+                    fetchPriority="low"
                     className="w-full h-full object-contain"
                 />
                 <div className={`absolute top-2 left-2 rounded-full p-1.5 shadow ${selected ? "bg-primary text-white" : "bg-white/90 text-slate-400"}`}>
@@ -543,7 +578,16 @@ function PhotoTile({ photo, currentUser, onDelete, onSetCover, albumCanEdit, sel
                 data-testid={`photo-open-${photo.id}`}
             >
                 {thumbSrc ? (
-                    <img src={thumbSrc} alt={photo.title || "Photo"} loading="lazy" decoding="async" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
+                    <img
+                        src={thumbSrc}
+                        srcSet={thumbSrcSet}
+                        sizes={thumbSizes}
+                        alt={photo.title || "Photo"}
+                        loading="lazy"
+                        decoding="async"
+                        fetchPriority="low"
+                        className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
+                    />
                 ) : (
                     <div className="w-full h-full animate-pulse bg-muted" />
                 )}
