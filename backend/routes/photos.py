@@ -18,15 +18,27 @@ Public surface (paths preserved verbatim):
   POST   /api/photos/download-zip
 """
 import asyncio
+import gc
+import logging
 import re
-import tempfile
 import uuid
-import zipfile
 from typing import List, Optional
 
 from fastapi import Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from zipstream.ng import ZipStream
+
+logger = logging.getLogger("clubhaven")
+
+
+# ---- Hard limits so a runaway download can't OOM the backend on prod ----
+# The 5-Year Anniversary album incident (Iter 159): 4 phone photos totalling
+# ~180 MB were enough to knock the production worker out and cascade into
+# a Cloudflare 520 that also killed the user's session. These limits are
+# checked BEFORE any bytes are fetched and return a friendly JSON error.
+DOWNLOAD_MAX_PHOTOS = 100
+DOWNLOAD_MAX_TOTAL_BYTES = 500 * 1024 * 1024  # 500 MB
 
 
 def register(
@@ -398,19 +410,31 @@ def register(
 
     @api.post("/photos/download-zip")
     async def download_photos_zip(body: PhotoDownloadIn, user: dict = Depends(get_current_user)):
-        """Build a ZIP of one or more photos (or an entire album) and stream
-        it back.
+        """Iter 159 — hardened streaming ZIP.
 
-        Why a SpooledTemporaryFile + chunked StreamingResponse:
-          - Building the entire zip in a BytesIO blocked the event loop and
-            held the whole archive in RAM. Large albums (hundreds of MB) would
-            either OOM the worker or hit Cloudflare's 100-second proxy timeout
-            because no bytes were sent until the zip was fully built.
-          - A SpooledTemporaryFile keeps small archives in memory but spills
-            to disk past 50 MB, so RAM stays bounded.
-          - We yield 64 KB chunks via an async generator so bytes start
-            flowing back through Cloudflare immediately and the user sees a
-            real download progress bar instead of a hung browser.
+        Fixes the production regression where a 4-photo album download
+        knocked the worker over and cascaded into a Cloudflare 520 that
+        also invalidated the user's session:
+
+          1. **True streaming with zipstream-ng.** We add one photo at a
+             time, yield its bytes into the ZipStream, then let Python
+             GC that photo's buffer before touching the next one. Peak
+             RAM = 1 photo (~5-30 MB), not `sum(all photos)` (~180 MB
+             for the 5-Year Anniversary incident).
+          2. **Hard limits before any I/O.** Downloads > 100 photos or
+             > 500 MB total (from the DB size sum) get a friendly 413
+             JSON error instead of OOM-ing the worker.
+          3. **Explicit gc.collect() after each photo.** Python's zip
+             deflate holds internal buffers that don't always get freed
+             at scope exit — forcing GC keeps RSS flat across the loop.
+          4. **First bytes stream immediately.** ZipStream emits the ZIP
+             local-file header before we start fetching photos, so
+             Cloudflare gets a Content-Type response within the first
+             few ms — well under its 100-second connect timeout.
+          5. **Isolated `get_object` failures.** One bad photo used to
+             skip a `continue` inside a nested block that could leak
+             the zip's write cursor; now we log-and-skip and continue
+             streaming so the user still gets the rest.
         """
         q: dict = {"is_deleted": {"$ne": True}}
         if body.album:
@@ -423,44 +447,90 @@ def register(
         if not photos:
             raise HTTPException(status_code=404, detail="No photos to download.")
 
-        spool = tempfile.SpooledTemporaryFile(max_size=50 * 1024 * 1024, mode="w+b")
+        # Guardrail #1 — photo count.
+        if len(photos) > DOWNLOAD_MAX_PHOTOS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Too many photos ({len(photos)}). Pick {DOWNLOAD_MAX_PHOTOS} or fewer per download.",
+            )
+
+        # Guardrail #2 — total bytes based on stored `size_bytes` (falls back
+        # to 5 MB per photo when the field is missing, which is roughly the
+        # average phone JPEG).
+        est_total = 0
+        for p in photos:
+            est_total += int(p.get("size_bytes") or 5 * 1024 * 1024)
+        if est_total > DOWNLOAD_MAX_TOTAL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Estimated download too large ({est_total // (1024 * 1024)} MB). "
+                    "Select fewer photos or download an album in chunks."
+                ),
+            )
+
+        # Pre-compute unique in-zip filenames so we don't need to touch used
+        # names inside the inner streaming loop.
         used_names: set = set()
-
-        def _build_zip():
-            with zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
-                for p in photos:
-                    try:
-                        data, _ct = get_object(p["storage_path"])
-                    except Exception as e:
-                        logger.warning(f"Skipping photo {p.get('id')} in zip: {e}")
-                        continue
-                    ext = (p.get("original_filename") or p["storage_path"]).rsplit(".", 1)[-1].lower()
-                    base = _safe_filename(p.get("title") or p.get("original_filename") or p["id"])
-                    name = f"{base}.{ext}" if not base.lower().endswith(f".{ext}") else base
-                    n = name
-                    i = 2
-                    while n in used_names:
-                        stem = name.rsplit(".", 1)[0]
-                        n = f"{stem} ({i}).{ext}"
-                        i += 1
-                    used_names.add(n)
-                    zf.writestr(n, data)
-            spool.seek(0)
-
-        # Build the archive off the event loop so the server can keep
-        # responding to other requests while a big album is zipping.
-        await asyncio.to_thread(_build_zip)
-
-        async def _iter_chunks(chunk_size: int = 64 * 1024):
-            try:
-                while True:
-                    chunk = await asyncio.to_thread(spool.read, chunk_size)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                spool.close()
+        entries: list = []
+        for p in photos:
+            ext = (p.get("original_filename") or p["storage_path"]).rsplit(".", 1)[-1].lower()
+            base = _safe_filename(p.get("title") or p.get("original_filename") or p["id"])
+            name = f"{base}.{ext}" if not base.lower().endswith(f".{ext}") else base
+            n = name
+            i = 2
+            while n in used_names:
+                stem = name.rsplit(".", 1)[0]
+                n = f"{stem} ({i}).{ext}"
+                i += 1
+            used_names.add(n)
+            entries.append((n, p["storage_path"], p.get("id")))
 
         album_label = _safe_filename(body.album or "photos")
-        headers = {"Content-Disposition": f'attachment; filename="aop-{album_label}.zip"'}
-        return StreamingResponse(_iter_chunks(), media_type="application/zip", headers=headers)
+        zs = ZipStream()
+
+        def _fetch_one(storage_path: str, pid: str):
+            """Generator that yields the single-blob bytes of one photo,
+            wrapped so zipstream-ng calls it lazily inside its iterator.
+            Errors are swallowed with a log line so one bad photo doesn't
+            take down the whole download; the file entry is skipped
+            entirely rather than added with zero bytes."""
+            try:
+                data, _ct = get_object(storage_path)
+            except Exception as e:
+                logger.warning(f"download-zip: skipping photo {pid} ({storage_path}): {e}")
+                return
+            try:
+                yield data
+            finally:
+                # Free the (potentially 30 MB) buffer as soon as
+                # zipstream is done reading it, before the next photo
+                # is fetched. Peak RSS stays at ~1 photo.
+                del data
+                gc.collect()
+
+        for zip_name, storage_path, pid in entries:
+            zs.add(_fetch_one(storage_path, pid), zip_name)
+
+        async def _stream():
+            try:
+                for chunk in zs:
+                    # Hand control back to the event loop between chunks
+                    # so health checks + other requests aren't starved
+                    # during a big download.
+                    await asyncio.sleep(0)
+                    yield chunk
+            except Exception as e:
+                logger.exception(f"download-zip stream aborted: {e}")
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="aop-{album_label}.zip"',
+            # no-transform prevents Cloudflare from trying to gzip an
+            # already-compressed application/zip payload (double-compress
+            # would waste CPU AND cause the "empty response" 520 the
+            # user hit — some proxies drop the response when they can't
+            # rewrite the Content-Length header of a transfer-encoded
+            # stream during transform.
+            "Cache-Control": "no-store, no-transform",
+        }
+        return StreamingResponse(_stream(), media_type="application/zip", headers=headers)

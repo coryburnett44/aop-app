@@ -1,0 +1,53 @@
+{
+  "verdict": "fixed",
+  "user_reported_bug": "Photos page is a headache! I tried to download 4 photos in the '5-Year Anniversary' album and it said 'download failed'. I refreshed the page and it kicked me out. When I tried to login again, it gave me the error code 'The origin web server sent a response that Cloudflare could not parse. This may indicate the origin returned an empty response, malformed HTTP headers, or an otherwise invalid response.' This has happened before. This is ALWAYS and ONLY on Production.",
+  "summary": "No relevant testing skill found. Focused preview validation passed: API login worked; whole-album ZIP for 5-Year Anniversary returned HTTP 200/application zip and parsed as a valid 2-entry ZIP; 4-photo selected ZIP returned HTTP 200/application zip and parsed as a valid 4-entry ZIP; empty/unknown/oversized guardrails returned clean JSON 400/404/413; after success, 404, and 413, /api/auth/me and /api/photos/albums stayed 200 and re-login stayed 200. Playwright verified /photos as admin, PhotoSwipe preview URLs use /photos/preview/, viewer download triggered a browser download, 4-selected-photo UI ZIP download triggered aop-photos-4.zip, and refresh after downloads did not redirect to login.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/me",
+        "issue": "Review request named /api/me for resilience, but this app exposes current-user auth at /api/auth/me. /api/me returned 404 before/after tests; /api/auth/me (the frontend-used endpoint) stayed 200 after downloads and errors. Add a /api/me alias only if production clients still call it."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/bug_verification_159_plan.md",
+    "/app/test_reports/test_photo_download_api_iteration159.py",
+    "/app/test_reports/photo_download_api_iteration159_results.json",
+    "/app/test_reports/test_photo_download_ui_iteration159.py",
+    "/app/auth_testing.md"
+  ],
+  "action_items": [
+    "Optional: add /api/me as an alias to /api/auth/me if legacy production clients or monitors expect it.",
+    "Consider changing the 500MB guardrail to count p.size as well as p.size_bytes, because current upload code stores size, not size_bytes."
+  ],
+  "critical_code_review_comments": [
+    "download_photos_zip now streams with zipstream-ng and returned valid ZIPs in preview for both album and selected-photo paths.",
+    "Post-download/post-error worker resilience was directly verified: /api/auth/me and /api/photos/albums returned 200 immediately after successful ZIP, 404, and 413 responses; backend logs showed no new crash during these tests.",
+    "Preview data caveat: 5-Year Anniversary currently has only 2 photos, so the exact 4-photo UI/API selection was validated against existing real album Bug Fix Test (4 photos) while whole-album ZIP was validated against 5-Year Anniversary."
+  ],
+  "updated_files": [
+    "/app/auth_testing.md",
+    "/app/test_reports/bug_verification_159_plan.md",
+    "/app/test_reports/test_photo_download_api_iteration159.py",
+    "/app/test_reports/photo_download_api_iteration159_results.json",
+    "/app/test_reports/test_photo_download_ui_iteration159.py",
+    "/app/test_reports/bug_verification_159.json",
+    "/app/test_reports/iteration_159.json"
+  ],
+  "success_rate": {
+    "backend": "100% for tested active endpoints (album ZIP, 4-photo ZIP, JSON 400/404/413 guardrails, /api/auth/me + albums resilience, re-login); note /api/me alias is absent/404.",
+    "frontend": "100% for required UI flows tested (PhotoSwipe preview + viewer download + selected 4-photo ZIP + refresh/session persistence)."
+  },
+  "seed_data_creation": "Inserted 3 transient fake photo DB rows in album iter159-oversized-c2795d32 with size_bytes=200MB each to force 413; cleanup deleted all 3 rows. No mocked APIs were used.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run /app/test_reports/test_photo_download_api_iteration159.py for API regression. It logs into https://club-express-lite.preview.emergentagent.com, validates ZIPs and guardrails, seeds/cleans oversized rows, and writes /app/test_reports/photo_download_api_iteration159_results.json. UI was exercised with Playwright using existing 5-Year Anniversary (2 photos) and Bug Fix Test (4 photos).",
+  "rca_of_the_issue": "The reported production cascade was consistent with the old ZIP implementation exhausting memory and killing the worker, causing Cloudflare 520 and auth/session failures on subsequent requests. The preview fix streamed ZIP entries and kept the worker responsive across successful download, 404, and 413 error paths. Reproduction attempts in preview no longer produced Download failed, logout, Cloudflare-style empty/malformed response, or login failure."
+}

@@ -20,6 +20,22 @@ import "photoswipe/style.css";
 const NAVY = "#0A2463";
 const RED = "#C8102E";
 
+// Iter 159 — module-level helper because AlbumCard, downloadAlbum, and
+// downloadSelected all trigger the same responseType:"blob" download and
+// need to unwrap JSON errors delivered as Blobs.
+async function readBlobErrorDetail(err) {
+    try {
+        const data = err.response?.data;
+        if (!data) return null;
+        if (typeof data === "string") return data;
+        if (data instanceof Blob) {
+            const text = await data.text();
+            try { return JSON.parse(text).detail; } catch { return text.slice(0, 200); }
+        }
+        return data.detail || null;
+    } catch { return null; }
+}
+
 function triggerDownload(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -146,6 +162,8 @@ export default function Photos() {
         setSelectedIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
     }
 
+    // Iter 159 — full-blob download error handling. See top-level
+    // `readBlobErrorDetail` for the axios-blob → JSON-detail unwrap logic.
     async function downloadAlbum() {
         if (!activeAlbum) return;
         setDownloading(true);
@@ -153,7 +171,10 @@ export default function Photos() {
             const res = await api.post("/photos/download-zip", { album: activeAlbum.name }, { responseType: "blob" });
             triggerDownload(res.data, `aop-${activeAlbum.name.replace(/[^a-z0-9 -]/gi, "_")}.zip`);
             toast.success(`Downloaded "${activeAlbum.name}"`);
-        } catch (e) { toast.error(e.response?.data?.detail || "Download failed"); }
+        } catch (e) {
+            const detail = await readBlobErrorDetail(e);
+            toast.error(detail || "Download failed. Try selecting fewer photos or contact an admin.");
+        }
         setDownloading(false);
     }
 
@@ -165,7 +186,10 @@ export default function Photos() {
             triggerDownload(res.data, `aop-photos-${selectedIds.length}.zip`);
             toast.success(`Downloaded ${selectedIds.length} photo${selectedIds.length === 1 ? "" : "s"}`);
             setSelectMode(false); setSelectedIds([]);
-        } catch (e) { toast.error(e.response?.data?.detail || "Download failed"); }
+        } catch (e) {
+            const detail = await readBlobErrorDetail(e);
+            toast.error(detail || "Download failed. Try selecting fewer photos or contact an admin.");
+        }
         setDownloading(false);
     }
 
@@ -476,7 +500,10 @@ function AlbumCard({ album, onOpen, onDelete, onEdit, currentUser }) {
                             const res = await api.post("/photos/download-zip", { album: album.name }, { responseType: "blob" });
                             triggerDownload(res.data, `aop-${album.name.replace(/[^a-z0-9 -]/gi, "_")}.zip`);
                             toast.success(`Downloaded "${album.name}"`);
-                        } catch (err) { toast.error(err.response?.data?.detail || "Download failed"); }
+                        } catch (err) {
+                            const detail = await readBlobErrorDetail(err);
+                            toast.error(detail || "Download failed. Try a smaller selection.");
+                        }
                     }}
                     className="rounded-full bg-white/95 hover:bg-white p-1.5 shadow text-primary"
                     title="Download album"

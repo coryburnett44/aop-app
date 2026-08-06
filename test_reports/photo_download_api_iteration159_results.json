@@ -1,0 +1,103 @@
+{
+  "base_url": "https://club-express-lite.preview.emergentagent.com",
+  "preferred_album": "5-Year Anniversary",
+  "album_under_test": "5-Year Anniversary",
+  "checks": [
+    {
+      "name": "whole_album_zip",
+      "status": 200,
+      "entries": [
+        "Unload 3.jpeg",
+        "Unload 4.jpeg"
+      ]
+    },
+    {
+      "name": "selected_four_zip",
+      "status": 200,
+      "entries": [
+        "test.png",
+        "qa_upload_1782774099_1.png",
+        "qa_upload_1782774099_2.png",
+        "qa_upload_1782774099_0.png"
+      ]
+    },
+    {
+      "name": "empty_body_400",
+      "status": 400,
+      "body": {
+        "detail": "Pick photos or pass an album name."
+      }
+    },
+    {
+      "name": "unknown_album_404",
+      "status": 404,
+      "body": {
+        "detail": "No photos to download."
+      }
+    },
+    {
+      "name": "oversized_413",
+      "status": 413,
+      "body": {
+        "detail": "Estimated download too large (600 MB). Select fewer photos or download an album in chunks."
+      }
+    }
+  ],
+  "resilience": [
+    {
+      "after": "login",
+      "auth_me_status": 200,
+      "albums_status": 200,
+      "legacy_api_me_status": 404,
+      "auth_me_ok": true,
+      "albums_ok": true
+    },
+    {
+      "after": "whole_album_zip_success",
+      "auth_me_status": 200,
+      "albums_status": 200,
+      "legacy_api_me_status": 404,
+      "auth_me_ok": true,
+      "albums_ok": true
+    },
+    {
+      "after": "selected_four_zip_success",
+      "auth_me_status": 200,
+      "albums_status": 200,
+      "legacy_api_me_status": 404,
+      "auth_me_ok": true,
+      "albums_ok": true
+    },
+    {
+      "after": "unknown_album_404",
+      "auth_me_status": 200,
+      "albums_status": 200,
+      "legacy_api_me_status": 404,
+      "auth_me_ok": true,
+      "albums_ok": true
+    },
+    {
+      "after": "oversized_413",
+      "auth_me_status": 200,
+      "albums_status": 200,
+      "legacy_api_me_status": 404,
+      "auth_me_ok": true,
+      "albums_ok": true
+    }
+  ],
+  "oversized_album": "iter159-oversized-c2795d32",
+  "passed": true,
+  "login_status": 200,
+  "selected_album_under_test": "Bug Fix Test",
+  "preferred_album_count": 2,
+  "selected_album_fallback_reason": "'5-Year Anniversary' in preview has fewer than 4 photos; used 'Bug Fix Test' for the 4-selected-photo assertion.",
+  "selected_photo_ids": [
+    "8e0faa14-aa32-48bb-895a-1119433b84b5",
+    "6ed04cb6-0ab7-4576-a9bf-3c1da287c6be",
+    "9bb31389-2315-48d9-ba6c-b4526b5bc40e",
+    "5aca0497-d373-4293-881e-81d804e3e8ea"
+  ],
+  "album_api_count": 4,
+  "relogin_status_after_downloads": 200,
+  "oversized_cleanup_deleted": 3
+}
