@@ -1,0 +1,318 @@
+{
+  "base_url": "https://club-express-lite.preview.emergentagent.com",
+  "run_id": "20260806010337",
+  "test_album": "Iter160 QA WebP 20260806010337",
+  "legacy_album": "Iter160 QA Legacy 20260806010337",
+  "checks": [
+    {
+      "name": "generated 3-5MB source JPEG",
+      "ok": true,
+      "path": "/app/test_reports/artifacts_iter160/iter160_source_20260806010337_0.jpg",
+      "size": 4377332
+    },
+    {
+      "name": "generated 3-5MB source JPEG",
+      "ok": true,
+      "path": "/app/test_reports/artifacts_iter160/iter160_source_20260806010337_1.jpg",
+      "size": 4378068
+    },
+    {
+      "name": "generated 3-5MB source JPEG",
+      "ok": true,
+      "path": "/app/test_reports/artifacts_iter160/iter160_source_20260806010337_2.jpg",
+      "size": 4376906
+    },
+    {
+      "name": "generated 3-5MB source JPEG",
+      "ok": true,
+      "path": "/app/test_reports/artifacts_iter160/iter160_source_20260806010337_3.jpg",
+      "size": 4375777
+    },
+    {
+      "name": "login admin@clubhaven.app",
+      "ok": true,
+      "status": 200,
+      "role": "admin",
+      "user_id": "5017a492-ff50-41fd-8b23-b741c1bd8541"
+    },
+    {
+      "name": "login member@clubhaven.app",
+      "ok": true,
+      "status": 200,
+      "role": "member",
+      "user_id": "8108308c-53a8-4c90-8fe0-ddd438b8bc19"
+    },
+    {
+      "name": "single upload status",
+      "ok": true,
+      "status": 200,
+      "text": "{\"id\":\"4921bb68-c309-4734-869b-9bfd8b2a308d\",\"title\":\"Iter160 single 20260806010337\",\"album\":\"Iter160 QA WebP 20260806010337\",\"storage_path\":\"clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/774b0572-e04d-4c25-a411-5b7c2f3238b9.webp\",\"url\":\"/api/files/clubhaven/photos/5017a492-ff50-41fd-8b23-b7"
+    },
+    {
+      "name": "single upload returns downscaled WebP metadata and serves small WebP",
+      "ok": true,
+      "photo_id": "4921bb68-c309-4734-869b-9bfd8b2a308d",
+      "storage_path": "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/774b0572-e04d-4c25-a411-5b7c2f3238b9.webp",
+      "original_size": 4377332,
+      "returned_size": 36554,
+      "reduction_pct": 99.16,
+      "checks": {
+        "downscaled": true,
+        "content_type": true,
+        "storage_path_webp": true,
+        "original_size_matches": true,
+        "size_reduced_80pct": true,
+        "served_file_webp": true,
+        "served_width_lte_1200": true
+      },
+      "fetched": {
+        "status": 200,
+        "content_type": "image/webp",
+        "bytes": 36554,
+        "format": "WEBP",
+        "width": 1200
+      }
+    },
+    {
+      "name": "post-op health after single upload",
+      "ok": true,
+      "auth_me_status": 200,
+      "albums_status": 200
+    },
+    {
+      "name": "bulk upload status",
+      "ok": true,
+      "status": 200,
+      "text": "{\"uploaded\":[{\"id\":\"5f562482-ab44-4550-be9e-ee4cdb3b9370\",\"title\":\"\",\"album\":\"Iter160 QA WebP 20260806010337\",\"storage_path\":\"clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/28dfeb87-4a52-43ea-a590-1dc5b50cc93b.webp\",\"url\":\"/api/files/clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/28dfeb87-4a52-43ea-a590-1dc5b50cc93b.webp\",\"thumb_url\":\"/api/photos/thumb/clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/28dfeb87-4a52-43ea-a590-1dc5b50cc93b.webp?w=400\",\"preview_url\":\"/api/photos/p"
+    },
+    {
+      "name": "bulk upload row count",
+      "ok": true,
+      "uploaded_count": 3,
+      "failed": []
+    },
+    {
+      "name": "bulk row None downscaled WebP",
+      "ok": true,
+      "photo_id": "5f562482-ab44-4550-be9e-ee4cdb3b9370",
+      "storage_path": "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/28dfeb87-4a52-43ea-a590-1dc5b50cc93b.webp",
+      "original_size": 4378068,
+      "returned_size": 36340,
+      "reduction_pct": 99.17,
+      "checks": {
+        "downscaled": true,
+        "content_type": true,
+        "storage_path_webp": true,
+        "original_size_matches": true,
+        "size_reduced_80pct": true,
+        "served_file_webp": true,
+        "served_width_lte_1200": true
+      },
+      "fetched": {
+        "status": 200,
+        "content_type": "image/webp",
+        "bytes": 36340,
+        "format": "WEBP",
+        "width": 1200
+      }
+    },
+    {
+      "name": "bulk row None downscaled WebP",
+      "ok": true,
+      "photo_id": "46f8afa8-5fe4-4abf-897f-c1d3b60bb824",
+      "storage_path": "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/e36a5620-2f81-4ea0-8302-1739897e1a78.webp",
+      "original_size": 4376906,
+      "returned_size": 35482,
+      "reduction_pct": 99.19,
+      "checks": {
+        "downscaled": true,
+        "content_type": true,
+        "storage_path_webp": true,
+        "original_size_matches": true,
+        "size_reduced_80pct": true,
+        "served_file_webp": true,
+        "served_width_lte_1200": true
+      },
+      "fetched": {
+        "status": 200,
+        "content_type": "image/webp",
+        "bytes": 35482,
+        "format": "WEBP",
+        "width": 1200
+      }
+    },
+    {
+      "name": "bulk row None downscaled WebP",
+      "ok": true,
+      "photo_id": "ccdda198-1aed-4a53-b3ca-11bc4260f5ea",
+      "storage_path": "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/c25b712a-8163-45a2-ba9a-2c82abdd9159.webp",
+      "original_size": 4375777,
+      "returned_size": 34652,
+      "reduction_pct": 99.21,
+      "checks": {
+        "downscaled": true,
+        "content_type": true,
+        "storage_path_webp": true,
+        "original_size_matches": true,
+        "size_reduced_80pct": true,
+        "served_file_webp": true,
+        "served_width_lte_1200": true
+      },
+      "fetched": {
+        "status": 200,
+        "content_type": "image/webp",
+        "bytes": 34652,
+        "format": "WEBP",
+        "width": 1200
+      }
+    },
+    {
+      "name": "post-op health after bulk upload",
+      "ok": true,
+      "auth_me_status": 200,
+      "albums_status": 200
+    },
+    {
+      "name": "seed legacy large JPEG in storage/db",
+      "ok": true,
+      "photo_id": "1d79c254-c1ab-459e-8ac6-53ef5a36ef8c",
+      "storage_path": "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/0e83b88a-5282-4d92-bf1a-36127632d301.jpg",
+      "size": 4377332,
+      "album": "Iter160 QA Legacy 20260806010337"
+    },
+    {
+      "name": "backfill unauthenticated is 401",
+      "ok": true,
+      "status": 401,
+      "text": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "name": "post-op health after backfill unauthenticated 401",
+      "ok": true,
+      "auth_me_status": 200,
+      "albums_status": 200
+    },
+    {
+      "name": "backfill non-admin is 403",
+      "ok": true,
+      "status": 403,
+      "text": "{\"detail\":\"Admin only.\"}"
+    },
+    {
+      "name": "post-op health after backfill non-admin 403",
+      "ok": true,
+      "auth_me_status": 200,
+      "albums_status": 200
+    },
+    {
+      "name": "backfill admin status",
+      "ok": true,
+      "status": 200,
+      "text": "{\"processed\":1,\"skipped\":0,\"batch_size\":1,\"saved_bytes\":4340778,\"saved_mb\":4.14,\"has_more\":false,\"remaining\":0}"
+    },
+    {
+      "name": "backfill admin payload processed legacy and is well formed",
+      "ok": true,
+      "payload": {
+        "processed": 1,
+        "skipped": 0,
+        "batch_size": 1,
+        "saved_bytes": 4340778,
+        "saved_mb": 4.14,
+        "has_more": false,
+        "remaining": 0
+      },
+      "expected_keys": [
+        "batch_size",
+        "has_more",
+        "processed",
+        "remaining",
+        "saved_bytes",
+        "saved_mb",
+        "skipped"
+      ]
+    },
+    {
+      "name": "backfilled row metadata converted to WebP",
+      "ok": true,
+      "row": {
+        "id": "1d79c254-c1ab-459e-8ac6-53ef5a36ef8c",
+        "title": "Iter160 legacy backfill 20260806010337",
+        "album": "Iter160 QA Legacy 20260806010337",
+        "storage_path": "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/0e83b88a-5282-4d92-bf1a-36127632d301.webp",
+        "url": "/api/files/clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/0e83b88a-5282-4d92-bf1a-36127632d301.webp",
+        "thumb_url": "/api/photos/thumb/clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/0e83b88a-5282-4d92-bf1a-36127632d301.webp?w=400",
+        "preview_url": "/api/photos/preview/clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/0e83b88a-5282-4d92-bf1a-36127632d301.webp?w=1600",
+        "content_type": "image/webp",
+        "size": 36554,
+        "original_size": 4377332,
+        "downscaled": true,
+        "uploaded_by": "5017a492-ff50-41fd-8b23-b741c1bd8541",
+        "uploaded_by_name": "QA Admin",
+        "created_at": "2026-08-06T01:03:58.603749+00:00"
+      },
+      "checks": {
+        "downscaled": true,
+        "content_type": true,
+        "storage_path_webp": true,
+        "size_reduced": true
+      }
+    },
+    {
+      "name": "post-op health after admin backfill",
+      "ok": true,
+      "auth_me_status": 200,
+      "albums_status": 200
+    },
+    {
+      "name": "whole-album download zip works and is far below guardrail",
+      "ok": true,
+      "status": 200,
+      "content_type": "application/zip",
+      "bytes": 711892,
+      "album_photo_count": 1,
+      "album_est_total_bytes": 711724,
+      "is_zip": true,
+      "zip_entries": 1,
+      "first_entries": [
+        "IMG_0912.jpeg"
+      ],
+      "pct_of_500mb_guardrail": 0.1358
+    },
+    {
+      "name": "post-op health after whole-album download zip",
+      "ok": true,
+      "auth_me_status": 200,
+      "albums_status": 200
+    }
+  ],
+  "created_photo_ids": [
+    "4921bb68-c309-4734-869b-9bfd8b2a308d",
+    "5f562482-ab44-4550-be9e-ee4cdb3b9370",
+    "46f8afa8-5fe4-4abf-897f-c1d3b60bb824",
+    "ccdda198-1aed-4a53-b3ca-11bc4260f5ea",
+    "1d79c254-c1ab-459e-8ac6-53ef5a36ef8c"
+  ],
+  "created_storage_paths": [
+    "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/774b0572-e04d-4c25-a411-5b7c2f3238b9.webp",
+    "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/28dfeb87-4a52-43ea-a590-1dc5b50cc93b.webp",
+    "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/e36a5620-2f81-4ea0-8302-1739897e1a78.webp",
+    "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/c25b712a-8163-45a2-ba9a-2c82abdd9159.webp",
+    "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/0e83b88a-5282-4d92-bf1a-36127632d301.jpg"
+  ],
+  "seeded_legacy_photo": {
+    "id": "1d79c254-c1ab-459e-8ac6-53ef5a36ef8c",
+    "title": "Iter160 legacy backfill 20260806010337",
+    "album": "Iter160 QA Legacy 20260806010337",
+    "storage_path": "clubhaven/photos/5017a492-ff50-41fd-8b23-b741c1bd8541/0e83b88a-5282-4d92-bf1a-36127632d301.jpg",
+    "original_filename": "iter160_source_20260806010337_0.jpg",
+    "content_type": "image/jpeg",
+    "size": 4377332,
+    "original_size": 4377332,
+    "downscaled": false,
+    "uploaded_by": "5017a492-ff50-41fd-8b23-b741c1bd8541",
+    "uploaded_by_name": "QA Admin",
+    "is_deleted": false,
+    "created_at": "2026-08-06T01:03:58.603749+00:00"
+  }
+}

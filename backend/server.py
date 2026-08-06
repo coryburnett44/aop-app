@@ -688,6 +688,13 @@ def photo_out(p: dict) -> dict:
         # opening a photo is near-instant. Full-res `url` remains for
         # downloads / hard zooms.
         "preview_url": f"/api/photos/preview/{p['storage_path']}?w=1600",
+        # Iter 160 — expose the size + downscale metadata so an admin UI can
+        # show "12 MB → 320 KB (saved 97%)" and drive the backfill progress
+        # bar. Falls back to sensible defaults for pre-Iter-160 rows.
+        "content_type": p.get("content_type") or "image/jpeg",
+        "size": p.get("size"),
+        "original_size": p.get("original_size"),
+        "downscaled": bool(p.get("downscaled")),
         "uploaded_by": p.get("uploaded_by"),
         "uploaded_by_name": p.get("uploaded_by_name", ""),
         "created_at": p.get("created_at"),

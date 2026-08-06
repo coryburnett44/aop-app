@@ -19,6 +19,7 @@ Public surface (paths preserved verbatim):
 """
 import asyncio
 import gc
+import io
 import logging
 import re
 import uuid
@@ -39,6 +40,64 @@ logger = logging.getLogger("clubhaven")
 # checked BEFORE any bytes are fetched and return a friendly JSON error.
 DOWNLOAD_MAX_PHOTOS = 100
 DOWNLOAD_MAX_TOTAL_BYTES = 500 * 1024 * 1024  # 500 MB
+
+
+# ---- Iter 160 upload-time downscale + WebP conversion ----
+# The 512 Mi production pod can't hold multi-MB phone JPEGs in RAM during a
+# zip download, so we shrink every upload to a max-1200 px WebP at ingest
+# time. Post-transform photos average 100-400 KB, so a 4-photo zip totals
+# ~1 MB instead of ~20 MB and never comes anywhere near the pod's memory
+# ceiling. Serving the same shrunken file for both the grid and the zip
+# also means fewer object-storage round-trips per page load.
+UPLOAD_MAX_WIDTH = 1200
+UPLOAD_WEBP_QUALITY = 82
+
+
+def _process_upload_to_webp(raw: bytes) -> tuple:
+    """Downscale an uploaded photo to a max-1200 px WebP.
+
+    Returns (blob, content_type, extension). Falls back to the original
+    bytes when Pillow can't decode (e.g. HEIC on a pod without the
+    plugin) so the upload still succeeds — the grid/preview endpoints
+    already generate WebP variants on demand.
+
+    Memory profile (per invocation): peak ~2× the *decoded* pixel buffer,
+    which for a 12 MP phone photo is ~36 MB (RGB, uint8). We call
+    `gc.collect()` before returning so nothing lingers into the next
+    upload in a bulk batch. This is called via `asyncio.to_thread` so
+    the async event loop stays responsive.
+    """
+    try:
+        from PIL import Image, ImageOps
+    except Exception as e:
+        logger.warning(f"upload downscale: Pillow unavailable ({e}); storing original")
+        return raw, None, None
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        # Honour EXIF orientation so phone photos aren't stored sideways.
+        img = ImageOps.exif_transpose(img)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        # thumbnail() operates in-place and keeps aspect ratio; the
+        # second dimension is a generous ceiling so tall portraits keep
+        # their full height once width is capped.
+        img.thumbnail((UPLOAD_MAX_WIDTH, UPLOAD_MAX_WIDTH * 4), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="WEBP", quality=UPLOAD_WEBP_QUALITY, method=4)
+        blob = buf.getvalue()
+        # Free the decoded pixel buffer + intermediates so the next photo
+        # in a bulk batch doesn't stack on top of this one.
+        img.close()
+        del img, buf
+        gc.collect()
+        return blob, "image/webp", "webp"
+    except Exception as e:
+        # HEIC / TIFF / animated GIF etc. — Pillow may raise. Fall back
+        # to storing the original untouched so the user doesn't see an
+        # upload failure just because a photo is odd.
+        logger.warning(f"upload downscale skipped (unsupported/error): {e}")
+        return raw, None, None
 
 
 def register(
@@ -299,10 +358,18 @@ def register(
                 "image/webp": "webp", "image/heic": "heic", "image/heif": "heif",
             }
             ext = ct_to_ext.get(ct, "jpg")
-        path = f"{app_name}/photos/{user['id']}/{uuid.uuid4()}.{ext}"
+        path_base = f"{app_name}/photos/{user['id']}/{uuid.uuid4()}"
         data = await file.read()
         if len(data) > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+        # Iter 160 — downscale + WebP-convert BEFORE upload. Runs off the
+        # event loop so a slow encode doesn't block other requests.
+        processed, new_ct, new_ext = await asyncio.to_thread(_process_upload_to_webp, data)
+        original_size = len(data)
+        if new_ext:
+            ext, content_type = new_ext, new_ct
+            data = processed  # replace with the shrunken WebP
+        path = f"{path_base}.{ext}"
         result = await asyncio.to_thread(put_object, path, data, content_type)
         album_name = (album or "general").strip() or "general"
         await db.photo_albums.update_one(
@@ -325,6 +392,8 @@ def register(
             "original_filename": file.filename,
             "content_type": content_type,
             "size": result.get("size", len(data)),
+            "original_size": original_size,
+            "downscaled": new_ext == "webp",
             "uploaded_by": user["id"],
             "uploaded_by_name": user.get("name", ""),
             "is_deleted": False,
@@ -368,6 +437,15 @@ def register(
                 if ext not in image_ext:
                     failed.append({"name": f.filename, "error": "Not an image"}); continue
                 content_type = f.content_type or mime_by_ext.get(ext, "image/jpeg")
+                # Iter 160 — downscale + WebP each photo BEFORE upload.
+                # Runs off the event loop, and the helper calls gc.collect()
+                # after each conversion so a 50-photo batch never stacks
+                # decoded pixel buffers in RAM.
+                processed, new_ct, new_ext = await asyncio.to_thread(_process_upload_to_webp, data)
+                original_size = len(data)
+                if new_ext:
+                    ext, content_type = new_ext, new_ct
+                    data = processed
                 path = f"{app_name}/photos/{user['id']}/{uuid.uuid4()}.{ext}"
                 result = await asyncio.to_thread(put_object, path, data, content_type)
                 doc = {
@@ -378,6 +456,8 @@ def register(
                     "original_filename": f.filename,
                     "content_type": content_type,
                     "size": result.get("size", len(data)),
+                    "original_size": original_size,
+                    "downscaled": new_ext == "webp",
                     "uploaded_by": user["id"],
                     "uploaded_by_name": user.get("name", ""),
                     "is_deleted": False,
@@ -385,6 +465,10 @@ def register(
                 }
                 await db.photos.insert_one(doc)
                 uploaded.append(photo_out(doc))
+                # Release the (potentially 10 MB) raw + processed blobs
+                # before the next file in the batch is decoded.
+                del data, processed
+                gc.collect()
             except Exception as e:
                 failed.append({"name": getattr(f, "filename", "unknown"), "error": str(e)})
         return {"uploaded": uploaded, "failed": failed}
@@ -398,6 +482,97 @@ def register(
             raise HTTPException(status_code=403, detail="Not allowed")
         await db.photos.update_one({"id": photo_id}, {"$set": {"is_deleted": True}})
         return {"ok": True}
+
+    # ---------- Iter 160 — backfill downscale of existing (large) photos ----------
+    @api.post("/photos/backfill-downscale")
+    async def backfill_downscale(
+        limit: int = 20,
+        album: Optional[str] = None,
+        min_bytes: int = 500 * 1024,  # 500 KB — skip photos already small
+        user: dict = Depends(get_current_user),
+    ):
+        """Retroactively downscale every original that was uploaded before
+        the Iter 160 auto-downscale shipped. Admin-only, processed in
+        small batches so the 512 Mi pod never OOMs.
+
+        Query args:
+          - `limit`  — max photos to process per call (default 20). Repeat
+            the call to work through a big backlog without running the
+            request past ingress timeouts.
+          - `album`  — restrict to a single album (e.g. "5-Year Anniversary").
+          - `min_bytes` — skip photos already smaller than this so we don't
+            waste cycles re-encoding already-tiny images.
+
+        Returns `{processed, skipped, saved_bytes, batch_size}` and a
+        `has_more` flag so an admin UI can loop until zero.
+        """
+        if user.get("role") != "admin" and not user.get("is_admin"):
+            raise HTTPException(status_code=403, detail="Admin only.")
+        limit = max(1, min(int(limit or 20), 50))
+        q: dict = {
+            "is_deleted": {"$ne": True},
+            "downscaled": {"$ne": True},
+            "size": {"$gte": int(min_bytes)},
+        }
+        if album:
+            q["album"] = album
+        candidates = await db.photos.find(q, {"_id": 0}).sort("size", -1).limit(limit).to_list(limit)
+        processed, skipped, saved = 0, 0, 0
+        for p in candidates:
+            storage_path = p.get("storage_path")
+            try:
+                raw, _ct = await asyncio.to_thread(get_object, storage_path)
+            except Exception as e:
+                logger.warning(f"backfill: skipping {p.get('id')} (fetch failed): {e}")
+                skipped += 1
+                continue
+            original_len = len(raw)
+            new_blob, new_ct, new_ext = await asyncio.to_thread(_process_upload_to_webp, raw)
+            # Release the raw bytes ASAP; the WebP is what we care about now.
+            del raw
+            gc.collect()
+            if not new_ext or len(new_blob) >= original_len:
+                # Either Pillow couldn't handle the format, or the WebP came
+                # out no smaller — leave the original in place.
+                skipped += 1
+                del new_blob
+                gc.collect()
+                continue
+            new_path = storage_path.rsplit(".", 1)[0] + ".webp"
+            try:
+                result = await asyncio.to_thread(put_object, new_path, new_blob, new_ct)
+            except Exception as e:
+                logger.warning(f"backfill: put_object failed for {p.get('id')}: {e}")
+                skipped += 1
+                del new_blob
+                gc.collect()
+                continue
+            await db.photos.update_one(
+                {"id": p["id"]},
+                {"$set": {
+                    "storage_path": result["path"],
+                    "content_type": new_ct,
+                    "size": len(new_blob),
+                    "original_size": p.get("original_size") or original_len,
+                    "downscaled": True,
+                    "downscaled_at": iso(now_utc()),
+                }},
+            )
+            saved += original_len - len(new_blob)
+            processed += 1
+            del new_blob
+            gc.collect()
+        remaining = await db.photos.count_documents(q)
+        return {
+            "processed": processed,
+            "skipped": skipped,
+            "batch_size": len(candidates),
+            "saved_bytes": saved,
+            "saved_mb": round(saved / (1024 * 1024), 2),
+            "has_more": remaining > 0,
+            "remaining": remaining,
+        }
+
 
     # ---------- Photo bulk download (zip) ----------
     class PhotoDownloadIn(BaseModel):
