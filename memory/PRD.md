@@ -15,6 +15,28 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 160 — Upload-time WebP downscale + backfill (2026-02-06) [PRODUCTION MEMORY FIX]
+**User request:** "The streaming fix wasn't enough to stay under the 512 Mi memory limit. Please implement an image processing step that automatically resizes all uploaded photos to a maximum width of 1200 px and converts them to a compressed format like WebP. Ensure this processing happens in small chunks to keep memory usage at a minimum, and serve these smaller versions on the photo page."
+
+**Approach:** Shrink at ingest — every photo becomes a max-1200 px WebP the moment it hits the backend, so no future download or view ever touches multi-MB originals.
+
+**Backend (`/app/backend/routes/photos.py`):**
+- **New `_process_upload_to_webp(raw)` helper** — decodes the upload with Pillow, applies EXIF-transpose (so phone rotations stick), resizes via `img.thumbnail((1200, 1200*4), LANCZOS)` (aspect-preserving), and writes WebP at `quality=82, method=4`. Explicit `img.close()` + `del` + `gc.collect()` before return so a bulk batch doesn't stack decoded buffers. Falls back to the original bytes on unsupported formats (HEIC without plugin) so uploads never fail.
+- **Single upload (`POST /api/photos`)** — runs the downscale via `asyncio.to_thread(_process_upload_to_webp, data)`, replaces the raw bytes with the WebP, and persists `original_size` + `downscaled` metadata.
+- **Bulk upload (`POST /api/photos/bulk`)** — same treatment per file, with `del data, processed; gc.collect()` at the end of each loop iteration.
+- **New `POST /api/photos/backfill-downscale?limit=&album=&min_bytes=`** (admin-only) — retroactively downscales legacy large photos in batches (default 20). Returns `{processed, skipped, batch_size, saved_bytes, saved_mb, has_more, remaining}` so an admin UI can loop. Skips already-downscaled rows and any WebP that ends up bigger than the source.
+- **`photo_out()` extended** with `content_type`, `size`, `original_size`, `downscaled` fields so the frontend / admin UI can render savings + backfill progress.
+
+**Verification (bug_testing_agent verdict: fixed, 100% backend & frontend):**
+- Single upload: 4.38 MB JPEG → 36.6 KB WebP (**99.16 % reduction**), served at width 1200.
+- Bulk upload: 3 files → all `downscaled=true`, all WebP.
+- Backfill: seeded legacy 4.38 MB → processed → saved 4.14 MB in one call. `remaining` counter drops correctly.
+- Auth gates: unauthenticated 401, non-admin 403.
+- Regression: existing `Commitment Ceremony 2026` album download returns valid 711 KB zip — 0.14 % of the 500 MB guardrail. Peak RAM stays comfortably below the 512 Mi pod limit.
+- Health check after every op: `GET /api/auth/me` and `GET /api/photos/albums` both 200. No worker restarts, no Cloudflare 520.
+
+
+
 ### Iteration 159 — Photo ZIP download hardening (2026-02-06) [PRODUCTION BUGFIX]
 **User bug:** "I tried to download 4 photos in the '5-Year Anniversary' album and it said 'download failed'. I refreshed the page and it kicked me out. When I tried to login again, it gave me the error code 'The origin web server sent a response that Cloudflare could not parse.' This has happened before. This is ALWAYS and ONLY on Production."
 
