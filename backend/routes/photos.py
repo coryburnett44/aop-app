@@ -454,12 +454,15 @@ def register(
                 detail=f"Too many photos ({len(photos)}). Pick {DOWNLOAD_MAX_PHOTOS} or fewer per download.",
             )
 
-        # Guardrail #2 — total bytes based on stored `size_bytes` (falls back
-        # to 5 MB per photo when the field is missing, which is roughly the
-        # average phone JPEG).
+        # Guardrail #2 — total bytes based on the stored per-photo size.
+        # Photo uploads store the byte count as `size` (server.py stores it
+        # via `_id.get('size')`); older rows may use `size_bytes`. Fall back
+        # to a 5 MB estimate per row when neither is present (typical
+        # phone JPEG average) so the guardrail still bites on unmetadata'd
+        # rows.
         est_total = 0
         for p in photos:
-            est_total += int(p.get("size_bytes") or 5 * 1024 * 1024)
+            est_total += int(p.get("size") or p.get("size_bytes") or 5 * 1024 * 1024)
         if est_total > DOWNLOAD_MAX_TOTAL_BYTES:
             raise HTTPException(
                 status_code=413,

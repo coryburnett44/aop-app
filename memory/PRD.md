@@ -15,6 +15,28 @@ Build a Club-Express-style member-management platform for **Alpha Omega Phi Mili
 - **Branding**: Red (#C8102E) / White / Navy (#0A2463). Outfit + Work Sans fonts. 10-yr anniversary countdown widget.
 
 ## Implemented
+### Iteration 159 — Photo ZIP download hardening (2026-02-06) [PRODUCTION BUGFIX]
+**User bug:** "I tried to download 4 photos in the '5-Year Anniversary' album and it said 'download failed'. I refreshed the page and it kicked me out. When I tried to login again, it gave me the error code 'The origin web server sent a response that Cloudflare could not parse.' This has happened before. This is ALWAYS and ONLY on Production."
+
+**Root cause:** The previous `download_photos_zip` used `SpooledTemporaryFile + zipfile.ZipFile.writestr(name, data)`, which held every photo's raw bytes in RAM simultaneously (peak = Σ all photos, plus a compressed copy per `writestr`). On the production container's tighter RAM limit, a handful of phone-camera photos (5-30 MB each) OOM-killed the worker → Cloudflare 520 ("empty/malformed response") → session lost → login also failed until the pod recovered.
+
+**Backend fixes (`/app/backend/routes/photos.py`):**
+- **True streaming ZIP** using `zipstream-ng==1.9.2` (new dep). Each photo is wrapped in a generator that fetches from object storage, yields bytes to the ZipStream once, then `del data; gc.collect()` to release ~1 photo of RAM before the next one is fetched. Peak RSS is now bounded to **~1 photo**, not the sum.
+- **Hard limits BEFORE any I/O** — `DOWNLOAD_MAX_PHOTOS = 100`, `DOWNLOAD_MAX_TOTAL_BYTES = 500 MB` (summed from the DB `size` / `size_bytes` field). Overshoots return HTTP 413 with a friendly `detail` message instead of OOM-ing the worker.
+- **Cloudflare-safe headers**: `Cache-Control: no-store, no-transform` prevents Cloudflare from trying to gzip an already-compressed `application/zip` payload (double-transform was one plausible source of "malformed HTTP" 520s).
+- **`await asyncio.sleep(0)` between chunks** so health-checks and other requests aren't starved during long downloads.
+- **Isolated failure per photo** — one bad `get_object` is logged-and-skipped; the rest of the album still zips.
+
+**Frontend fixes (`/app/frontend/src/pages/Photos.jsx`):**
+- Module-scope `readBlobErrorDetail(err)` helper — when axios' `responseType: "blob"` delivers a JSON error as a Blob, we read it back as text and extract `.detail`. `downloadAlbum`, `downloadSelected`, and AlbumCard's inline download button all use it, so users now see "Estimated download too large (600 MB)…" instead of the generic "Download failed".
+
+**Verification (bug_testing_agent verdict: fixed):**
+- API: album zip and 4-photo zip both return HTTP 200 with valid multi-entry ZIPs. Empty body → 400 JSON. Unknown album → 404 JSON. Oversized selection (3 × 200 MB seed rows) → 413 JSON.
+- **Post-download resilience** (the critical test): `GET /api/auth/me` and `GET /api/photos/albums` both return 200 **immediately after** successful downloads AND after 404/413 errors. Backend logs show no crash. Re-login stays 200.
+- Playwright: viewer opens with `img.src` pointing at `/photos/preview/`, Download toolbar button triggers browser download, and a page refresh after downloads no longer redirects the user to login.
+
+
+
 ### Iteration 158 — Photos page perf: responsive srcset + lazy + progressive + paginated (2026-02-04) [PERF]
 **User request:** Optimize the Photos page — responsive thumbnails, lazy loading, progressive image loading, no full-res until click, paginate/virtualize if many images.
 
